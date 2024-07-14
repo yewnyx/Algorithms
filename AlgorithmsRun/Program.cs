@@ -25,7 +25,7 @@ digraph G {
 }
 """);
 
-var graph1 = new Graph.Builder()
+var graph1 = new Graph()
     .AddEdges(
         (0, 1),
         (1, 2),
@@ -46,8 +46,7 @@ var graph1 = new Graph.Builder()
         (3, 6),
         (5, 8),
         (7, 10),
-        (9, 12))
-    .Build();
+        (9, 12));
 graph1.Tarjan();
 
 Console.WriteLine("""
@@ -68,7 +67,7 @@ digraph G {
   8 -> 6
 }
 """);
-var graph2 = new Graph.Builder()
+var graph2 = new Graph()
     .AddEdge(0, 1)
     .AddEdge(1, 2)
     .AddEdge(2, 3)
@@ -82,8 +81,7 @@ var graph2 = new Graph.Builder()
     .AddEdge(1, 4)
     .AddEdge(5, 8)
     .AddEdge(7, 9)
-    .AddEdge(8, 6)
-    .Build();
+    .AddEdge(8, 6);
 graph2.Tarjan();
 
 Console.WriteLine("""
@@ -105,7 +103,7 @@ digraph G {
   8 -> 8
 }
 """);
-var graph3 = new Graph.Builder()
+var graph3 = new Graph()
     .AddEdge(1, 2)
     .AddEdge(2, 3)
     .AddEdge(3, 1)
@@ -119,6 +117,5 @@ var graph3 = new Graph.Builder()
     .AddEdge(7, 6)
     .AddEdge(8, 5)
     .AddEdge(8, 7)
-    .AddEdge(8, 8)
-    .Build();
+    .AddEdge(8, 8);
 graph3.Tarjan();

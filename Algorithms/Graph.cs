@@ -5,63 +5,62 @@ using System.Linq;
 namespace Yewnyx.Algorithms;
 
 public sealed class Graph {
-    public sealed class Builder {
-        private SortedSet<Edge> _edges = new();
-        private int _maxIndex = -1;
+    private Vertex[] Vertices;
+    private int _maxIndex = -1;
 
-        public Builder AddEdges(params Edge[] edges) {
-            _edges.UnionWith(edges);
-            _maxIndex = Math.Max(_maxIndex, edges.Max(e => Math.Max(e.From, e.To)));
-            return this;
-        }
-        
-        public Builder AddEdge(int from, int to) {
-            _edges.Add((from, to));
-            _maxIndex = Math.Max(_maxIndex, Math.Max(from, to));
-            return this;
-        }
-        
-        public Graph Build() {
-            var vLength = _maxIndex + 1;
-
-            var vertices = new Vertex[vLength];
-            var stack = new int[vLength];
-            var edges = new Edge[_edges.Count];
-            var nextEdge = new int[_edges.Count];
-            
-            Array.Fill(vertices, Vertex.New());
-            _edges.CopyTo(edges);
-
-            var previousFrom = -1;
-            var currentNextEdge = -1;
-            for (var i = _edges.Count - 1; i >= 0; i--) {
-                var from = edges[i].From;
-                if (from != previousFrom) {
-                    currentNextEdge = i;
-                    previousFrom = from;
-                }
-                nextEdge[i] = currentNextEdge + 1;
-                currentNextEdge = i;
-            }
-
-            return new Graph { Vertices = vertices, Edges = edges, _stack = stack, _stackIndex = 0, _edgeSkipList = nextEdge};
-        }
-    }
-
-    public Vertex[] Vertices;
-    public Edge[] Edges;
+    private SortedSet<Edge> _edges = new();
+    private Edge[] _edgesArray;
+    private int[] _edgeSkipList;
 
     private int[] _stack;
     private int _stackIndex;
-    private int[] _edgeSkipList;
 
-    public void Tarjan() {
-        var vLength = Vertices.Length;
 
+    public Graph AddEdges(params Edge[] edges) {
+        _edges.UnionWith(edges);
+        _maxIndex = Math.Max(_maxIndex, edges.Max(e => Math.Max(e.From, e.To)));
+        return this;
+    }
+        
+    public Graph AddEdge(int from, int to) {
+        _edges.Add((from, to));
+        _maxIndex = Math.Max(_maxIndex, Math.Max(from, to));
+        return this;
+    }
+    
+    private void _prepare() {
+        var vLength = _maxIndex + 1;
+
+        if (Vertices == null || Vertices.Length != vLength) { Vertices = new Vertex[vLength]; }
+        Array.Fill(Vertices, Vertex.New());
+
+        _stackIndex = 0;
         if (_stack == null || _stack.Length != vLength) { _stack = new int[vLength]; }
         Array.Fill(_stack, -1);
-        _stackIndex = 0;
 
+        if (_edgesArray == null || _edgesArray.Length != _edges.Count) { _edgesArray = new Edge[_edges.Count]; }
+        _edges.CopyTo(_edgesArray);
+        
+        if (_edgeSkipList == null || _edgeSkipList.Length != _edges.Count) { _edgeSkipList = new int[_edges.Count]; }
+        Array.Fill(_edgeSkipList, -1);
+
+        var previousFrom = -1;
+        var currentNextEdge = -1;
+        for (var i = _edgesArray.Length - 1; i >= 0; i--) {
+            var from = _edgesArray[i].From;
+            if (from != previousFrom) {
+                currentNextEdge = i;
+                previousFrom = from;
+            }
+            _edgeSkipList[i] = currentNextEdge + 1;
+            currentNextEdge = i;
+        }
+    }
+    
+    public void Tarjan() {
+        _prepare();
+
+        var vLength = Vertices.Length;
         var index = 0;
         for (var i = 0; i < vLength; i++) {
             if (Vertices[i].index == -1) {
@@ -84,8 +83,8 @@ public sealed class Graph {
 
         // Loops over all edges from v; use skip list for better performance
         var edgeIndex = 0;
-        while(edgeIndex < Edges.Length) {
-            var (uIndex, wIndex) = Edges[edgeIndex];
+        while(edgeIndex < _edgesArray.Length) {
+            var (uIndex, wIndex) = _edgesArray[edgeIndex];
             if (uIndex == vIndex) {
                 ref var w = ref Vertices[wIndex];
                 if (w.index == -1) {
