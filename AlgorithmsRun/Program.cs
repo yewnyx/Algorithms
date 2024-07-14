@@ -26,29 +26,29 @@ digraph G {
 """);
 
 var graph1 = new Graph.Builder()
-    .AddEdge(0, 1)
-    .AddEdge(1, 2)
-    .AddEdge(2, 3)
-    .AddEdge(3, 4)
-    .AddEdge(4, 5)
-    .AddEdge(5, 6)
-    .AddEdge(6, 7)
-    .AddEdge(7, 8)
-    .AddEdge(8, 9)
-    .AddEdge(9, 10)
-    .AddEdge(10, 11)
-    .AddEdge(11, 12)
-    .AddEdge(12, 13)
-    .AddEdge(13, 14)
-    .AddEdge(14, 9) // This edge creates a cycle
-    .AddEdge(1, 4)
-    .AddEdge(3, 6)
-    .AddEdge(5, 8)
-    .AddEdge(7, 10)
-    .AddEdge(9, 12)
+    .AddEdges(
+        (0, 1),
+        (1, 2),
+        (2, 3),
+        (3, 4),
+        (4, 5),
+        (5, 6),
+        (6, 7),
+        (7, 8),
+        (8, 9),
+        (9, 10),
+        (10, 11),
+        (11, 12),
+        (12, 13),
+        (13, 14),
+        (14, 9), // This edge creates a cycle
+        (1, 4),
+        (3, 6),
+        (5, 8),
+        (7, 10),
+        (9, 12))
     .Build();
 graph1.Tarjan();
-
 
 Console.WriteLine("""
 digraph G {

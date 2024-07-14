@@ -4,12 +4,17 @@ using System.Linq;
 
 namespace Yewnyx.Algorithms;
 
-public class Graph
-{
+public sealed class Graph {
     public sealed class Builder {
         private SortedSet<Edge> _edges = new();
         private int _maxIndex = -1;
 
+        public Builder AddEdges(params Edge[] edges) {
+            _edges.UnionWith(edges);
+            _maxIndex = Math.Max(_maxIndex, edges.Max(e => Math.Max(e.From, e.To)));
+            return this;
+        }
+        
         public Builder AddEdge(int from, int to) {
             _edges.Add((from, to));
             _maxIndex = Math.Max(_maxIndex, Math.Max(from, to));
