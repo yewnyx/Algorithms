@@ -50,7 +50,7 @@ public sealed class Graph {
         if (stronglyConnectedComponents == null || vLength > stronglyConnectedComponents.Length) {
             stronglyConnectedComponents = new Segment[vLength];
         }
-        Array.Fill(stronglyConnectedComponents, default);
+        Array.Fill(stronglyConnectedComponents, new Segment(-1, -1));
         _sccIndex = -1;
 
         _stackIndex = 0;
@@ -130,7 +130,7 @@ public sealed class Graph {
                 count++;
             } while (wIndex != vIndex);
             
-            stronglyConnectedComponents[_sccIndex] = (_dependencyOrderIndex - count + 1, count);
+            stronglyConnectedComponents[_sccIndex] = new Segment(_dependencyOrderIndex - count + 1, count);
         }
     }
 }

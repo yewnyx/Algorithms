@@ -51,6 +51,12 @@ var graph1 = new Graph()
 int[] dependencyOrder1 = null!;
 Segment[] stronglyConnectedComponents1 = null!;
 graph1.Tarjan(ref dependencyOrder1, ref stronglyConnectedComponents1);
+foreach (var segment in stronglyConnectedComponents1) {
+    if (segment.Size < 1) { break; }
+    var component = string.Join(", ", dependencyOrder1[segment]);
+    Console.WriteLine($"Strongly connected component: {component}");
+}
+
 
 Console.WriteLine("""
 digraph G {
@@ -88,6 +94,11 @@ var graph2 = new Graph()
 int[] dependencyOrder2 = null!;
 Segment[] stronglyConnectedComponents2 = null!;
 graph2.Tarjan(ref dependencyOrder2, ref stronglyConnectedComponents2);
+foreach (var segment in stronglyConnectedComponents2) {
+    if (segment.Size < 1) { break; }
+    var component = string.Join(", ", dependencyOrder2[segment]);
+    Console.WriteLine($"Strongly connected component: {component}");
+}
 
 Console.WriteLine("""
 digraph G {
@@ -126,5 +137,10 @@ var graph3 = new Graph()
 int[] dependencyOrder3 = null!;
 Segment[] stronglyConnectedComponents3 = null!;
 graph3.Tarjan(ref dependencyOrder3, ref stronglyConnectedComponents3);
+foreach (var segment in stronglyConnectedComponents3) {
+    if (segment.Size < 1) { break; }
+    var component = string.Join(", ", dependencyOrder3[segment]);
+    Console.WriteLine($"Strongly connected component: {component}");
+}
 
 Console.WriteLine("End");

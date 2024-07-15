@@ -14,4 +14,5 @@ public readonly struct Segment(int offset, int size) : IEquatable<Segment> {
 
     public void Deconstruct(out int offset, out int size) => (offset, size) = (Offset, Size);
     public static implicit operator Segment((int offset, int size) tuple) => new(tuple.offset, tuple.size);
+    public static implicit operator Range(Segment segment) => new(segment.Offset, segment.Offset + segment.Size);
 }
