@@ -49,7 +49,7 @@ var graph1 = new Graph()
         (9, 12));
 
 int[] dependencyOrder1 = null!;
-ArraySegment<int>[] stronglyConnectedComponents1 = null!;
+Segment[] stronglyConnectedComponents1 = null!;
 graph1.Tarjan(ref dependencyOrder1, ref stronglyConnectedComponents1);
 
 Console.WriteLine("""
@@ -86,7 +86,7 @@ var graph2 = new Graph()
     .AddEdge(7, 9)
     .AddEdge(8, 6);
 int[] dependencyOrder2 = null!;
-ArraySegment<int>[] stronglyConnectedComponents2 = null!;
+Segment[] stronglyConnectedComponents2 = null!;
 graph2.Tarjan(ref dependencyOrder2, ref stronglyConnectedComponents2);
 
 Console.WriteLine("""
@@ -124,7 +124,7 @@ var graph3 = new Graph()
     .AddEdge(8, 7)
     .AddEdge(8, 8);
 int[] dependencyOrder3 = null!;
-ArraySegment<int>[] stronglyConnectedComponents3 = null!;
+Segment[] stronglyConnectedComponents3 = null!;
 graph3.Tarjan(ref dependencyOrder3, ref stronglyConnectedComponents3);
 
 Console.WriteLine("End");

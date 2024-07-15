@@ -23,14 +23,21 @@ public sealed class Graph {
         _maxIndex = Math.Max(_maxIndex, edges.Max(e => Math.Max(e.From, e.To)));
         return this;
     }
-        
+
+    public Graph AddEdge(Edge edge) {
+        _edges.Add(edge);
+        _maxIndex = Math.Max(_maxIndex, Math.Max(edge.From, edge.To));
+        return this;
+    }
+
+    
     public Graph AddEdge(int from, int to) {
         _edges.Add((from, to));
         _maxIndex = Math.Max(_maxIndex, Math.Max(from, to));
         return this;
     }
     
-    private void _prepare(ref int[] dependencyOrder, ref ArraySegment<int>[] stronglyConnectedComponents) {
+    private void _prepare(ref int[] dependencyOrder, ref Segment[] stronglyConnectedComponents) {
         var vLength = _maxIndex + 1;
 
         if (Vertices == null || Vertices.Length != vLength) { Vertices = new Vertex[vLength]; }
@@ -41,9 +48,9 @@ public sealed class Graph {
         _dependencyOrderIndex = -1;
 
         if (stronglyConnectedComponents == null || vLength > stronglyConnectedComponents.Length) {
-            stronglyConnectedComponents = new ArraySegment<int>[vLength];
+            stronglyConnectedComponents = new Segment[vLength];
         }
-        Array.Fill(dependencyOrder, default);
+        Array.Fill(stronglyConnectedComponents, default);
         _sccIndex = -1;
 
         _stackIndex = 0;
@@ -69,7 +76,7 @@ public sealed class Graph {
         }
     }
     
-    public void Tarjan(ref int[] dependencyOrder, ref ArraySegment<int>[] stronglyConnectedComponents) {
+    public void Tarjan(ref int[] dependencyOrder, ref Segment[] stronglyConnectedComponents) {
         _prepare(ref dependencyOrder, ref stronglyConnectedComponents);
 
         var vLength = Vertices.Length;
@@ -85,7 +92,7 @@ public sealed class Graph {
 
     private int _pop() => _stack[--_stackIndex];
     
-    private void _strongConnect(int vIndex, ref int index, ref int[] dependencyOrder, ref ArraySegment<int>[] stronglyConnectedComponents) {
+    private void _strongConnect(int vIndex, ref int index, ref int[] dependencyOrder, ref Segment[] stronglyConnectedComponents) {
         ref var v = ref Vertices[vIndex];
         v.index = index;
         v.lowlink = index;
@@ -123,7 +130,7 @@ public sealed class Graph {
                 count++;
             } while (wIndex != vIndex);
             
-            stronglyConnectedComponents[_sccIndex] = new ArraySegment<int>(dependencyOrder, _dependencyOrderIndex - count + 1, count);
+            stronglyConnectedComponents[_sccIndex] = (_dependencyOrderIndex - count + 1, count);
         }
     }
 }
