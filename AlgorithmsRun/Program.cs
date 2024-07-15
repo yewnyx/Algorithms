@@ -47,7 +47,10 @@ var graph1 = new Graph()
         (5, 8),
         (7, 10),
         (9, 12));
-graph1.Tarjan();
+
+int[] dependencyOrder1 = null!;
+ArraySegment<int>[] stronglyConnectedComponents1 = null!;
+graph1.Tarjan(ref dependencyOrder1, ref stronglyConnectedComponents1);
 
 Console.WriteLine("""
 digraph G {
@@ -82,7 +85,9 @@ var graph2 = new Graph()
     .AddEdge(5, 8)
     .AddEdge(7, 9)
     .AddEdge(8, 6);
-graph2.Tarjan();
+int[] dependencyOrder2 = null!;
+ArraySegment<int>[] stronglyConnectedComponents2 = null!;
+graph2.Tarjan(ref dependencyOrder2, ref stronglyConnectedComponents2);
 
 Console.WriteLine("""
 digraph G {
@@ -118,4 +123,8 @@ var graph3 = new Graph()
     .AddEdge(8, 5)
     .AddEdge(8, 7)
     .AddEdge(8, 8);
-graph3.Tarjan();
+int[] dependencyOrder3 = null!;
+ArraySegment<int>[] stronglyConnectedComponents3 = null!;
+graph3.Tarjan(ref dependencyOrder3, ref stronglyConnectedComponents3);
+
+Console.WriteLine("End");

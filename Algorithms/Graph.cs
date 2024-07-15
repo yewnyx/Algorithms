@@ -15,6 +15,8 @@ public sealed class Graph {
     private int[] _stack;
     private int _stackIndex;
 
+    private int _dependencyOrderIndex;
+    private int _sccIndex;
 
     public Graph AddEdges(params Edge[] edges) {
         _edges.UnionWith(edges);
@@ -28,14 +30,24 @@ public sealed class Graph {
         return this;
     }
     
-    private void _prepare() {
+    private void _prepare(ref int[] dependencyOrder, ref ArraySegment<int>[] stronglyConnectedComponents) {
         var vLength = _maxIndex + 1;
 
         if (Vertices == null || Vertices.Length != vLength) { Vertices = new Vertex[vLength]; }
         Array.Fill(Vertices, Vertex.New());
+        
+        if (dependencyOrder == null || vLength > dependencyOrder.Length) { dependencyOrder = new int[vLength]; }
+        Array.Fill(dependencyOrder, -1);
+        _dependencyOrderIndex = -1;
+
+        if (stronglyConnectedComponents == null || vLength > stronglyConnectedComponents.Length) {
+            stronglyConnectedComponents = new ArraySegment<int>[vLength];
+        }
+        Array.Fill(dependencyOrder, default);
+        _sccIndex = -1;
 
         _stackIndex = 0;
-        if (_stack == null || _stack.Length != vLength) { _stack = new int[vLength]; }
+        if (_stack == null || vLength > _stack.Length) { _stack = new int[vLength]; }
         Array.Fill(_stack, -1);
 
         if (_edgesArray == null || _edgesArray.Length != _edges.Count) { _edgesArray = new Edge[_edges.Count]; }
@@ -57,14 +69,14 @@ public sealed class Graph {
         }
     }
     
-    public void Tarjan() {
-        _prepare();
+    public void Tarjan(ref int[] dependencyOrder, ref ArraySegment<int>[] stronglyConnectedComponents) {
+        _prepare(ref dependencyOrder, ref stronglyConnectedComponents);
 
         var vLength = Vertices.Length;
         var index = 0;
         for (var i = 0; i < vLength; i++) {
             if (Vertices[i].index == -1) {
-                _strongConnect(i, ref index);
+                _strongConnect(i, ref index, ref dependencyOrder, ref stronglyConnectedComponents);
             }
         }
     }
@@ -73,7 +85,7 @@ public sealed class Graph {
 
     private int _pop() => _stack[--_stackIndex];
     
-    private void _strongConnect(int vIndex, ref int index) {
+    private void _strongConnect(int vIndex, ref int index, ref int[] dependencyOrder, ref ArraySegment<int>[] stronglyConnectedComponents) {
         ref var v = ref Vertices[vIndex];
         v.index = index;
         v.lowlink = index;
@@ -88,7 +100,7 @@ public sealed class Graph {
             if (uIndex == vIndex) {
                 ref var w = ref Vertices[wIndex];
                 if (w.index == -1) {
-                    _strongConnect(wIndex, ref index);
+                    _strongConnect(wIndex, ref index, ref dependencyOrder, ref stronglyConnectedComponents);
                     v.lowlink = Math.Min(v.lowlink, w.lowlink);
                 } else if (w.onStack) {
                     v.lowlink = Math.Min(v.lowlink, w.index);
@@ -100,18 +112,18 @@ public sealed class Graph {
         }
 
         if (v.lowlink == v.index) {
-            // TODO: Optimize this
-            var component = new List<int>();
+            _sccIndex++;
+            var count = 0;
             int wIndex;
             do {
                 wIndex = _pop();
                 ref var w = ref Vertices[wIndex];
                 w.onStack = false;
-                component.Add(wIndex);
+                dependencyOrder[++_dependencyOrderIndex] = wIndex;
+                count++;
             } while (wIndex != vIndex);
-
-            var indices = string.Join(", ", component);
-            Console.WriteLine($"Strongly connected component: {indices}");
+            
+            stronglyConnectedComponents[_sccIndex] = new ArraySegment<int>(dependencyOrder, _dependencyOrderIndex - count + 1, count);
         }
     }
 }
