@@ -37,6 +37,11 @@ public sealed class Graph {
         return this;
     }
     
+    public Graph EnsureIndex(int indexToEnsure) {
+        if (indexToEnsure > _maxIndex) { _maxIndex = indexToEnsure; }
+        return this;
+    }
+    
     private void _prepare(ref int[] dependencyOrder, ref Segment[] stronglyConnectedComponents) {
         var vLength = _maxIndex + 1;
 

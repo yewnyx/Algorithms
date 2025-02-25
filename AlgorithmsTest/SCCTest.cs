@@ -11,7 +11,7 @@ public class SCCTest {
     public SCCTest(ITestOutputHelper output) { _output = output; }
 
     [Fact]
-    public void Test1() {
+    public void TestCycle1() {
         // digraph G {
         //     0 -> 1
         //     1 -> 2
@@ -80,7 +80,7 @@ public class SCCTest {
     }
     
     [Fact]
-    public void Test2() {
+    public void TestCycle2() {
         // digraph G {
         //     0 -> 1
         //     1 -> 2
@@ -146,7 +146,7 @@ public class SCCTest {
     }
     
     [Fact]
-    public void Test3() {
+    public void TestCycle3() {
         // digraph G {
         //     0
         //     1 -> 2
