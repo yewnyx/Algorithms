@@ -1,5 +1,6 @@
 ﻿using FluentAssertions;
 using Xunit.Abstractions;
+using Yewnyx.Algorithms.Graphs;
 
 namespace Yewnyx.Algorithms.Test;
 
