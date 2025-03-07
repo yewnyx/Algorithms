@@ -9,8 +9,27 @@ namespace Yewnyx.Collections;
 public class TwoWayDictionary<TKey, TValue> : ITwoWayDictionary<TKey, TValue>
     where TKey : notnull
     where TValue : notnull {
-    private readonly Dictionary<TKey, TValue> _dictionary = new();
-    private readonly Dictionary<TValue, TKey> _reverseDictionary = new();
+    private readonly Dictionary<TKey, TValue> _dictionary;
+    private readonly Dictionary<TValue, TKey> _reverseDictionary;
+
+    public TwoWayDictionary() {
+        _dictionary = new Dictionary<TKey, TValue>();
+        _reverseDictionary = new Dictionary<TValue, TKey>();
+    }
+
+    public TwoWayDictionary(IReadOnlyCollection<KeyValuePair<TKey, TValue>> collection) {
+        if (collection is TwoWayDictionary<TKey, TValue> twd) {
+            _dictionary = new Dictionary<TKey, TValue>(twd._dictionary);
+            _reverseDictionary = new Dictionary<TValue, TKey>(twd._reverseDictionary);
+        } else {
+            _dictionary = new Dictionary<TKey, TValue>();
+            _reverseDictionary = new Dictionary<TValue, TKey>();
+            foreach (var pair in collection) {
+                _dictionary.Add(pair.Key, pair.Value);
+                _reverseDictionary.Add(pair.Value, pair.Key);
+            }
+        }
+    }
 
     public int Count => _dictionary.Count;
 
@@ -35,6 +54,8 @@ public class TwoWayDictionary<TKey, TValue> : ITwoWayDictionary<TKey, TValue>
         _reverseDictionary[value] = key;
     }
 
+    public void Add(TKey key, TValue value) => _ = TryAdd(key, value);
+
     public bool TryAdd(TKey key, TValue value) {
         if (!_dictionary.TryAdd(key, value)) { return false; }
         if (_reverseDictionary.TryAdd(value, key)) { return true; }
@@ -42,6 +63,9 @@ public class TwoWayDictionary<TKey, TValue> : ITwoWayDictionary<TKey, TValue>
         _dictionary.Remove(key);
         return true;
     }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Add(TValue value, TKey key) => _ = TryAdd(key, value);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryAdd(TValue value, TKey key) => TryAdd(key, value);
