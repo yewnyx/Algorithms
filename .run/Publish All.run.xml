@@ -1,0 +1,7 @@
+﻿<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Publish All" type="CompoundRunConfigurationType">
+    <toRun name="Publish Algorithms" type="DotNetFolderPublish" />
+    <toRun name="Publish Collections" type="DotNetFolderPublish" />
+    <method v="2" />
+  </configuration>
+</component>

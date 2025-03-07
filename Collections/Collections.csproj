@@ -1,0 +1,11 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <Nullable>enable</Nullable>
+        <RootNamespace>Yewnyx.Collections</RootNamespace>
+        <LangVersion>latest</LangVersion>
+        <PackageId>Yewnyx.Collections</PackageId>
+        <RepositoryType>git</RepositoryType>
+        <RepositoryUrl>https://github.com/yewnyx/Algorithms</RepositoryUrl>
+        <TargetFrameworks>net8.0;netstandard2.1</TargetFrameworks>
+    </PropertyGroup>
+</Project>

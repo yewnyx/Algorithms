@@ -1,0 +1,6 @@
+﻿<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Publish Algorithms" type="DotNetFolderPublish" factoryName="Publish to folder">
+    <riderPublish configuration="Release" delete_existing_files="true" platform="Any CPU" runtime="Portable" target_folder="$PROJECT_DIR$/Algorithms/bin/Release/netstandard2.1/publish" target_framework="netstandard2.1" uuid_high="2688092781345065020" uuid_low="-7756683427208634984" />
+    <method v="2" />
+  </configuration>
+</component>
