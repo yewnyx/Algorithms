@@ -4,7 +4,11 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Algorithms", "Algorithms\Al
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AlgorithmsTest", "AlgorithmsTest\AlgorithmsTest.csproj", "{7C11B158-E972-477A-9067-0C3595C930CF}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AlgorithmsRun", "AlgorithmsRun\AlgorithmsRun.csproj", "{EFA301D7-98D6-4F85-A341-B0CA2EB72D80}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Run", "Run\Run.csproj", "{EFA301D7-98D6-4F85-A341-B0CA2EB72D80}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Collections", "Collections\Collections.csproj", "{2002C5E0-AB95-43A7-9E1E-F0FA44386481}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CollectionsTest", "CollectionsTest\CollectionsTest.csproj", "{4133B974-EDE0-432F-844A-0796D9C1D97A}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -24,5 +28,13 @@ Global
 		{EFA301D7-98D6-4F85-A341-B0CA2EB72D80}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{EFA301D7-98D6-4F85-A341-B0CA2EB72D80}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{EFA301D7-98D6-4F85-A341-B0CA2EB72D80}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2002C5E0-AB95-43A7-9E1E-F0FA44386481}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2002C5E0-AB95-43A7-9E1E-F0FA44386481}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2002C5E0-AB95-43A7-9E1E-F0FA44386481}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2002C5E0-AB95-43A7-9E1E-F0FA44386481}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4133B974-EDE0-432F-844A-0796D9C1D97A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4133B974-EDE0-432F-844A-0796D9C1D97A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4133B974-EDE0-432F-844A-0796D9C1D97A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4133B974-EDE0-432F-844A-0796D9C1D97A}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
