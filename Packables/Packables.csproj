@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <Nullable>enable</Nullable>
+        <RootNamespace>Yewnyx.Packables</RootNamespace>
+        <LangVersion>latest</LangVersion>
+        <PackageId>Yewnyx.Packables</PackageId>
+        <RepositoryType>git</RepositoryType>
+        <RepositoryUrl>https://github.com/yewnyx/Packables</RepositoryUrl>
+        <TargetFrameworks>net8.0;netstandard2.1</TargetFrameworks>
+    </PropertyGroup>
+    <ItemGroup>
+      <PackageReference Include="JetBrains.Annotations" Version="2024.3.0" />
+      <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
+    </ItemGroup>
+    <ItemGroup>
+      <ProjectReference Include="..\Collections\Collections.csproj" />
+    </ItemGroup>
+</Project>

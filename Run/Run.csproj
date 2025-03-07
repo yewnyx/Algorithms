@@ -12,6 +12,8 @@
 
     <ItemGroup>
       <ProjectReference Include="..\Algorithms\Algorithms.csproj" />
+      <ProjectReference Include="..\Collections\Collections.csproj" />
+      <ProjectReference Include="..\Packables\Packables.csproj" />
     </ItemGroup>
 
 </Project>

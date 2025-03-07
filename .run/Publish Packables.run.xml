@@ -1,0 +1,6 @@
+﻿<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Publish Packables" type="DotNetFolderPublish" factoryName="Publish to folder">
+    <riderPublish configuration="Release" delete_existing_files="true" platform="Any CPU" runtime="Portable" target_folder="$PROJECT_DIR$/Packables/bin/Release/netstandard2.1/publish" target_framework="netstandard2.1" uuid_high="-3978107588511579479" uuid_low="-6171254929701347248" />
+    <method v="2" />
+  </configuration>
+</component>

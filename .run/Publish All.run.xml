@@ -2,6 +2,7 @@
   <configuration default="false" name="Publish All" type="CompoundRunConfigurationType">
     <toRun name="Publish Algorithms" type="DotNetFolderPublish" />
     <toRun name="Publish Collections" type="DotNetFolderPublish" />
+    <toRun name="Publish Packables" type="DotNetFolderPublish" />
     <method v="2" />
   </configuration>
 </component>
