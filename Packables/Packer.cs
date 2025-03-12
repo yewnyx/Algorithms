@@ -6,26 +6,31 @@ using Yewnyx.Collections;
 
 namespace Yewnyx.Packables;
 
-public ref struct Packer
-{
-    public const int PACKABLE_VERSION = 1;
-
+public ref struct Packer {
     private IReadOnlyTwoWayDictionary<Type, string> builtInTypes;
     private TwoWayDictionary<Type, string> explicitTypes;
     private TwoWayDictionary<string, IPackable> objects;
     private int objectIdInt;
     private int typeIdInt;
 
-    public Packer() {
-        builtInTypes = new TwoWayDictionary<Type, string>();
+    public Packer() : this(null) { }
+
+    public Packer(IReadOnlyTwoWayDictionary<Type, string>? builtInTypes) : this(IPackable.DEFAULT_CONTENT_TYPE,
+        builtInTypes) { }
+
+    public Packer(string contentType, IReadOnlyTwoWayDictionary<Type, string>? builtInTypes) {
+        if (builtInTypes == null) { this.builtInTypes = new TwoWayDictionary<Type, string>(); } else {
+            this.builtInTypes = new TwoWayDictionary<Type, string>(builtInTypes);
+        }
+
         explicitTypes = new TwoWayDictionary<Type, string>();
         objects = new TwoWayDictionary<string, IPackable>();
         objectIdInt = 0;
         typeIdInt = 0;
     }
-    
+
     public JObject Pack(IPackable root) {
-        var result = new JObject {{"version", PACKABLE_VERSION}};
+        var result = new JObject { { "version", IPackable.PACKABLE_VERSION } };
 
         result["root"] = PackReference(root);
 
@@ -38,7 +43,7 @@ public ref struct Packer
             foreach (var (_, packable) in snapshot) {
                 // Skip already-packed objects
                 if (alreadySeen.Contains(packable)) { continue; }
-                
+
                 alreadySeen.Add(packable);
 
                 // Pack the object
@@ -55,7 +60,7 @@ public ref struct Packer
         }
 
         result["objects"] = objs;
-        
+
         var typesDict = new JObject();
         foreach (var (type, typeId) in explicitTypes) {
             var refInfo = new JObject {
@@ -73,9 +78,8 @@ public ref struct Packer
     }
 
     public ObjectRef PackReference(IPackable? value) {
-        if (value is null) {
-            return new ObjectRef("t:null", "o:null");
-        }
+        if (value is null) { return new ObjectRef("t:null", "o:null"); }
+
         var objectId = _addObject(value);
         var typeId = _registerTypeId(value);
         return new ObjectRef(typeId, objectId);
@@ -83,9 +87,8 @@ public ref struct Packer
 
     private ObjectId _addObject(IPackable? value) {
         if (value is null) { return new ObjectId("o:null"); }
-        if (objects.TryGet(value, out var foundId)) {
-            return foundId;
-        }
+
+        if (objects.TryGet(value, out var foundId)) { return foundId; }
 
         objectIdInt++;
         var objectId = (ObjectId)objectIdInt;
@@ -95,9 +98,11 @@ public ref struct Packer
 
     private TypeId _registerTypeId(IPackable? value) {
         if (value is null) { return new TypeId("t:null"); }
+
         var type = value.GetType();
 
         if (builtInTypes.TryGet(type, out var foundImplicitId)) { return foundImplicitId; }
+
         if (explicitTypes.TryGet(type, out var foundExplicitId)) { return foundExplicitId; }
 
         typeIdInt++;
@@ -105,9 +110,10 @@ public ref struct Packer
         explicitTypes[type] = typeId;
         return typeId;
     }
-    
+
     private JToken _makeTypeInfo(IPackable? value, bool extendedInfo = false) {
         if (value is null) { return new TypeId("t:null"); }
+
         var type = value.GetType();
 
         var builtIn = builtInTypes.TryGet(type, out var typeId);
@@ -119,8 +125,7 @@ public ref struct Packer
             //refInfo["fullname"] = type.FullName;
             refInfo["fullname"] = type.AssemblyQualifiedName;
         }
+
         return refInfo;
     }
-    
-
 }
