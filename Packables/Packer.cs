@@ -41,6 +41,7 @@ public ref struct Packer {
 
     public JObject Pack(IPackable root) {
         var result = new JObject {
+            { "Content-Type", _contentType },
             { "version", IPackable.PACKABLE_VERSION },
         };
 

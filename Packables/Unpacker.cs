@@ -41,7 +41,7 @@ public ref struct Unpacker {
         if (_document == null) { return false; }
 
         if (!lenientContentType) {
-            // Strict content-type check TODO: Add to packer/packable
+            // Strict content-type check
             if (!_document.TryGetValue("Content-Type", out var contentTypeToken)) { return false; }
 
             if (contentTypeToken.ToString() != _contentType) { return false; }
