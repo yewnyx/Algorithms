@@ -68,8 +68,9 @@ public ref struct Unpacker {
         // Root object is not in the objects list
         if (!objectsObj.TryGetValue(rootObjectId, out var rootObject)) { return false; }
 
-        // TODO: Hacky, refactor to be more proper
-        _loadTypes(_document["types"] as JObject);
+        if (_document.TryGetValue("types", out var typesToken) && typesToken is JObject typesObj) {
+            _loadTypes(typesObj);
+        }
 
         _objectsDict[rootObjectId] = packable;
         packable.UnpackFrom(ref this, rootObjectId);
