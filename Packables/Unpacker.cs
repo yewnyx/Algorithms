@@ -41,7 +41,7 @@ public ref struct Unpacker {
         if (_document == null) { return false; }
 
         if (!lenientContentType) {
-            // Strict content-type check TODO: Add to packer/packable
+            // Strict content-type check
             if (!_document.TryGetValue("Content-Type", out var contentTypeToken)) { return false; }
 
             if (contentTypeToken.ToString() != _contentType) { return false; }
@@ -68,8 +68,9 @@ public ref struct Unpacker {
         // Root object is not in the objects list
         if (!objectsObj.TryGetValue(rootObjectId, out var rootObject)) { return false; }
 
-        // TODO: Hacky, refactor to be more proper
-        _loadTypes(_document["types"] as JObject);
+        if (_document.TryGetValue("types", out var typesToken) && typesToken is JObject typesObj) {
+            _loadTypes(typesObj);
+        }
 
         _objectsDict[rootObjectId] = packable;
         packable.UnpackFrom(ref this, rootObjectId);

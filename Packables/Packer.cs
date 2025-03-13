@@ -7,11 +7,17 @@ using Yewnyx.Collections;
 namespace Yewnyx.Packables;
 
 public ref struct Packer {
-    private IReadOnlyTwoWayDictionary<Type, string> builtInTypes;
-    private TwoWayDictionary<Type, string> explicitTypes;
-    private TwoWayDictionary<string, IPackable> objects;
+    public string ContentType => _contentType;
+
+    private readonly string _contentType;
+
     private int objectIdInt;
     private int typeIdInt;
+
+    private TwoWayDictionary<string, IPackable> _objectsDict;
+
+    private IReadOnlyTwoWayDictionary<Type, string> _builtInTypes;
+    private TwoWayDictionary<Type, string> _explicitTypes;
 
     public Packer() : this(null) { }
 
@@ -19,18 +25,25 @@ public ref struct Packer {
         builtInTypes) { }
 
     public Packer(string contentType, IReadOnlyTwoWayDictionary<Type, string>? builtInTypes) {
-        if (builtInTypes == null) { this.builtInTypes = new TwoWayDictionary<Type, string>(); } else {
-            this.builtInTypes = new TwoWayDictionary<Type, string>(builtInTypes);
-        }
-
-        explicitTypes = new TwoWayDictionary<Type, string>();
-        objects = new TwoWayDictionary<string, IPackable>();
+        _contentType = contentType;
         objectIdInt = 0;
         typeIdInt = 0;
+        _objectsDict = new TwoWayDictionary<string, IPackable>();
+        
+        if (builtInTypes == null) {
+            _builtInTypes = new TwoWayDictionary<Type, string>();
+        } else {
+            _builtInTypes = new TwoWayDictionary<Type, string>(builtInTypes);
+        }
+
+        _explicitTypes = new TwoWayDictionary<Type, string>();
     }
 
     public JObject Pack(IPackable root) {
-        var result = new JObject { { "version", IPackable.PACKABLE_VERSION } };
+        var result = new JObject {
+            { "Content-Type", _contentType },
+            { "version", IPackable.PACKABLE_VERSION },
+        };
 
         result["root"] = PackReference(root);
 
@@ -39,7 +52,7 @@ public ref struct Packer {
 
         const int recursionLimit = 8;
         for (var i = 0; i < recursionLimit; i++) {
-            var snapshot = objects.ToArray();
+            var snapshot = _objectsDict.ToArray();
             foreach (var (_, packable) in snapshot) {
                 // Skip already-packed objects
                 if (alreadySeen.Contains(packable)) { continue; }
@@ -51,7 +64,7 @@ public ref struct Packer {
                 var packableId = _addObject(packable);
                 packable.PackInto(ref this, obj);
 
-                // Set the packed type (registering if needed)
+                // Set the packed type (registering if needed) TODO: Fix this
                 obj["isa"] = _makeTypeInfo(packable);
 
                 // Attach the packed object to the refs dict
@@ -62,7 +75,7 @@ public ref struct Packer {
         result["objects"] = objs;
 
         var typesDict = new JObject();
-        foreach (var (type, typeId) in explicitTypes) {
+        foreach (var (type, typeId) in _explicitTypes) {
             var refInfo = new JObject {
                 ["type"] = typeId,
                 ["fullname"] = type.AssemblyQualifiedName,
@@ -88,11 +101,11 @@ public ref struct Packer {
     private ObjectId _addObject(IPackable? value) {
         if (value is null) { return new ObjectId("o:null"); }
 
-        if (objects.TryGet(value, out var foundId)) { return foundId; }
+        if (_objectsDict.TryGet(value, out var foundId)) { return foundId; }
 
         objectIdInt++;
         var objectId = (ObjectId)objectIdInt;
-        objects[objectId] = value;
+        _objectsDict[objectId] = value;
         return objectId;
     }
 
@@ -101,13 +114,13 @@ public ref struct Packer {
 
         var type = value.GetType();
 
-        if (builtInTypes.TryGet(type, out var foundImplicitId)) { return foundImplicitId; }
+        if (_builtInTypes.TryGet(type, out var foundImplicitId)) { return foundImplicitId; }
 
-        if (explicitTypes.TryGet(type, out var foundExplicitId)) { return foundExplicitId; }
+        if (_explicitTypes.TryGet(type, out var foundExplicitId)) { return foundExplicitId; }
 
         typeIdInt++;
         var typeId = (TypeId)typeIdInt;
-        explicitTypes[type] = typeId;
+        _explicitTypes[type] = typeId;
         return typeId;
     }
 
@@ -116,7 +129,7 @@ public ref struct Packer {
 
         var type = value.GetType();
 
-        var builtIn = builtInTypes.TryGet(type, out var typeId);
+        var builtIn = _builtInTypes.TryGet(type, out var typeId);
         if (!builtIn) { typeId = _registerTypeId(value); }
 
         var refInfo = new JObject();
