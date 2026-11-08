@@ -113,6 +113,20 @@ public class GraphTest
     }
 
     [Fact]
+    public void TestConnectedComponents() {
+        // Direction is ignored: 0, 3, 4 are joined, so are 1, 2, 5, and 6 stands alone.
+        graph.AddEdges((3, 0), (4, 3), (2, 5), (1, 2)).EnsureIndex(6);
+        int[]? vertices = null;
+        Segment[]? components = null;
+        var count = graph.ConnectedComponents(ref vertices, ref components);
+
+        count.Should().Be(3);
+        vertices[components[0]].Should().Equal(0, 3, 4);
+        vertices[components[1]].Should().Equal(1, 2, 5);
+        vertices[components[2]].Should().Equal(6);
+    }
+
+    [Fact]
     public void TestEdgeOrderAndDuplicatesDoNotMatter() {
         var inOrder = new Graph().AddEdges((0, 1), (1, 2), (2, 0), (2, 3), (3, 4), (4, 3), (1, 4));
         // Same edges, reversed, with (1, 2) added twice.

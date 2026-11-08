@@ -21,6 +21,7 @@ public sealed class Graph {
     private int[] _stack = [];
     private int _stackIndex;
     private int[] _path = [];
+    private int[] _parent = [];
     private int _index;
     private int _dependencyOrderIndex;
     private int _componentIndex;
@@ -85,6 +86,67 @@ public sealed class Graph {
         _ensureLength(ref dependencyOrder);
         _ensureLength(ref stronglyConnectedComponents);
         return Tarjan(dependencyOrder.AsSpan(), stronglyConnectedComponents.AsSpan());
+    }
+
+    /// <summary>
+    /// Groups vertices joined by edges in either direction. Groups are ordered by their lowest vertex,
+    /// and each group's vertices are written in ascending order.
+    /// Output depends only on the vertex count and the set of edges. Returns the number of components.
+    /// </summary>
+    /// <remarks>Both spans need at least <see cref="VertexCount"/> elements.</remarks>
+    public int ConnectedComponents(Span<int> vertices, Span<Segment> components) {
+        _requireLength(vertices.Length, nameof(vertices));
+        _requireLength(components.Length, nameof(components));
+        var vertexCount = VertexCount;
+
+        // Union-find in which every set's root is its lowest vertex, so parent[v] <= v always holds.
+        if (_parent.Length < vertexCount) { _parent = new int[vertexCount]; }
+        var parent = _parent.AsSpan(0, vertexCount);
+        for (var v = 0; v < vertexCount; v++) { parent[v] = v; }
+        foreach (var (from, to) in _edges) {
+            var a = _findRoot(parent, from);
+            var b = _findRoot(parent, to);
+            if (a < b) { parent[b] = a; } else if (b < a) { parent[a] = b; }
+        }
+
+        // Parents point to lower vertices, so one ascending pass points every vertex at its root.
+        // next[root] counts the root's vertices, then becomes its write position (reuses _stack).
+        if (_stack.Length < vertexCount) { _stack = new int[vertexCount]; }
+        var next = _stack.AsSpan(0, vertexCount);
+        next.Clear();
+        for (var v = 0; v < vertexCount; v++) {
+            parent[v] = parent[parent[v]];
+            next[parent[v]]++;
+        }
+
+        var count = 0;
+        var offset = 0;
+        for (var v = 0; v < vertexCount; v++) {
+            if (parent[v] != v) { continue; }
+            var size = next[v];
+            components[count++] = new Segment(offset, size);
+            next[v] = offset;
+            offset += size;
+        }
+        for (var v = 0; v < vertexCount; v++) { vertices[next[parent[v]]++] = v; }
+
+        return count;
+    }
+
+    /// <inheritdoc cref="ConnectedComponents(Span{int}, Span{Segment})"/>
+    /// <remarks>Null or undersized arrays are replaced.</remarks>
+    public int ConnectedComponents([NotNull] ref int[]? vertices, [NotNull] ref Segment[]? components) {
+        _ensureLength(ref vertices);
+        _ensureLength(ref components);
+        return ConnectedComponents(vertices.AsSpan(), components.AsSpan());
+    }
+
+    private static int _findRoot(Span<int> parent, int v) {
+        while (parent[v] != v) {
+            parent[v] = parent[parent[v]];
+            v = parent[v];
+        }
+        return v;
     }
 
     private void _requireLength(int length, string paramName) {
