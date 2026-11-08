@@ -1,0 +1,68 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:views="using:Yewnyx.Algorithms.Visualizer.Views"
+             x:Class="Yewnyx.Algorithms.Visualizer.Views.TimeSlicingPanel">
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="#181B21" Padding="8,6" BorderBrush="#262B33" BorderThickness="0,0,0,1">
+            <StackPanel Spacing="6">
+                <WrapPanel Orientation="Horizontal">
+                    <TextBlock Classes="section" Text="TASKS" />
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Task graphs" ToolTip.Tip="Disconnected dataflow graphs; each connected component becomes one task." /><NumericUpDown x:Name="Count" Minimum="0" Maximum="500000" Increment="500" Value="5000" FormatString="N0" Width="90" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Lone %" ToolTip.Tip="Share of task graphs that are a single node with no edges." /><NumericUpDown x:Name="LonePercent" Minimum="0" Maximum="100" Increment="5" Value="40" FormatString="0.#" Width="56" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Mean size" ToolTip.Tip="Typical node count of a connected task graph; sizes are heavy-tailed around it." /><NumericUpDown x:Name="MeanSize" Minimum="2" Maximum="1000" Increment="1" Value="12" FormatString="0" Width="56" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Max size" /><NumericUpDown x:Name="MaxSize" Minimum="2" Maximum="10000" Increment="10" Value="200" FormatString="0" Width="64" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Pinned %" ToolTip.Tip="Share of task graphs with a pinned node. Up to the cap, pinned tasks run every frame." /><NumericUpDown x:Name="PinnedPercent" Minimum="0" Maximum="100" Increment="0.1" Value="0.2" FormatString="0.0#" Width="56" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Active %" ToolTip.Tip="Chance a task has changed inputs when visited. Unchanged visits only run input nodes." /><NumericUpDown x:Name="ActivePercent" Minimum="0" Maximum="100" Increment="5" Value="25" FormatString="0.#" Width="56" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Seed" /><NumericUpDown x:Name="Seed" Minimum="0" Maximum="2147483647" Increment="1" Value="1" FormatString="0" Width="64" /></StackPanel>
+                    <Button x:Name="GenerateButton" Content="Generate" Margin="8,0,0,0" VerticalAlignment="Center" />
+                </WrapPanel>
+                <WrapPanel Orientation="Horizontal">
+                    <TextBlock Classes="section" Text="FRAME" />
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Budget ms" ToolTip.Tip="Time per frame for the rotation." /><NumericUpDown x:Name="BudgetMs" Minimum="0.01" Maximum="100" Increment="0.25" Value="1" FormatString="0.0#" Width="56" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Pin cap" ToolTip.Tip="Most tasks that may be pinned; pinned tasks past the cap join the rotation." /><NumericUpDown x:Name="PinCap" Minimum="0" Maximum="1000" Increment="1" Value="8" FormatString="0" Width="48" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="FPS" ToolTip.Tip="Frame rate, used to turn frames into milliseconds. The scheduler runs once per frame." /><NumericUpDown x:Name="Fps" Minimum="1" Maximum="1000" Increment="10" Value="60" FormatString="0" Width="56" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="µs: input" /><NumericUpDown x:Name="InputUs" Minimum="0" Maximum="10000" Increment="0.1" Value="0.4" FormatString="0.0#" Width="48" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="compute" /><NumericUpDown x:Name="ComputeUs" Minimum="0" Maximum="10000" Increment="0.1" Value="1.5" FormatString="0.0#" Width="48" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="output" /><NumericUpDown x:Name="OutputUs" Minimum="0" Maximum="10000" Increment="0.1" Value="2" FormatString="0.0#" Width="48" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="visit" ToolTip.Tip="Fixed cost of visiting a task before any node runs." /><NumericUpDown x:Name="VisitUs" Minimum="0" Maximum="10000" Increment="0.1" Value="0.5" FormatString="0.0#" Width="48" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="edits" ToolTip.Tip="Cost of applying queued edits when a rotation starts. Not counted against the budget." /><NumericUpDown x:Name="EditUs" Minimum="0" Maximum="100000" Increment="10" Value="50" FormatString="0" Width="56" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="jitter %" /><NumericUpDown x:Name="JitterPercent" Minimum="0" Maximum="100" Increment="5" Value="25" FormatString="0" Width="48" /></StackPanel>
+                    <Button x:Name="PlayButton" Content="▶ Play" VerticalAlignment="Center" Margin="8,0,0,0" MinWidth="88" />
+                    <Button x:Name="StepButton" Content="Step" VerticalAlignment="Center" Margin="4,0,0,0" />
+                    <Button x:Name="ResetButton" Content="Reset" VerticalAlignment="Center" Margin="4,0,0,0" />
+                    <StackPanel Classes="field">
+                        <TextBlock Classes="label" Text="Speed" />
+                        <Slider x:Name="SpeedSlider" Minimum="0" Maximum="3.3" Value="1.48" Width="110" VerticalAlignment="Center" />
+                        <TextBlock x:Name="SpeedLabel" Classes="label" Text="30 fps" Width="70" />
+                    </StackPanel>
+                </WrapPanel>
+            </StackPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Top" Background="#14171D" Padding="12,8" BorderBrush="#262B33" BorderThickness="0,0,0,1">
+            <StackPanel Spacing="3">
+                <TextBlock x:Name="HeadlineText" Foreground="#E8EDF4" FontSize="14" TextWrapping="Wrap" />
+                <TextBlock x:Name="SubheadText" Foreground="#9AA3B2" FontSize="12" TextWrapping="Wrap" />
+            </StackPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Bottom" Background="#181B21" Padding="10,5" BorderBrush="#262B33" BorderThickness="0,1,0,0">
+            <StackPanel>
+                <TextBlock x:Name="StatusText" Foreground="#C8D0DC" FontFamily="Cascadia Mono, Consolas, monospace" FontSize="12" />
+                <TextBlock x:Name="HoverText" Foreground="#FFD54F" FontFamily="Cascadia Mono, Consolas, monospace" FontSize="12" Margin="0,3,0,0" />
+            </StackPanel>
+        </Border>
+
+        <Grid RowDefinitions="3*,4,2*">
+            <Panel Grid.Row="0">
+                <views:FrameTimelineView x:Name="Timeline" />
+                <TextBlock Classes="pane" Text="Frames, newest right: grey = queued edits at rotation start, red = pinned tasks, blue = rotation (shade flips each rotation), white tick = budget, faint line = rotation end" />
+            </Panel>
+            <GridSplitter Grid.Row="1" ResizeDirection="Rows" />
+            <Panel Grid.Row="2">
+                <views:TaskGridView x:Name="TaskGrid" />
+                <TextBlock Classes="pane" Text="Tasks in cursor order (pinned first, red): bright = just ran, dark = a rotation ago, orange = overdue, white = cursor" />
+            </Panel>
+        </Grid>
+    </DockPanel>
+</UserControl>
