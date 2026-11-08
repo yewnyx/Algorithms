@@ -2,6 +2,9 @@
 
 namespace Yewnyx.Algorithms.Graphs;
 
+/// <summary>
+/// A slice of an array. <c>array.AsSpan(segment)</c> is a view (no copy); <c>array[segment]</c> copies.
+/// </summary>
 public readonly struct Segment(int offset, int size) : IEquatable<Segment> {
     public readonly int Offset = offset;
     public readonly int Size = size;
