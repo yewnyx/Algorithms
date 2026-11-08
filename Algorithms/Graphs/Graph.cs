@@ -25,6 +25,12 @@ public sealed class Graph {
     private int _dependencyOrderIndex;
     private int _componentIndex;
 
+    /// <summary>
+    /// Bumped whenever behaviour callers rely on changes (output order, buffer rules).
+    /// Check it once at startup so a rebuilt library can't change behaviour silently.
+    /// </summary>
+    public static readonly int ContractVersion = 1;
+
     public int VertexCount => _maxIndex + 1;
 
     public Graph AddEdges(params Edge[] edges) {
