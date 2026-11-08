@@ -1,0 +1,56 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:views="using:Yewnyx.Algorithms.Visualizer.Views"
+             x:Class="Yewnyx.Algorithms.Visualizer.Views.ShortestPathsPanel">
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="#181B21" Padding="8,6" BorderBrush="#262B33" BorderThickness="0,0,0,1">
+            <StackPanel Spacing="6">
+                <WrapPanel Orientation="Horizontal">
+                    <TextBlock Classes="section" Text="MAP" />
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Rooms" ToolTip.Tip="Roughly how many rooms. Solving every route takes time proportional to the cube of this, and memory to its square." /><NumericUpDown x:Name="Rooms" Minimum="2" Maximum="1500" Increment="50" Value="300" FormatString="N0" Width="72" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Doors %" ToolTip.Tip="Chance that two neighbouring rooms share a door." /><NumericUpDown x:Name="DoorPercent" Minimum="0" Maximum="100" Increment="5" Value="70" FormatString="0" Width="48" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="One-way %" ToolTip.Tip="Chance that a door only opens one way. One-way doors can trap rooms so they cannot reach the goal." /><NumericUpDown x:Name="OneWayPercent" Minimum="0" Maximum="100" Increment="5" Value="15" FormatString="0" Width="48" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Seed" /><NumericUpDown x:Name="Seed" Minimum="0" Maximum="2147483647" Increment="1" Value="1" FormatString="0" Width="64" /></StackPanel>
+                    <Button x:Name="GenerateButton" Content="New map" Margin="8,0,0,0" VerticalAlignment="Center" />
+                </WrapPanel>
+                <WrapPanel Orientation="Horizontal">
+                    <TextBlock Classes="section" Text="WATCH" />
+                    <Button x:Name="SweepButton" Content="▶ Watch it learn" VerticalAlignment="Center" MinWidth="140"
+                            ToolTip.Tip="Replays Floyd-Warshall one room at a time: at each step every route may also stop over in one more room. Uses a local copy of the textbook loop and compares it with FloydWarshall.Solve at the end." />
+                    <Button x:Name="StepButton" Content="Step" VerticalAlignment="Center" Margin="4,0,0,0" />
+                    <StackPanel Classes="field">
+                        <TextBlock Classes="label" Text="Speed" />
+                        <Slider x:Name="SpeedSlider" Minimum="0" Maximum="2.7" Value="1.3" Width="100" VerticalAlignment="Center" />
+                        <TextBlock x:Name="SpeedLabel" Classes="label" Text="20 /s" Width="60" />
+                    </StackPanel>
+                    <CheckBox x:Name="TableBox" Content="Show distance table" VerticalAlignment="Center" Margin="16,0,0,0" Foreground="#C8D0DC"
+                              ToolTip.Tip="The answer FloydWarshall.Solve actually stores: one distance for every pair of rooms. Row = from, column = to." />
+                </WrapPanel>
+            </StackPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Top" Background="#14171D" Padding="12,8" BorderBrush="#262B33" BorderThickness="0,0,0,1">
+            <StackPanel Spacing="3">
+                <TextBlock x:Name="HeadlineText" Foreground="#E8EDF4" FontSize="14" TextWrapping="Wrap" />
+                <TextBlock x:Name="ActionText" Foreground="#C8D0DC" FontSize="12" TextWrapping="Wrap" />
+                <TextBlock x:Name="ChecksText" Foreground="#7F8896" FontSize="11" TextWrapping="Wrap" />
+            </StackPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Bottom" Background="#181B21" Padding="10,5" BorderBrush="#262B33" BorderThickness="0,1,0,0">
+            <TextBlock x:Name="HoverText" Foreground="#FFD54F" FontFamily="Cascadia Mono, Consolas, monospace" FontSize="12" TextWrapping="Wrap" />
+        </Border>
+
+        <Grid x:Name="Panes" ColumnDefinitions="*,0,0">
+            <Panel Grid.Column="0">
+                <views:FloorPlanView x:Name="Plan" />
+                <TextBlock x:Name="PlanCaption" Classes="pane" />
+            </Panel>
+            <GridSplitter x:Name="Splitter" Grid.Column="1" ResizeDirection="Columns" IsVisible="False" />
+            <Panel Grid.Column="2" x:Name="TablePane" IsVisible="False">
+                <views:MatrixView x:Name="Matrix" />
+                <TextBlock x:Name="MatrixCaption" Classes="pane" Text="Distance table in Tarjan's order: row = from, column = to; blank = no route. Hover a cell to see its route." />
+            </Panel>
+        </Grid>
+    </DockPanel>
+</UserControl>

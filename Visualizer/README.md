@@ -1,6 +1,6 @@
 # Visualizer
 
-Avalonia desktop app that shows `Graph.Tarjan` and `Graph.ConnectedComponents` on large random graphs.
+Avalonia desktop app that shows `Graph.Tarjan`, `Graph.ConnectedComponents` and `FloydWarshall` on random graphs.
 
 ```
 dotnet run -c Release --project Visualizer
@@ -13,3 +13,4 @@ dotnet run -c Release --project Visualizer
 - **Hover.** Hovering a vertex in any view highlights it in the other two.
 - **Time slicing tab.** Replays, in simulated time, a scheduler that runs many small tasks under a per-frame budget. Each task is a connected component of a generated dataflow graph. Pinned tasks run every frame; the rest share a round-robin rotation that stops once the budget is spent, so frame time stays near the budget and extra work turns into a longer rotation. The timeline shows each frame's cost, and the grid shows how long ago each task last ran.
 - **Components and roots tab.** The same graph twice: `ConnectedComponents` ignores edge direction, `Tarjan` follows it. Tarjan rooted at the component vertices writes each component as one contiguous run, aligned with the component segments in the strips below. Click vertices to make them roots and see what each one reaches, the order it is written in, and what is skipped. The shuffle button rebuilds the graph from the same edges in random order with duplicates and confirms every output is unchanged.
+- **Shortest paths tab.** A floor plan of rooms joined by doors, some missing or one-way, solved for every pair of rooms with `FloydWarshall.Solve`. Click a room to make it the goal: every room is coloured by its distance and shows an arrow through the door to take, read from the next-room table, and hovering a room draws its route from `FloydWarshall.Path`. "Watch it learn" replays the algorithm with its own copy of the textbook loop, one room at a time becoming an allowed stopover, and compares its distances with the library when it finishes. Clicking a doorway makes that door fast with `FloydWarshall.Relax` and checks the result against a full re-solve. The distance table the library stores can be shown alongside, in Tarjan's order, where it is block triangular.

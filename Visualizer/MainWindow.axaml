@@ -141,5 +141,8 @@
         <TabItem Header="Components and roots">
             <views:ComponentsPanel />
         </TabItem>
+        <TabItem Header="Shortest paths">
+            <views:ShortestPathsPanel />
+        </TabItem>
     </TabControl>
 </Window>
