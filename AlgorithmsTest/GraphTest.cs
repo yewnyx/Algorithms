@@ -115,6 +115,21 @@ public class GraphTest
     }
 
     [Fact]
+    public void TestClear() {
+        graph.AddEdges((0, 1), (1, 2), (2, 3), (3, 0));
+        int[] dependencyOrder = [];
+        Segment[] stronglyConnectedComponents = [];
+        graph.Tarjan(ref dependencyOrder, ref stronglyConnectedComponents).Should().Be(1);
+
+        // The smaller graph runs in buffers sized for the larger one.
+        graph.Clear().AddEdge(0, 1);
+        var count = graph.Tarjan(ref dependencyOrder, ref stronglyConnectedComponents);
+
+        count.Should().Be(2);
+        dependencyOrder[..2].Should().Equal(1, 0);
+    }
+
+    [Fact]
     public void TestEnsureIndex() {
         graph.EnsureIndex(3);
         int[] dependencyOrder = [];

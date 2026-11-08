@@ -44,6 +44,17 @@ public sealed class Graph {
     }
 
     /// <summary>
+    /// Removes every edge and vertex. Internal buffers are kept for reuse.
+    /// </summary>
+    public Graph Clear() {
+        _edges.Clear();
+        _maxIndex = -1;
+        _dependencyOrder = [];
+        _components = [];
+        return this;
+    }
+
+    /// <summary>
     /// Writes every vertex to <paramref name="dependencyOrder"/>, grouped into strongly connected
     /// components. For every edge A -> B, B's component is written no later than A's.
     /// Output depends only on the vertex count and the set of edges (not insertion order or duplicates).
@@ -52,7 +63,7 @@ public sealed class Graph {
     public int Tarjan([NotNull] ref int[]? dependencyOrder, [NotNull] ref Segment[]? stronglyConnectedComponents) {
         _prepare(ref dependencyOrder, ref stronglyConnectedComponents);
 
-        for (var v = 0; v < _vertices.Length; v++) {
+        for (var v = 0; v < VertexCount; v++) {
             if (_vertices[v].index == -1) { _strongConnect(v); }
         }
 
@@ -72,17 +83,17 @@ public sealed class Graph {
         _components = stronglyConnectedComponents;
         _componentIndex = 0;
 
-        if (_vertices.Length != vertexCount) { _vertices = new Vertex[vertexCount]; }
-        Array.Fill(_vertices, Vertex.New());
+        if (_vertices.Length < vertexCount) { _vertices = new Vertex[vertexCount]; }
+        _vertices.AsSpan(0, vertexCount).Fill(Vertex.New());
 
         if (_stack.Length < vertexCount) { _stack = new int[vertexCount]; }
         if (_path.Length < vertexCount) { _path = new int[vertexCount]; }
         _stackIndex = 0;
         _index = 0;
 
-        if (_targets.Length != edgeCount) { _targets = new int[edgeCount]; }
-        if (_rowStart.Length != vertexCount + 1) { _rowStart = new int[vertexCount + 1]; }
-        _rowStart.AsSpan().Clear();
+        if (_targets.Length < edgeCount) { _targets = new int[edgeCount]; }
+        if (_rowStart.Length < vertexCount + 1) { _rowStart = new int[vertexCount + 1]; }
+        _rowStart.AsSpan(0, vertexCount + 1).Clear();
 
         var i = 0;
         foreach (var (from, to) in _edges) {
