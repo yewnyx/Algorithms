@@ -46,6 +46,7 @@ public sealed class Graph {
     /// <summary>
     /// Writes every vertex to <paramref name="dependencyOrder"/>, grouped into strongly connected
     /// components. For every edge A -> B, B's component is written no later than A's.
+    /// Output depends only on the vertex count and the set of edges (not insertion order or duplicates).
     /// Null or undersized buffers are replaced. Returns the number of components.
     /// </summary>
     public int Tarjan([NotNull] ref int[]? dependencyOrder, [NotNull] ref Segment[]? stronglyConnectedComponents) {

@@ -99,6 +99,22 @@ public class GraphTest
     }
 
     [Fact]
+    public void TestEdgeOrderAndDuplicatesDoNotMatter() {
+        var inOrder = new Graph().AddEdges((0, 1), (1, 2), (2, 0), (2, 3), (3, 4), (4, 3), (1, 4));
+        // Same edges, reversed, with (1, 2) added twice.
+        var shuffled = new Graph().AddEdges((1, 4), (4, 3), (3, 4), (2, 3), (2, 0), (1, 2), (0, 1), (1, 2));
+
+        int[]? expectedOrder = null, actualOrder = null;
+        Segment[]? expectedComponents = null, actualComponents = null;
+        var expectedCount = inOrder.Tarjan(ref expectedOrder, ref expectedComponents);
+        var actualCount = shuffled.Tarjan(ref actualOrder, ref actualComponents);
+
+        actualCount.Should().Be(expectedCount);
+        actualOrder.Should().Equal(expectedOrder);
+        actualComponents[..actualCount].Should().Equal(expectedComponents[..expectedCount]);
+    }
+
+    [Fact]
     public void TestEnsureIndex() {
         graph.EnsureIndex(3);
         int[] dependencyOrder = [];
