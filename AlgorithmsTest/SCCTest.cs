@@ -22,11 +22,17 @@ public class SCCTest {
         //     6 -> 7
         //     7 -> 8
         //     8 -> 9
-        //     0 -> 3
+        //     9 -> 10
+        //     10 -> 11
+        //     11 -> 12
+        //     12 -> 13
+        //     13 -> 14
+        //     14 -> 9
         //     1 -> 4
+        //     3 -> 6
         //     5 -> 8
-        //     7 -> 9
-        //     8 -> 6
+        //     7 -> 10
+        //     9 -> 12
         // }
 
         graph.AddEdges(
@@ -78,7 +84,7 @@ public class SCCTest {
             component.Should().BeEquivalentTo(stronglyConnectedComponentsTest[i]);
         }
     }
-    
+
     [Fact]
     public void TestCycle2() {
         // digraph G {
@@ -91,17 +97,11 @@ public class SCCTest {
         //     6 -> 7
         //     7 -> 8
         //     8 -> 9
-        //     9 -> 10
-        //     10 -> 11
-        //     11 -> 12
-        //     12 -> 13
-        //     13 -> 14
-        //     14 -> 9
+        //     0 -> 3
         //     1 -> 4
-        //     3 -> 6
         //     5 -> 8
-        //     7 -> 10
-        //     9 -> 12
+        //     7 -> 9
+        //     8 -> 6
         // }
 
         graph.AddEdge(0, 1)
@@ -144,7 +144,7 @@ public class SCCTest {
             component.Should().BeEquivalentTo(stronglyConnectedComponentsTest[i]);
         }
     }
-    
+
     [Fact]
     public void TestCycle3() {
         // digraph G {
