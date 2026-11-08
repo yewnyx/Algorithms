@@ -13,6 +13,8 @@ public enum LayoutKind {
     IndexGrid,
     /// <summary>Columns are parallel waves; within a wave each island's vertices are contiguous.</summary>
     WaveLayered,
+    /// <summary>Positions come from <see cref="GraphView.CustomX"/> and <see cref="GraphView.CustomY"/>, in 0..1.</summary>
+    Custom,
 }
 
 /// <summary>
@@ -54,13 +56,36 @@ public sealed class GraphView : Control {
     private Point _pressPoint;
     private Vector _pressPan;
     private bool _dragging;
+    private bool _leftPressed;
 
     public event Action<int>? HoverChanged;
+
+    /// <summary>Raised on a left click that did not drag, with the nearest vertex.</summary>
+    public event Action<int>? VertexClicked;
 
     public LayoutKind Layout { get; set; } = LayoutKind.IndexGrid;
     public ColorMode ColorMode { get; set; } = ColorMode.Island;
     public bool DrawEdges { get; set; } = true;
     public int LinkedHighlight { get; set; } = -1;
+
+    /// <summary>Vertex colour, replacing the palette rules when set.</summary>
+    public Func<int, uint>? ColorOverride { get; set; }
+
+    /// <summary>Layout positions in 0..1 for <see cref="LayoutKind.Custom"/>.</summary>
+    public float[]? CustomX { get; set; }
+    public float[]? CustomY { get; set; }
+
+    /// <summary>
+    /// Draw edge direction: arrowheads when few edges are drawn, otherwise each edge dim at its source
+    /// half and bright at its target half, which still reads at hundreds of thousands of edges.
+    /// </summary>
+    public bool ShowDirection { get; set; }
+
+    /// <summary>Draw edges inside a strongly connected island in orange. Defaults to the wave layout only.</summary>
+    public bool? HighlightCycleEdges { get; set; }
+
+    /// <summary>Text drawn next to vertices, such as root numbers.</summary>
+    public IReadOnlyList<(int vertex, string text, uint color)>? Labels { get; set; }
 
     /// <summary>Share of edges actually drawn, for the status bar.</summary>
     public double EdgeCoverage { get; private set; } = 1;
@@ -111,7 +136,13 @@ public sealed class GraphView : Control {
         var w = Math.Max(1f, width - 2 * margin);
         var h = Math.Max(1f, height - 2 * margin);
 
-        if (Layout == LayoutKind.IndexGrid) {
+        if (Layout == LayoutKind.Custom && CustomX is { } cx && CustomY is { } cy) {
+            // The caller packs for the pane's rough shape, so stretch to fill it.
+            for (var v = 0; v < n; v++) {
+                _baseX[v] = margin + cx[v] * w;
+                _baseY[v] = margin + cy[v] * h;
+            }
+        } else if (Layout == LayoutKind.IndexGrid) {
             var cols = Math.Max(1, (int)Math.Ceiling(Math.Sqrt(n * (double)w / h)));
             var rows = Math.Max(1, (n + cols - 1) / cols);
             var cell = Math.Min(w / cols, h / rows);
@@ -184,28 +215,78 @@ public sealed class GraphView : Control {
         var stride = Math.Max(1, (int)Math.Ceiling(e / (double)EdgeBudget));
         EdgeCoverage = 1.0 / stride;
 
-        var crossing = new StreamGeometry();
-        var internalEdges = new StreamGeometry();
+        var drawn = e / stride;
+        var arrows = ShowDirection && drawn <= 3000;
+        var halves = ShowDirection && !arrows;
+        var arrowBack = DotSize(width, height) / 2.0 + 1;
+        // The before pane must not give away the islands, so by default only the wave layout marks cycles.
+        var markCycles = HighlightCycleEdges ?? Layout == LayoutKind.WaveLayered;
+
+        var crossHead = new StreamGeometry();
+        var crossTail = new StreamGeometry();
+        var innerHead = new StreamGeometry();
+        var innerTail = new StreamGeometry();
+        var crossArrows = new StreamGeometry();
+        var innerArrows = new StreamGeometry();
         var visible = new Rect(-2, -2, width + 4, height + 4);
-        using (var cross = crossing.Open())
-        using (var inner = internalEdges.Open()) {
+        using (var ch = crossHead.Open())
+        using (var ct = crossTail.Open())
+        using (var ih = innerHead.Open())
+        using (var it = innerTail.Open())
+        using (var ca = crossArrows.Open())
+        using (var ia = innerArrows.Open()) {
             for (var i = 0; i < e; i += stride) {
                 var a = ToScreen(from[i]);
                 var b = ToScreen(to[i]);
                 if (!visible.Contains(a) && !visible.Contains(b)) { continue; }
-                // The before pane must not give away the islands, so it draws every edge alike.
-                var target = Layout == LayoutKind.WaveLayered && islandOf[from[i]] == islandOf[to[i]] ? inner : cross;
-                target.BeginFigure(a, false);
-                target.LineTo(b);
-                target.EndFigure(false);
+                var inner = markCycles && islandOf[from[i]] == islandOf[to[i]];
+                var head = inner ? ih : ch;
+                if (halves) {
+                    var mid = (a + b) / 2;
+                    var tail = inner ? it : ct;
+                    tail.BeginFigure(a, false);
+                    tail.LineTo(mid);
+                    tail.EndFigure(false);
+                    head.BeginFigure(mid, false);
+                    head.LineTo(b);
+                    head.EndFigure(false);
+                    continue;
+                }
+                head.BeginFigure(a, false);
+                head.LineTo(b);
+                head.EndFigure(false);
+                if (!arrows) { continue; }
+                var d = b - a;
+                var length = Math.Sqrt(d.X * d.X + d.Y * d.Y);
+                if (length < arrowBack + 2) { continue; }
+                var u = d / length;
+                var tip = b - u * arrowBack;
+                var normal = new Vector(-u.Y, u.X);
+                var arrow = inner ? ia : ca;
+                arrow.BeginFigure(tip, true);
+                arrow.LineTo(tip - u * 7 + normal * 3.2);
+                arrow.LineTo(tip - u * 7 - normal * 3.2);
+                arrow.EndFigure(true);
             }
         }
 
-        var drawn = e / stride;
         var alpha = (byte)Math.Clamp(2600 / Math.Sqrt(Math.Max(1, drawn)), 10, 120);
-        ctx.DrawGeometry(null, new Pen(new SolidColorBrush(Color.FromArgb(alpha, 180, 190, 210)), 1), crossing);
-        ctx.DrawGeometry(null, new Pen(new SolidColorBrush(Color.FromArgb((byte)Math.Min(255, alpha * 2 + 20), 255, 140, 70)), 1), internalEdges);
+        var innerAlpha = (byte)Math.Min(255, alpha * 2 + 20);
+        if (halves) {
+            ctx.DrawGeometry(null, new Pen(new SolidColorBrush(Color.FromArgb((byte)(alpha / 3 + 4), 180, 190, 210)), 1), crossTail);
+            ctx.DrawGeometry(null, new Pen(new SolidColorBrush(Color.FromArgb((byte)(innerAlpha / 3 + 4), 255, 140, 70)), 1), innerTail);
+            alpha = (byte)Math.Min(255, alpha * 2);
+        }
+        ctx.DrawGeometry(null, new Pen(new SolidColorBrush(Color.FromArgb(alpha, 180, 190, 210)), 1), crossHead);
+        ctx.DrawGeometry(null, new Pen(new SolidColorBrush(Color.FromArgb(innerAlpha, 255, 140, 70)), 1), innerHead);
+        if (arrows) {
+            ctx.DrawGeometry(new SolidColorBrush(Color.FromArgb((byte)Math.Min(255, alpha * 2 + 40), 200, 210, 225)), null, crossArrows);
+            ctx.DrawGeometry(new SolidColorBrush(Color.FromArgb(innerAlpha, 255, 140, 70)), null, innerArrows);
+        }
     }
+
+    private int DotSize(int width, int height) =>
+        Math.Clamp((int)Math.Round(Math.Sqrt((double)width * height / Math.Max(1, _model?.N ?? 1)) * 0.55 * Math.Sqrt(_zoom)), 2, 9);
 
     private void RebuildBuckets(int width, int height) {
         _bucketsDirty = false;
@@ -287,18 +368,19 @@ public sealed class GraphView : Control {
         var state = _state;
         var mode = ColorMode;
         var n = model.N;
-        var dot = Math.Clamp((int)Math.Round(Math.Sqrt((double)width * height / n) * 0.55 * Math.Sqrt(_zoom)), 2, 9);
+        var dot = DotSize(width, height);
         var half = dot / 2;
+        var colorOf = ColorOverride ?? (v => Palette.Vertex(model, state, mode, v));
         _nodes.Clear(0);
         var pixels = _nodes.Pixels;
         for (var v = 0; v < n; v++) {
             var x = (int)(_baseX[v] * _zoom + _pan.X);
             var y = (int)(_baseY[v] * _zoom + _pan.Y);
             if (dot == 1) {
-                if ((uint)x < (uint)width && (uint)y < (uint)height) { pixels[y * width + x] = Palette.Vertex(model, state, mode, v); }
+                if ((uint)x < (uint)width && (uint)y < (uint)height) { pixels[y * width + x] = colorOf(v); }
             } else {
                 if (x + half < 0 || y + half < 0 || x - half >= width || y - half >= height) { continue; }
-                _nodes.FillRect(x - half, y - half, dot, dot, Palette.Vertex(model, state, mode, v));
+                _nodes.FillRect(x - half, y - half, dot, dot, colorOf(v));
             }
         }
         _nodes.Upload();
@@ -313,6 +395,21 @@ public sealed class GraphView : Control {
                 if (v < 0) { continue; }
                 var p = ToScreen(v) / scaling;
                 context.DrawEllipse(null, new Pen(new SolidColorBrush(Palette.ToColor(Palette.Worker(w))), 2), p, 6, 6);
+            }
+        }
+
+        if (Labels is { } labels) {
+            foreach (var (v, text, color) in labels) {
+                if (v < 0 || v >= n) { continue; }
+                var p = ToScreen(v) / scaling;
+                if (p.X < -20 || p.Y < -20 || p.X > bounds.Width + 20 || p.Y > bounds.Height + 20) { continue; }
+                var brush = new SolidColorBrush(Palette.ToColor(color));
+                var r = Math.Max(5, dot / scaling + 3);
+                context.DrawEllipse(null, new Pen(brush, 2), p, r, r);
+                var formatted = new FormattedText(text, System.Globalization.CultureInfo.InvariantCulture, FlowDirection.LeftToRight, Typeface.Default, 11, brush);
+                var at = new Point(p.X + 7, p.Y - formatted.Height - 2);
+                context.DrawRectangle(new SolidColorBrush(Color.FromArgb(0xC8, 0x10, 0x13, 0x18)), null, new Rect(at.X - 2, at.Y, formatted.Width + 4, formatted.Height));
+                context.DrawText(formatted, at);
             }
         }
 
@@ -384,6 +481,7 @@ public sealed class GraphView : Control {
             _pressPoint = point.Position;
             _pressPan = _pan;
             _dragging = false;
+            _leftPressed = true;
             e.Pointer.Capture(this);
         }
     }
@@ -407,6 +505,11 @@ public sealed class GraphView : Control {
     protected override void OnPointerReleased(PointerReleasedEventArgs e) {
         base.OnPointerReleased(e);
         e.Pointer.Capture(null);
+        if (_leftPressed && !_dragging && VertexClicked is { } clicked) {
+            var v = Nearest(e.GetPosition(this) * Scaling, 10 * Scaling);
+            if (v >= 0) { clicked(v); }
+        }
+        _leftPressed = false;
         _dragging = false;
     }
 

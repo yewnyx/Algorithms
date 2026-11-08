@@ -138,5 +138,8 @@
         <TabItem Header="Time slicing">
             <views:TimeSlicingPanel />
         </TabItem>
+        <TabItem Header="Components and roots">
+            <views:ComponentsPanel />
+        </TabItem>
     </TabControl>
 </Window>

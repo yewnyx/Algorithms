@@ -1,0 +1,60 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:views="using:Yewnyx.Algorithms.Visualizer.Views"
+             x:Class="Yewnyx.Algorithms.Visualizer.Views.ComponentsPanel">
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="#181B21" Padding="8,6" BorderBrush="#262B33" BorderThickness="0,0,0,1">
+            <StackPanel Spacing="6">
+                <WrapPanel Orientation="Horizontal">
+                    <TextBlock Classes="section" Text="GRAPH" />
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Clusters" ToolTip.Tip="Groups joined by edges. Nothing links two clusters, so each is one connected component." /><NumericUpDown x:Name="Clusters" Minimum="1" Maximum="200000" Increment="10" Value="120" FormatString="N0" Width="80" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Lone %" ToolTip.Tip="Share of clusters that are one vertex with no edges." /><NumericUpDown x:Name="LonePercent" Minimum="0" Maximum="100" Increment="5" Value="10" FormatString="0" Width="48" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Islands / cluster" ToolTip.Tip="Mean strongly connected islands per cluster, linked forward so no cycle spans two islands." /><NumericUpDown x:Name="IslandsPerCluster" Minimum="0" Maximum="1000" Increment="0.5" Value="4" FormatString="0.#" Width="56" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Island size" ToolTip.Tip="Mean vertices per island; each is a ring plus a chord. Size 1 has no cycle." /><NumericUpDown x:Name="IslandSize" Minimum="0" Maximum="10000" Increment="0.5" Value="3" FormatString="0.#" Width="56" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Extra links" ToolTip.Tip="Extra forward links per island inside a cluster." /><NumericUpDown x:Name="ExtraLinks" Minimum="0" Maximum="100" Increment="0.5" Value="0.5" FormatString="0.#" Width="48" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Seed" /><NumericUpDown x:Name="Seed" Minimum="0" Maximum="2147483647" Increment="1" Value="1" FormatString="0" Width="64" /></StackPanel>
+                    <Button x:Name="GenerateButton" Content="Generate" Margin="8,0,0,0" VerticalAlignment="Center" />
+                </WrapPanel>
+                <WrapPanel Orientation="Horizontal">
+                    <TextBlock Classes="section" Text="ROOTS" />
+                    <TextBlock Classes="label" Text="Click vertices in either pane or the strips to add roots in order; click a root again to remove it." />
+                    <Button x:Name="RandomRootsButton" Content="5 random roots" VerticalAlignment="Center" Margin="8,0,0,0" />
+                    <Button x:Name="ClearRootsButton" Content="Clear roots" VerticalAlignment="Center" Margin="4,0,0,0" />
+                    <Button x:Name="ShuffleButton" Content="Shuffle edges + add duplicates" VerticalAlignment="Center" Margin="16,0,0,0"
+                            ToolTip.Tip="Rebuild the graph from the same edges in random order with duplicates, rerun every pass, and compare outputs position by position." />
+                </WrapPanel>
+            </StackPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Top" Background="#14171D" Padding="12,8" BorderBrush="#262B33" BorderThickness="0,0,0,1">
+            <StackPanel Spacing="3">
+                <TextBlock x:Name="HeadlineText" Foreground="#E8EDF4" FontSize="14" TextWrapping="Wrap" />
+                <TextBlock x:Name="RootsText" Foreground="#C8D0DC" FontSize="12" TextWrapping="Wrap" />
+                <TextBlock x:Name="CheckText" Foreground="#9AA3B2" FontSize="12" TextWrapping="Wrap" />
+            </StackPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Bottom" Background="#181B21" Padding="10,5" BorderBrush="#262B33" BorderThickness="0,1,0,0">
+            <TextBlock x:Name="HoverText" Foreground="#FFD54F" FontFamily="Cascadia Mono, Consolas, monospace" FontSize="12" />
+        </Border>
+
+        <Grid RowDefinitions="3*,4,2*">
+            <Grid Grid.Row="0" ColumnDefinitions="*,4,*">
+                <Panel Grid.Column="0">
+                    <views:GraphView x:Name="CcView" />
+                    <TextBlock Classes="pane" Text="ConnectedComponents: direction ignored, one colour per component" />
+                </Panel>
+                <GridSplitter Grid.Column="1" ResizeDirection="Columns" />
+                <Panel Grid.Column="2">
+                    <views:GraphView x:Name="SccView" />
+                    <TextBlock x:Name="SccCaption" Classes="pane" Text="Tarjan: directed, left to right along edges; colour per strongly connected component, orange edges lie on a cycle" />
+                </Panel>
+            </Grid>
+            <GridSplitter Grid.Row="1" ResizeDirection="Rows" />
+            <Panel Grid.Row="2">
+                <views:OutputStripView x:Name="Strips" />
+                <TextBlock x:Name="StripCaption" Classes="pane" Text="Outputs by position, rows per line: ConnectedComponents, then Tarjan rooted at those vertices. White ticks start segments." />
+            </Panel>
+        </Grid>
+    </DockPanel>
+</UserControl>
