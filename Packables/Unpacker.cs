@@ -74,8 +74,7 @@ public ref struct Unpacker {
 
         _objectsDict[rootObjectId] = packable;
         packable.UnpackFrom(ref this, rootObjectId);
-
-        return false;
+        return true;
     }
 
     public bool TryCreateFromReference<TPackable>(JToken token, out TPackable? packable, Func<Type, TPackable?> factory)

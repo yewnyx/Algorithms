@@ -52,7 +52,7 @@ public class PackablesTests {
         var packed = packer.Pack(testValue);
         var unpacker = new Unpacker(packed);
         var unpacked = new Foo();
-        unpacker.TryUnpack(true, ref unpacked).Should();
+        unpacker.TryUnpack(true, ref unpacked).Should().BeTrue();
         var repacker = new Packer();
         var repacked = repacker.Pack(unpacked);
         
