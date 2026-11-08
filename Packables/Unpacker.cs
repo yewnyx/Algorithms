@@ -18,15 +18,15 @@ public ref struct Unpacker {
     private IReadOnlyTwoWayDictionary<Type, string> _builtInTypes;
     private TwoWayDictionary<Type, string> _explicitTypes;
 
-    public Unpacker(JObject document) : this(IPackable.DEFAULT_CONTENT_TYPE, document) { }
-
-    public Unpacker(string contentType, JObject document,
+    public Unpacker(JObject document, string contentType = IPackable.DEFAULT_CONTENT_TYPE,
         IReadOnlyTwoWayDictionary<Type, string>? builtInTypes = null) {
         _contentType = contentType;
         _document = document;
         _objectsDict = new();
 
-        if (builtInTypes == null) { _builtInTypes = new TwoWayDictionary<Type, string>(); } else {
+        if (builtInTypes == null) {
+            _builtInTypes = new TwoWayDictionary<Type, string>();
+        } else {
             _builtInTypes = new TwoWayDictionary<Type, string>(builtInTypes);
         }
 

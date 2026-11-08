@@ -19,12 +19,12 @@ public ref struct Packer {
     private IReadOnlyTwoWayDictionary<Type, string> _builtInTypes;
     private TwoWayDictionary<Type, string> _explicitTypes;
 
-    public Packer() : this(null) { }
+    // Must stay: for a struct, `new Packer()` never calls the constructor below, even though all of
+    // its arguments are optional. Without this one it would leave every field null.
+    public Packer() : this(IPackable.DEFAULT_CONTENT_TYPE) { }
 
-    public Packer(IReadOnlyTwoWayDictionary<Type, string>? builtInTypes) : this(IPackable.DEFAULT_CONTENT_TYPE,
-        builtInTypes) { }
-
-    public Packer(string contentType, IReadOnlyTwoWayDictionary<Type, string>? builtInTypes) {
+    public Packer(string contentType = IPackable.DEFAULT_CONTENT_TYPE,
+        IReadOnlyTwoWayDictionary<Type, string>? builtInTypes = null) {
         _contentType = contentType;
         objectIdInt = 0;
         typeIdInt = 0;
