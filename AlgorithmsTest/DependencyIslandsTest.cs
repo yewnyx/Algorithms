@@ -49,18 +49,12 @@ public class DependencyIslandsTest {
         (8, 9),
     ];
 
-    private readonly int[] _dependencyOrder;
-    private readonly Segment[] _islands;
+    private readonly int[] _dependencyOrder = [];
+    private readonly Segment[] _islands = [];
     private readonly int _islandCount;
 
     public DependencyIslandsTest() {
-        int[] dependencyOrder = null!;
-        Segment[] islands = null!;
-        new Graph().AddEdges(Edges).Tarjan(ref dependencyOrder, ref islands);
-
-        _dependencyOrder = dependencyOrder;
-        _islands = islands;
-        _islandCount = Array.FindIndex(islands, s => s.Size < 1) is var end and >= 0 ? end : islands.Length;
+        _islandCount = new Graph().AddEdges(Edges).Tarjan(ref _dependencyOrder, ref _islands);
     }
 
     [Fact]

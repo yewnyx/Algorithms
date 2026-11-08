@@ -56,9 +56,9 @@ public class GraphTest
             (7, 10),
             (9, 12));
 
-        int[] dependencyOrder = null!;
-        Segment[] stronglyConnectedComponents = null!;
-        graph.Tarjan(ref dependencyOrder, ref stronglyConnectedComponents);
+        int[] dependencyOrder = [];
+        Segment[] stronglyConnectedComponents = [];
+        var count = graph.Tarjan(ref dependencyOrder, ref stronglyConnectedComponents);
 
         // _output.WriteLine("Dependency Ordering: " + string.Join(", ", dependencyOrder));
         dependencyOrder.Should().BeEquivalentTo([14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]);
@@ -79,22 +79,31 @@ public class GraphTest
             [1,],
             [0,],
         ];
-        for (var i = 0; i < stronglyConnectedComponents.Length; i++) {
-            var segment = stronglyConnectedComponents[i];
-            if (segment.Size < 1) { break; }
-
-            var component = dependencyOrder[segment];
+        count.Should().Be(stronglyConnectedComponentsTest.Length);
+        for (var i = 0; i < count; i++) {
+            var component = dependencyOrder[stronglyConnectedComponents[i]];
             // _output.WriteLine($"Component {i}: " + string.Join(", ", component));
             component.Should().BeEquivalentTo(stronglyConnectedComponentsTest[i]);
         }
     }
 
     [Fact]
+    public void TestNullBuffers() {
+        graph.AddEdges((0, 1), (1, 0), (1, 2));
+        int[]? dependencyOrder = null;
+        Segment[]? stronglyConnectedComponents = null;
+        var count = graph.Tarjan(ref dependencyOrder, ref stronglyConnectedComponents);
+
+        count.Should().Be(2);
+        dependencyOrder[stronglyConnectedComponents[0]].Should().Equal(2);
+    }
+
+    [Fact]
     public void TestEnsureIndex() {
         graph.EnsureIndex(3);
-        int[] dependencyOrder = null!;
-        Segment[] stronglyConnectedComponents = null!;
-        graph.Tarjan(ref dependencyOrder, ref stronglyConnectedComponents);
+        int[] dependencyOrder = [];
+        Segment[] stronglyConnectedComponents = [];
+        var count = graph.Tarjan(ref dependencyOrder, ref stronglyConnectedComponents);
 
         // _output.WriteLine("Dependency Ordering: " + string.Join(", ", dependencyOrder));
         dependencyOrder.Should().BeEquivalentTo([0, 1, 2, 3]);
@@ -104,13 +113,11 @@ public class GraphTest
             [2,],
             [3,],
         ];
-        for (var i = 0; i < stronglyConnectedComponents.Length; i++) {
-            var segment = stronglyConnectedComponents[i];
-            if (segment.Size < 1) { break; }
-
-            var component = dependencyOrder[segment];
+        count.Should().Be(stronglyConnectedComponentsTest.Length);
+        for (var i = 0; i < count; i++) {
+            var component = dependencyOrder[stronglyConnectedComponents[i]];
             // _output.WriteLine($"Component {i}: " + string.Join(", ", component));
             component.Should().BeEquivalentTo(stronglyConnectedComponentsTest[i]);
         }
-    } 
+    }
 }
