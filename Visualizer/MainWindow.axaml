@@ -1,0 +1,130 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:views="using:Yewnyx.Algorithms.Visualizer.Views"
+        x:Class="Yewnyx.Algorithms.Visualizer.MainWindow"
+        Title="Algorithms Visualizer — Tarjan islands"
+        Width="1500" Height="950"
+        MinWidth="900" MinHeight="600"
+        Background="#0E1014">
+    <Window.Styles>
+        <Style Selector="TextBlock.label">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="8,0,4,0" />
+            <Setter Property="Foreground" Value="#B0B8C4" />
+        </Style>
+        <Style Selector="TextBlock.pane">
+            <Setter Property="Foreground" Value="#D8DEE8" />
+            <Setter Property="Background" Value="#D0101318" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Padding" Value="8,4" />
+            <Setter Property="Margin" Value="6" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="VerticalAlignment" Value="Top" />
+            <Setter Property="IsHitTestVisible" Value="False" />
+        </Style>
+        <Style Selector="TextBlock.section">
+            <Setter Property="Foreground" Value="#6E7787" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Width" Value="44" />
+            <Setter Property="Margin" Value="4,0" />
+        </Style>
+        <Style Selector="StackPanel.field">
+            <Setter Property="Orientation" Value="Horizontal" />
+            <Setter Property="Margin" Value="0,0,6,0" />
+        </Style>
+        <Style Selector="NumericUpDown">
+            <Setter Property="Width" Value="96" />
+            <Setter Property="ShowButtonSpinner" Value="False" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="GridSplitter">
+            <Setter Property="Background" Value="#262B33" />
+        </Style>
+    </Window.Styles>
+
+    <DockPanel>
+        <!-- Toolbar -->
+        <Border DockPanel.Dock="Top" Background="#181B21" Padding="8,6" BorderBrush="#262B33" BorderThickness="0,0,0,1">
+            <StackPanel Spacing="6">
+                <WrapPanel Orientation="Horizontal">
+                    <TextBlock Classes="section" Text="GRAPH" />
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Nodes" /><NumericUpDown x:Name="NodeCount" Minimum="1" Maximum="2000000" Increment="1000" Value="20000" FormatString="N0" /></StackPanel>
+                    <StackPanel Classes="field">
+                        <TextBlock Classes="label" Text="Shape" ToolTip.Tip="Wide: 6 layers, so many islands per wave. Deep: about 4 islands per layer, so many waves. Custom: set Layers yourself." />
+                        <ComboBox x:Name="ShapeBox" SelectedIndex="0" VerticalAlignment="Center" Width="100">
+                            <ComboBoxItem Content="Wide" />
+                            <ComboBoxItem Content="Deep" />
+                            <ComboBoxItem Content="Custom" />
+                        </ComboBox>
+                    </StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Layers" /><NumericUpDown x:Name="Layers" Minimum="1" Maximum="1000000" Increment="10" Value="6" FormatString="N0" Width="80" IsEnabled="False" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Island size" ToolTip.Tip="Mean vertices per generated island. Each island is a ring plus chords, so it is strongly connected." /><NumericUpDown x:Name="IslandSize" Minimum="1" Maximum="10000" Increment="1" Value="8" FormatString="0.#" Width="64" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Solo %" ToolTip.Tip="Share of islands that are a single vertex with no cycle." /><NumericUpDown x:Name="SoloPercent" Minimum="0" Maximum="100" Increment="1" Value="1" FormatString="0.#" Width="56" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Links" ToolTip.Tip="Mean edges from each island to islands in later layers." /><NumericUpDown x:Name="Links" Minimum="0" Maximum="100" Increment="0.5" Value="2" FormatString="0.0" Width="56" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Chords" ToolTip.Tip="Extra edges per vertex inside its island, on top of the ring." /><NumericUpDown x:Name="Chords" Minimum="0" Maximum="20" Increment="0.25" Value="0.5" FormatString="0.0#" Width="56" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Local %" ToolTip.Tip="Share of links that land near the same position one or two layers down. The rest go to any later layer." /><NumericUpDown x:Name="LocalityPercent" Minimum="0" Maximum="100" Increment="5" Value="85" FormatString="0" Width="56" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Seed" /><NumericUpDown x:Name="Seed" Minimum="0" Maximum="2147483647" Increment="1" Value="1" FormatString="0" Width="64" /></StackPanel>
+                    <Button x:Name="GenerateButton" Content="Generate" Margin="12,0,0,0" VerticalAlignment="Center" />
+                </WrapPanel>
+                <WrapPanel Orientation="Horizontal">
+                    <TextBlock Classes="section" Text="SCAN" />
+                    <StackPanel Classes="field">
+                        <TextBlock Classes="label" Text="Mode" />
+                        <ComboBox x:Name="ModeBox" SelectedIndex="0" VerticalAlignment="Center" Width="110">
+                            <ComboBoxItem Content="Serial" />
+                            <ComboBoxItem Content="Parallel" />
+                        </ComboBox>
+                    </StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Workers" /><NumericUpDown x:Name="Workers" Minimum="1" Maximum="64" Increment="1" Value="4" FormatString="0" Width="56" /></StackPanel>
+                    <StackPanel Classes="field">
+                        <TextBlock Classes="label" Text="Cost / node" />
+                        <Slider x:Name="CostSlider" Minimum="-1" Maximum="3.3" Value="1.3" Width="140" VerticalAlignment="Center" />
+                        <TextBlock x:Name="CostLabel" Classes="label" Text="20 µs" Width="56" />
+                    </StackPanel>
+                    <Button x:Name="PlayButton" Content="▶ Play" VerticalAlignment="Center" Margin="6,0,0,0" MinWidth="96" />
+                    <Button x:Name="ResetButton" Content="Reset" VerticalAlignment="Center" Margin="4,0,0,0" />
+                    <TextBlock Classes="section" Text="VIEW" Margin="28,0,4,0" />
+                    <StackPanel Classes="field">
+                        <TextBlock Classes="label" Text="Colour by" />
+                        <ComboBox x:Name="ColorBox" SelectedIndex="0" VerticalAlignment="Center" Width="110">
+                            <ComboBoxItem Content="Island" />
+                            <ComboBoxItem Content="Worker" />
+                            <ComboBoxItem Content="Wave" />
+                        </ComboBox>
+                    </StackPanel>
+                    <CheckBox x:Name="EdgesCheck" Content="Edges" IsChecked="True" Margin="12,0,0,0" VerticalAlignment="Center" />
+                </WrapPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- Status -->
+        <Border DockPanel.Dock="Bottom" Background="#181B21" Padding="10,5" BorderBrush="#262B33" BorderThickness="0,1,0,0">
+            <StackPanel>
+                <TextBlock x:Name="StatsText" Foreground="#C8D0DC" FontFamily="Cascadia Mono, Consolas, monospace" FontSize="12" Text="Generate a graph to begin." />
+                <TextBlock x:Name="ScanText" Foreground="#9AA3B2" FontFamily="Cascadia Mono, Consolas, monospace" FontSize="12" Margin="0,3,0,0" />
+                <TextBlock x:Name="HoverText" Foreground="#FFD54F" FontFamily="Cascadia Mono, Consolas, monospace" FontSize="12" Margin="0,3,0,0" />
+            </StackPanel>
+        </Border>
+
+        <Grid RowDefinitions="3*,4,2*">
+            <Grid Grid.Row="0" ColumnDefinitions="*,4,*">
+                <Panel Grid.Column="0">
+                    <views:GraphView x:Name="BeforeView" />
+                    <TextBlock Classes="pane" Text="Before — vertices in input order, edges A→B mean A runs before B" />
+                </Panel>
+                <GridSplitter Grid.Column="1" ResizeDirection="Columns" />
+                <Panel Grid.Column="2">
+                    <views:GraphView x:Name="AfterView" />
+                    <TextBlock Classes="pane" Text="After — Tarjan islands grouped into parallel waves, left to right; orange edges are inside a cycle" />
+                </Panel>
+            </Grid>
+            <GridSplitter Grid.Row="1" ResizeDirection="Rows" />
+            <Panel Grid.Row="2">
+                <views:DefragView x:Name="GridView" />
+                <TextBlock Classes="pane" Text="Execution order — one cell per vertex, dependencies first (reverse of Tarjan emission)" />
+            </Panel>
+        </Grid>
+    </DockPanel>
+</Window>
