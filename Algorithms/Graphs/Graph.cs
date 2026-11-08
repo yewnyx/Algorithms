@@ -225,6 +225,8 @@ public sealed class Graph {
 
     // Iterative depth-first search. _path holds the vertices on the current DFS path;
     // each vertex keeps its own cursor into _targets, so no recursion is needed.
+    // A vertex's index becomes Finished once its component is written, so it can never lower a
+    // lowlink again. That stands in for the usual on-stack flag.
     private void _strongConnect(int root, Span<int> dependencyOrder, Span<Segment> components) {
         var depth = 0;
         _path[0] = root;
@@ -240,7 +242,7 @@ public sealed class Graph {
                 if (w.index == -1) {
                     _path[++depth] = wIndex;
                     _visit(wIndex);
-                } else if (w.onStack) {
+                } else {
                     v.lowlink = Math.Min(v.lowlink, w.index);
                 }
                 continue;
@@ -251,7 +253,7 @@ public sealed class Graph {
                 int popped;
                 do {
                     popped = _stack[--_stackIndex];
-                    _vertices[popped].onStack = false;
+                    _vertices[popped].index = Vertex.Finished;
                     dependencyOrder[_dependencyOrderIndex++] = popped;
                 } while (popped != vIndex);
 
@@ -269,16 +271,16 @@ public sealed class Graph {
         ref var v = ref _vertices[vIndex];
         v.index = v.lowlink = _index++;
         v.nextEdge = _rowStart[vIndex];
-        v.onStack = true;
         _stack[_stackIndex++] = vIndex;
     }
 }
 
-public struct Vertex {
+internal struct Vertex {
+    public const int Finished = int.MaxValue;
+
     public int index;
     public int lowlink;
     public int nextEdge;
-    public bool onStack;
 
-    public static Vertex New() => new() { index = -1, lowlink = -1, onStack = false };
+    public static Vertex New() => new() { index = -1, lowlink = -1 };
 }
