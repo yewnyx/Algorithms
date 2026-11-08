@@ -2,7 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:views="using:Yewnyx.Algorithms.Visualizer.Views"
         x:Class="Yewnyx.Algorithms.Visualizer.MainWindow"
-        Title="Algorithms Visualizer — Tarjan islands"
+        Title="Algorithms Visualizer"
         Width="1500" Height="950"
         MinWidth="900" MinHeight="600"
         Background="#0E1014">
@@ -39,11 +39,18 @@
             <Setter Property="ShowButtonSpinner" Value="False" />
             <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
+        <Style Selector="TabItem">
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="MinHeight" Value="34" />
+            <Setter Property="Padding" Value="12,4" />
+        </Style>
         <Style Selector="GridSplitter">
             <Setter Property="Background" Value="#262B33" />
         </Style>
     </Window.Styles>
 
+    <TabControl Padding="0" Margin="0">
+        <TabItem Header="Tarjan islands">
     <DockPanel>
         <!-- Toolbar -->
         <Border DockPanel.Dock="Top" Background="#181B21" Padding="8,6" BorderBrush="#262B33" BorderThickness="0,0,0,1">
@@ -127,4 +134,9 @@
             </Panel>
         </Grid>
     </DockPanel>
+        </TabItem>
+        <TabItem Header="Time slicing">
+            <views:TimeSlicingPanel />
+        </TabItem>
+    </TabControl>
 </Window>
