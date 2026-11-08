@@ -89,6 +89,45 @@ public sealed class Graph {
     }
 
     /// <summary>
+    /// Like <see cref="Tarjan(Span{int}, Span{Segment})"/>, but the search starts only from
+    /// <paramref name="roots"/>, in the order given, and vertices no root can reach are skipped.
+    /// Everything reachable from an earlier root is written before anything first reached from a later one.
+    /// Output depends only on the vertex count, the set of edges and the roots.
+    /// Returns the number of components; the vertices written are the ones those components cover.
+    /// </summary>
+    /// <remarks>
+    /// Both output spans need at least <see cref="VertexCount"/> elements, and <paramref name="roots"/>
+    /// must not share memory with <paramref name="dependencyOrder"/> (it is read while output is written).
+    /// </remarks>
+    public int Tarjan(ReadOnlySpan<int> roots, Span<int> dependencyOrder, Span<Segment> stronglyConnectedComponents) {
+        _requireLength(dependencyOrder.Length, nameof(dependencyOrder));
+        _requireLength(stronglyConnectedComponents.Length, nameof(stronglyConnectedComponents));
+        if (roots.Overlaps(dependencyOrder)) { throw new ArgumentException("Shares memory with dependencyOrder.", nameof(roots)); }
+        foreach (var root in roots) {
+            if ((uint)root >= (uint)VertexCount) { throw new ArgumentOutOfRangeException(nameof(roots), root, "Not a vertex."); }
+        }
+        _prepare();
+
+        foreach (var root in roots) {
+            if (_vertices[root].index == -1) { _strongConnect(root, dependencyOrder, stronglyConnectedComponents); }
+        }
+
+        return _componentIndex;
+    }
+
+    /// <inheritdoc cref="Tarjan(ReadOnlySpan{int}, Span{int}, Span{Segment})"/>
+    /// <remarks>
+    /// Null or undersized arrays are replaced. <paramref name="roots"/> must not share memory with
+    /// <paramref name="dependencyOrder"/>.
+    /// </remarks>
+    public int Tarjan(
+        ReadOnlySpan<int> roots, [NotNull] ref int[]? dependencyOrder, [NotNull] ref Segment[]? stronglyConnectedComponents) {
+        _ensureLength(ref dependencyOrder);
+        _ensureLength(ref stronglyConnectedComponents);
+        return Tarjan(roots, dependencyOrder.AsSpan(), stronglyConnectedComponents.AsSpan());
+    }
+
+    /// <summary>
     /// Groups vertices joined by edges in either direction. Groups are ordered by their lowest vertex,
     /// and each group's vertices are written in ascending order.
     /// Output depends only on the vertex count and the set of edges. Returns the number of components.

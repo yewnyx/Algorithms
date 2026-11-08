@@ -127,6 +127,26 @@ public class GraphTest
     }
 
     [Fact]
+    public void TestRoots() {
+        // Two groups with no edge between them: 4 -> 3 -> 0 and 1 -> 2 -> 5.
+        graph.AddEdges((3, 0), (4, 3), (2, 5), (1, 2));
+        int[]? dependencyOrder = null;
+        Segment[]? stronglyConnectedComponents = null;
+
+        // Rooting one group before the other keeps each group contiguous, in the roots' order.
+        graph.Tarjan([0, 3, 4, 1, 2, 5], ref dependencyOrder, ref stronglyConnectedComponents).Should().Be(6);
+        dependencyOrder.Should().Equal(0, 3, 4, 5, 2, 1);
+
+        // A single root writes only what it can reach.
+        graph.Tarjan([4], ref dependencyOrder, ref stronglyConnectedComponents).Should().Be(3);
+        dependencyOrder[..3].Should().Equal(0, 3, 4);
+
+        // Roots are read while output is written, so they can't share a buffer.
+        var shared = new int[6];
+        graph.Invoking(g => g.Tarjan(shared, shared, new Segment[6])).Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
     public void TestEdgeOrderAndDuplicatesDoNotMatter() {
         var inOrder = new Graph().AddEdges((0, 1), (1, 2), (2, 0), (2, 3), (3, 4), (4, 3), (1, 4));
         // Same edges, reversed, with (1, 2) added twice.
