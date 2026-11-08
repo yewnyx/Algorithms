@@ -4,6 +4,11 @@ using System.Diagnostics.CodeAnalysis;
 
 namespace Yewnyx.Algorithms.Graphs;
 
+/// <remarks>
+/// Results are written into caller-provided spans, so the graph never allocates output and the caller
+/// decides where results live (a pooled array, a slice of a larger buffer). The <c>ref</c> array
+/// overloads are conveniences: they create or grow the arrays, then call the span version.
+/// </remarks>
 public sealed class Graph {
     private readonly SortedSet<Edge> _edges = new();
     private int _maxIndex = -1;
@@ -17,10 +22,7 @@ public sealed class Graph {
     private int _stackIndex;
     private int[] _path = [];
     private int _index;
-
-    private int[] _dependencyOrder = [];
     private int _dependencyOrderIndex;
-    private Segment[] _components = [];
     private int _componentIndex;
 
     public int VertexCount => _maxIndex + 1;
@@ -49,8 +51,6 @@ public sealed class Graph {
     public Graph Clear() {
         _edges.Clear();
         _maxIndex = -1;
-        _dependencyOrder = [];
-        _components = [];
         return this;
     }
 
@@ -58,29 +58,42 @@ public sealed class Graph {
     /// Writes every vertex to <paramref name="dependencyOrder"/>, grouped into strongly connected
     /// components. For every edge A -> B, B's component is written no later than A's.
     /// Output depends only on the vertex count and the set of edges (not insertion order or duplicates).
-    /// Null or undersized buffers are replaced. Returns the number of components.
+    /// Returns the number of components.
     /// </summary>
-    public int Tarjan([NotNull] ref int[]? dependencyOrder, [NotNull] ref Segment[]? stronglyConnectedComponents) {
-        _prepare(ref dependencyOrder, ref stronglyConnectedComponents);
+    /// <remarks>Both spans need at least <see cref="VertexCount"/> elements.</remarks>
+    public int Tarjan(Span<int> dependencyOrder, Span<Segment> stronglyConnectedComponents) {
+        _requireLength(dependencyOrder.Length, nameof(dependencyOrder));
+        _requireLength(stronglyConnectedComponents.Length, nameof(stronglyConnectedComponents));
+        _prepare();
 
         for (var v = 0; v < VertexCount; v++) {
-            if (_vertices[v].index == -1) { _strongConnect(v); }
+            if (_vertices[v].index == -1) { _strongConnect(v, dependencyOrder, stronglyConnectedComponents); }
         }
 
         return _componentIndex;
     }
 
-    private void _prepare([NotNull] ref int[]? dependencyOrder, [NotNull] ref Segment[]? stronglyConnectedComponents) {
+    /// <inheritdoc cref="Tarjan(Span{int}, Span{Segment})"/>
+    /// <remarks>Null or undersized arrays are replaced.</remarks>
+    public int Tarjan([NotNull] ref int[]? dependencyOrder, [NotNull] ref Segment[]? stronglyConnectedComponents) {
+        _ensureLength(ref dependencyOrder);
+        _ensureLength(ref stronglyConnectedComponents);
+        return Tarjan(dependencyOrder.AsSpan(), stronglyConnectedComponents.AsSpan());
+    }
+
+    private void _requireLength(int length, string paramName) {
+        if (length < VertexCount) { throw new ArgumentException($"Needs at least {VertexCount} elements.", paramName); }
+    }
+
+    private void _ensureLength<T>([NotNull] ref T[]? array) {
+        if (array is null || array.Length < VertexCount) { array = new T[VertexCount]; }
+    }
+
+    private void _prepare() {
         var vertexCount = VertexCount;
         var edgeCount = _edges.Count;
 
-        if (dependencyOrder is null || dependencyOrder.Length < vertexCount) { dependencyOrder = new int[vertexCount]; }
-        if (stronglyConnectedComponents is null || stronglyConnectedComponents.Length < vertexCount) {
-            stronglyConnectedComponents = new Segment[vertexCount];
-        }
-        _dependencyOrder = dependencyOrder;
         _dependencyOrderIndex = 0;
-        _components = stronglyConnectedComponents;
         _componentIndex = 0;
 
         if (_vertices.Length < vertexCount) { _vertices = new Vertex[vertexCount]; }
@@ -105,7 +118,7 @@ public sealed class Graph {
 
     // Iterative depth-first search. _path holds the vertices on the current DFS path;
     // each vertex keeps its own cursor into _targets, so no recursion is needed.
-    private void _strongConnect(int root) {
+    private void _strongConnect(int root, Span<int> dependencyOrder, Span<Segment> components) {
         var depth = 0;
         _path[0] = root;
         _visit(root);
@@ -132,10 +145,10 @@ public sealed class Graph {
                 do {
                     popped = _stack[--_stackIndex];
                     _vertices[popped].onStack = false;
-                    _dependencyOrder[_dependencyOrderIndex++] = popped;
+                    dependencyOrder[_dependencyOrderIndex++] = popped;
                 } while (popped != vIndex);
 
-                _components[_componentIndex++] = new Segment(start, _dependencyOrderIndex - start);
+                components[_componentIndex++] = new Segment(start, _dependencyOrderIndex - start);
             }
 
             if (--depth >= 0) {

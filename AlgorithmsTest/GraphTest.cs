@@ -99,6 +99,20 @@ public class GraphTest
     }
 
     [Fact]
+    public void TestSpanBuffers() {
+        graph.AddEdges((0, 1), (1, 0), (1, 2));
+        int[] buffer = [-1, -1, -1, -1, -1, -1];
+        var components = new Segment[3];
+
+        // Output goes into the middle of a larger buffer; nothing outside the slice is touched.
+        var count = graph.Tarjan(buffer.AsSpan(2, 3), components);
+
+        count.Should().Be(2);
+        buffer.Should().Equal(-1, -1, 2, 1, 0, -1);
+        graph.Invoking(g => g.Tarjan(new int[2], components)).Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
     public void TestEdgeOrderAndDuplicatesDoNotMatter() {
         var inOrder = new Graph().AddEdges((0, 1), (1, 2), (2, 0), (2, 3), (3, 4), (4, 3), (1, 4));
         // Same edges, reversed, with (1, 2) added twice.
