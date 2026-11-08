@@ -120,4 +120,19 @@ public class GraphTest
             component.Should().BeEquivalentTo(stronglyConnectedComponentsTest[i]);
         }
     }
+
+    [Fact]
+    public void TestDeepChain() {
+        // 0 -> 1 -> 2 -> ... -> 199999, deep enough to overflow a recursive traversal.
+        const int length = 200_000;
+        for (var i = 0; i < length - 1; i++) { graph.AddEdge(i, i + 1); }
+
+        int[] dependencyOrder = [];
+        Segment[] stronglyConnectedComponents = [];
+        var count = graph.Tarjan(ref dependencyOrder, ref stronglyConnectedComponents);
+
+        count.Should().Be(length);
+        dependencyOrder[0].Should().Be(length - 1);
+        dependencyOrder[length - 1].Should().Be(0);
+    }
 }

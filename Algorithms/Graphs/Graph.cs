@@ -15,6 +15,7 @@ public sealed class Graph {
     private Vertex[] _vertices = [];
     private int[] _stack = [];
     private int _stackIndex;
+    private int[] _path = [];
     private int _index;
 
     private int[] _dependencyOrder = [];
@@ -74,6 +75,7 @@ public sealed class Graph {
         Array.Fill(_vertices, Vertex.New());
 
         if (_stack.Length < vertexCount) { _stack = new int[vertexCount]; }
+        if (_path.Length < vertexCount) { _path = new int[vertexCount]; }
         _stackIndex = 0;
         _index = 0;
 
@@ -89,40 +91,61 @@ public sealed class Graph {
         for (var v = 0; v < vertexCount; v++) { _rowStart[v + 1] += _rowStart[v]; }
     }
 
-    private void _strongConnect(int vIndex) {
-        ref var v = ref _vertices[vIndex];
-        v.index = v.lowlink = _index++;
-        v.onStack = true;
-        _stack[_stackIndex++] = vIndex;
+    // Iterative depth-first search. _path holds the vertices on the current DFS path;
+    // each vertex keeps its own cursor into _targets, so no recursion is needed.
+    private void _strongConnect(int root) {
+        var depth = 0;
+        _path[0] = root;
+        _visit(root);
 
-        for (var i = _rowStart[vIndex]; i < _rowStart[vIndex + 1]; i++) {
-            var wIndex = _targets[i];
-            ref var w = ref _vertices[wIndex];
-            if (w.index == -1) {
-                _strongConnect(wIndex);
-                v.lowlink = Math.Min(v.lowlink, w.lowlink);
-            } else if (w.onStack) {
-                v.lowlink = Math.Min(v.lowlink, w.index);
+        while (depth >= 0) {
+            var vIndex = _path[depth];
+            ref var v = ref _vertices[vIndex];
+
+            if (v.nextEdge < _rowStart[vIndex + 1]) {
+                var wIndex = _targets[v.nextEdge++];
+                ref var w = ref _vertices[wIndex];
+                if (w.index == -1) {
+                    _path[++depth] = wIndex;
+                    _visit(wIndex);
+                } else if (w.onStack) {
+                    v.lowlink = Math.Min(v.lowlink, w.index);
+                }
+                continue;
+            }
+
+            if (v.lowlink == v.index) {
+                var start = _dependencyOrderIndex;
+                int popped;
+                do {
+                    popped = _stack[--_stackIndex];
+                    _vertices[popped].onStack = false;
+                    _dependencyOrder[_dependencyOrderIndex++] = popped;
+                } while (popped != vIndex);
+
+                _components[_componentIndex++] = new Segment(start, _dependencyOrderIndex - start);
+            }
+
+            if (--depth >= 0) {
+                ref var parent = ref _vertices[_path[depth]];
+                parent.lowlink = Math.Min(parent.lowlink, v.lowlink);
             }
         }
+    }
 
-        if (v.lowlink != v.index) { return; }
-
-        var start = _dependencyOrderIndex;
-        int popped;
-        do {
-            popped = _stack[--_stackIndex];
-            _vertices[popped].onStack = false;
-            _dependencyOrder[_dependencyOrderIndex++] = popped;
-        } while (popped != vIndex);
-
-        _components[_componentIndex++] = new Segment(start, _dependencyOrderIndex - start);
+    private void _visit(int vIndex) {
+        ref var v = ref _vertices[vIndex];
+        v.index = v.lowlink = _index++;
+        v.nextEdge = _rowStart[vIndex];
+        v.onStack = true;
+        _stack[_stackIndex++] = vIndex;
     }
 }
 
 public struct Vertex {
     public int index;
     public int lowlink;
+    public int nextEdge;
     public bool onStack;
 
     public static Vertex New() => new() { index = -1, lowlink = -1, onStack = false };
