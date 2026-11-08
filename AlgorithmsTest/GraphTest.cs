@@ -56,9 +56,9 @@ public class GraphTest
             (7, 10),
             (9, 12));
 
-        int[] dependencyOrder = null!;
-        Segment[] stronglyConnectedComponents = null!;
-        graph.Tarjan(ref dependencyOrder, ref stronglyConnectedComponents);
+        int[] dependencyOrder = [];
+        Segment[] stronglyConnectedComponents = [];
+        var count = graph.Tarjan(ref dependencyOrder, ref stronglyConnectedComponents);
 
         // _output.WriteLine("Dependency Ordering: " + string.Join(", ", dependencyOrder));
         dependencyOrder.Should().BeEquivalentTo([14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]);
@@ -79,22 +79,110 @@ public class GraphTest
             [1,],
             [0,],
         ];
-        for (var i = 0; i < stronglyConnectedComponents.Length; i++) {
-            var segment = stronglyConnectedComponents[i];
-            if (segment.Size < 1) { break; }
-
-            var component = dependencyOrder[segment];
+        count.Should().Be(stronglyConnectedComponentsTest.Length);
+        for (var i = 0; i < count; i++) {
+            var component = dependencyOrder[stronglyConnectedComponents[i]];
             // _output.WriteLine($"Component {i}: " + string.Join(", ", component));
             component.Should().BeEquivalentTo(stronglyConnectedComponentsTest[i]);
         }
     }
 
     [Fact]
+    public void TestNullBuffers() {
+        graph.AddEdges((0, 1), (1, 0), (1, 2));
+        int[]? dependencyOrder = null;
+        Segment[]? stronglyConnectedComponents = null;
+        var count = graph.Tarjan(ref dependencyOrder, ref stronglyConnectedComponents);
+
+        count.Should().Be(2);
+        dependencyOrder[stronglyConnectedComponents[0]].Should().Equal(2);
+    }
+
+    [Fact]
+    public void TestSpanBuffers() {
+        graph.AddEdges((0, 1), (1, 0), (1, 2));
+        int[] buffer = [-1, -1, -1, -1, -1, -1];
+        var components = new Segment[3];
+
+        // Output goes into the middle of a larger buffer; nothing outside the slice is touched.
+        var count = graph.Tarjan(buffer.AsSpan(2, 3), components);
+
+        count.Should().Be(2);
+        buffer.Should().Equal(-1, -1, 2, 1, 0, -1);
+        graph.Invoking(g => g.Tarjan(new int[2], components)).Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void TestConnectedComponents() {
+        // Direction is ignored: 0, 3, 4 are joined, so are 1, 2, 5, and 6 stands alone.
+        graph.AddEdges((3, 0), (4, 3), (2, 5), (1, 2)).EnsureIndex(6);
+        int[]? vertices = null;
+        Segment[]? components = null;
+        var count = graph.ConnectedComponents(ref vertices, ref components);
+
+        count.Should().Be(3);
+        vertices[components[0]].Should().Equal(0, 3, 4);
+        vertices[components[1]].Should().Equal(1, 2, 5);
+        vertices[components[2]].Should().Equal(6);
+    }
+
+    [Fact]
+    public void TestRoots() {
+        // Two groups with no edge between them: 4 -> 3 -> 0 and 1 -> 2 -> 5.
+        graph.AddEdges((3, 0), (4, 3), (2, 5), (1, 2));
+        int[]? dependencyOrder = null;
+        Segment[]? stronglyConnectedComponents = null;
+
+        // Rooting one group before the other keeps each group contiguous, in the roots' order.
+        graph.Tarjan([0, 3, 4, 1, 2, 5], ref dependencyOrder, ref stronglyConnectedComponents).Should().Be(6);
+        dependencyOrder.Should().Equal(0, 3, 4, 5, 2, 1);
+
+        // A single root writes only what it can reach.
+        graph.Tarjan([4], ref dependencyOrder, ref stronglyConnectedComponents).Should().Be(3);
+        dependencyOrder[..3].Should().Equal(0, 3, 4);
+
+        // Roots are read while output is written, so they can't share a buffer.
+        var shared = new int[6];
+        graph.Invoking(g => g.Tarjan(shared, shared, new Segment[6])).Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void TestEdgeOrderAndDuplicatesDoNotMatter() {
+        var inOrder = new Graph().AddEdges((0, 1), (1, 2), (2, 0), (2, 3), (3, 4), (4, 3), (1, 4));
+        // Same edges, reversed, with (1, 2) added twice.
+        var shuffled = new Graph().AddEdges((1, 4), (4, 3), (3, 4), (2, 3), (2, 0), (1, 2), (0, 1), (1, 2));
+
+        int[]? expectedOrder = null, actualOrder = null;
+        Segment[]? expectedComponents = null, actualComponents = null;
+        var expectedCount = inOrder.Tarjan(ref expectedOrder, ref expectedComponents);
+        var actualCount = shuffled.Tarjan(ref actualOrder, ref actualComponents);
+
+        actualCount.Should().Be(expectedCount);
+        actualOrder.Should().Equal(expectedOrder);
+        actualComponents[..actualCount].Should().Equal(expectedComponents[..expectedCount]);
+    }
+
+    [Fact]
+    public void TestClear() {
+        graph.AddEdges((0, 1), (1, 2), (2, 3), (3, 0));
+        int[] dependencyOrder = [];
+        Segment[] stronglyConnectedComponents = [];
+        graph.Tarjan(ref dependencyOrder, ref stronglyConnectedComponents).Should().Be(1);
+
+        // The smaller graph runs in buffers sized for the larger one.
+        graph.Clear().AddEdge(0, 1);
+        var count = graph.Tarjan(ref dependencyOrder, ref stronglyConnectedComponents);
+
+        count.Should().Be(2);
+        dependencyOrder[..2].Should().Equal(1, 0);
+    }
+
+    [Fact]
     public void TestEnsureIndex() {
         graph.EnsureIndex(3);
-        int[] dependencyOrder = null!;
-        Segment[] stronglyConnectedComponents = null!;
-        graph.Tarjan(ref dependencyOrder, ref stronglyConnectedComponents);
+        int[] dependencyOrder = [];
+        Segment[] stronglyConnectedComponents = [];
+        var count = graph.Tarjan(ref dependencyOrder, ref stronglyConnectedComponents);
 
         // _output.WriteLine("Dependency Ordering: " + string.Join(", ", dependencyOrder));
         dependencyOrder.Should().BeEquivalentTo([0, 1, 2, 3]);
@@ -104,13 +192,26 @@ public class GraphTest
             [2,],
             [3,],
         ];
-        for (var i = 0; i < stronglyConnectedComponents.Length; i++) {
-            var segment = stronglyConnectedComponents[i];
-            if (segment.Size < 1) { break; }
-
-            var component = dependencyOrder[segment];
+        count.Should().Be(stronglyConnectedComponentsTest.Length);
+        for (var i = 0; i < count; i++) {
+            var component = dependencyOrder[stronglyConnectedComponents[i]];
             // _output.WriteLine($"Component {i}: " + string.Join(", ", component));
             component.Should().BeEquivalentTo(stronglyConnectedComponentsTest[i]);
         }
-    } 
+    }
+
+    [Fact]
+    public void TestDeepChain() {
+        // 0 -> 1 -> 2 -> ... -> 199999, deep enough to overflow a recursive traversal.
+        const int length = 200_000;
+        for (var i = 0; i < length - 1; i++) { graph.AddEdge(i, i + 1); }
+
+        int[] dependencyOrder = [];
+        Segment[] stronglyConnectedComponents = [];
+        var count = graph.Tarjan(ref dependencyOrder, ref stronglyConnectedComponents);
+
+        count.Should().Be(length);
+        dependencyOrder[0].Should().Be(length - 1);
+        dependencyOrder[length - 1].Should().Be(0);
+    }
 }
