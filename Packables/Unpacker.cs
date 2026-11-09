@@ -101,18 +101,19 @@ public ref struct Unpacker {
         // Type doesn't resolve
         if (!_tryResolveTypeId(typeId, out var type, out _)) { return false; }
 
-        // Add the raw packable first.
-        // If it needed to be added, create then unpack. Else it was already there.
-        if (!_objectsDict.ContainsKey(objectId)) {
-            packable = factory(type);
-            if (packable == null) { return false; }
-
-            _objectsDict[objectId] = packable;
-            packable.UnpackFrom(ref this, objectId);
-            return true;
+        // Already unpacked: a shared reference, or a loop back to an object still being unpacked.
+        if (_objectsDict.TryGetValue(objectId, out var existing)) {
+            packable = existing as TPackable;
+            return packable != null;
         }
 
-        return false;
+        // Registered before unpacking, so references back to it find it.
+        packable = factory(type);
+        if (packable == null) { return false; }
+
+        _objectsDict[objectId] = packable;
+        packable.UnpackFrom(ref this, objectId);
+        return true;
     }
 
     public bool TryGetJson(string key, ObjectId objectId, out JToken result) {

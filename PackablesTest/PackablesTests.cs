@@ -105,6 +105,33 @@ public class PackablesTests {
         values.Should().Equal(Enumerable.Range(1, 20));
     }
 
+    [Fact]
+    public void ShouldUnpackSharedReferences() {
+        var baz = new Baz { z = 1, w = "a" };
+        var packer = new Packer();
+        var packed = packer.Pack(new Pair { first = baz, second = baz });
+
+        var unpacked = new Pair();
+        var unpacker = new Unpacker(packed);
+        unpacker.TryUnpack(ref unpacked).Should().BeTrue();
+        unpacked.first.Should().NotBeNull();
+        unpacked.second.Should().BeSameAs(unpacked.first);
+    }
+
+    [Fact]
+    public void ShouldUnpackLoops() {
+        var first = new Node { value = 1 };
+        first.next = new Node { value = 2, next = first };
+        var packer = new Packer();
+        var packed = packer.Pack(first);
+
+        var unpacked = new Node();
+        var unpacker = new Unpacker(packed);
+        unpacker.TryUnpack(ref unpacked).Should().BeTrue();
+        unpacked.next!.value.Should().Be(2);
+        unpacked.next.next.Should().BeSameAs(unpacked);
+    }
+
     // [Fact]
     public void ShouldHandleBuiltInTypes() { // TODO: Type aliases/renames need fixing, along with the built-in types
         var testValue = new Foo {
