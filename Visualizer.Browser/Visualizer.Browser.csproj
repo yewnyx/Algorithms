@@ -12,10 +12,15 @@
         <RootNamespace>Yewnyx.Algorithms.Visualizer</RootNamespace>
         <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
         <InvariantGlobalization>true</InvariantGlobalization>
-        <!-- The scans run on real threads. The page must be cross-origin isolated; see wwwroot/main.js. -->
-        <WasmEnableThreads>true</WasmEnableThreads>
+        <!-- The scans run on real threads. The page must be cross-origin isolated; see wwwroot/main.js.
+             Publishing with -p:WasmEnableThreads=false makes the single-threaded fallback build. -->
+        <WasmEnableThreads Condition="'$(WasmEnableThreads)' == ''">true</WasmEnableThreads>
         <!-- Thread.Start is flagged as unsupported on browser, but it works with WasmEnableThreads. -->
         <NoWarn>$(NoWarn);CA1416</NoWarn>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(WasmEnableThreads)' != 'true'">
+        <DefineConstants>$(DefineConstants);SINGLE_THREADED</DefineConstants>
     </PropertyGroup>
 
     <ItemGroup>

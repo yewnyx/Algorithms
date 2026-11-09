@@ -6,6 +6,13 @@
     <title>Algorithms Visualizer</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="./app.css" />
+    <script>
+        // coi-serviceworker settings. With ?single, main.js runs without threads, so skip it.
+        window.coi = {
+            shouldRegister: () => !new URLSearchParams(location.search).has('single'),
+            doReload: () => { window.coiReloading = true; location.reload(); },
+        };
+    </script>
     <script src="./coi-serviceworker.js"></script>
     <script type="module" src="./main.js"></script>
 </head>

@@ -48,6 +48,11 @@ public partial class MainView : UserControl {
         };
         CostLabel.Text = FormatCost(NodeCost);
         Workers.Value = Math.Clamp(Environment.ProcessorCount / 2, 2, 16);
+        if (!Hosting.ThreadsAvailable) {
+            ((ComboBoxItem)ModeBox.Items[1]!).IsEnabled = false;
+            Workers.IsEnabled = false;
+            ToolTip.SetTip(ModeBox, "Parallel needs threads, which this single-threaded build does not have.");
+        }
 
         _frame = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(16) };
         _frame.Tick += (_, _) => OnFrame();
@@ -164,6 +169,7 @@ public partial class MainView : UserControl {
     }
 
     private void OnFrame() {
+        _scanner?.Step(TimeSpan.FromMilliseconds(10));
         Redraw();
         var now = Stopwatch.GetTimestamp();
         if (now - _lastStatusTick > Stopwatch.Frequency / 10) {
@@ -184,7 +190,9 @@ public partial class MainView : UserControl {
 
     private void UpdateScanText() {
         if (_scanner is null || _model is null) {
-            ScanText.Text = _model is null ? "" : "Press Play to scan the execution order. Serial walks it linearly; Parallel runs islands as their dependencies complete.";
+            ScanText.Text = _model is null ? "" : Hosting.ThreadsAvailable
+                ? "Press Play to scan the execution order. Serial walks it linearly; Parallel runs islands as their dependencies complete."
+                : "Press Play to scan the execution order. Serial walks it linearly. Parallel needs threads, which this single-threaded build does not have.";
             return;
         }
         var state = _scanner.State;

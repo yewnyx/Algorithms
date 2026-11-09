@@ -31,6 +31,11 @@ jobs:
       run: dotnet workload install wasm-tools
     - name: Publish
       run: dotnet publish Visualizer.Browser --configuration Release --output publish -p:CompressionEnabled=false
+    - name: Publish the single-threaded fallback
+      run: |
+        dotnet publish Visualizer.Browser --configuration Release --output artifacts/single/publish --artifacts-path artifacts/single -p:WasmEnableThreads=false -p:CompressionEnabled=false
+        mkdir -p publish/wwwroot/single
+        cp -r artifacts/single/publish/wwwroot/_framework publish/wwwroot/single/_framework
     - name: Upload
       uses: actions/upload-pages-artifact@v3
       with:
