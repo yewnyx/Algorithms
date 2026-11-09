@@ -37,6 +37,11 @@ public ref struct Unpacker {
     public bool TryUnpack<TPackable>(ref TPackable packable) where TPackable : class, IPackable =>
         TryUnpack(false, ref packable);
 
+    /// <summary>
+    /// Unpacks the document's root object into <paramref name="packable"/>. Returns false, before
+    /// touching it, if the content type doesn't match (unless lenient), the document is from a newer
+    /// format version, or it has no root object.
+    /// </summary>
     public bool TryUnpack<TPackable>(bool lenientContentType, ref TPackable packable)
         where TPackable : class, IPackable {
         if (_document == null) { return false; }
@@ -46,6 +51,12 @@ public ref struct Unpacker {
             if (!_document.TryGetValue("Content-Type", out var contentTypeToken)) { return false; }
 
             if (contentTypeToken.ToString() != _contentType) { return false; }
+        }
+
+        // A newer format can't be read safely. A missing version is accepted: Packer always writes one.
+        if (_document.TryGetValue("version", out var versionToken) &&
+            (versionToken.Type != JTokenType.Integer || versionToken.Value<long>() > IPackable.PACKABLE_VERSION)) {
+            return false;
         }
 
         // Doesn't have { ... "root": { ... } }

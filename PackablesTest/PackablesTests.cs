@@ -144,6 +144,18 @@ public class PackablesTests {
         unpacked.z.Should().Be(1);
     }
 
+    [Fact]
+    public void ShouldRejectNewerFormatVersions() {
+        var packer = new Packer();
+        var packed = packer.Pack(new Baz { z = 1, w = "a" });
+        packed["version"] = IPackable.PACKABLE_VERSION + 1;
+
+        // Lenient only relaxes the content type, not the version.
+        var unpacked = new Baz();
+        var unpacker = new Unpacker(packed);
+        unpacker.TryUnpack(true, ref unpacked).Should().BeFalse();
+    }
+
     // [Fact]
     public void ShouldHandleBuiltInTypes() { // TODO: Type aliases/renames need fixing, along with the built-in types
         var testValue = new Foo {
