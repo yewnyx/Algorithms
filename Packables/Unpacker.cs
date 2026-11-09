@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Yewnyx.Collections;
 
@@ -122,10 +121,7 @@ public ref struct Unpacker {
         // Get the object's dictionary
         if (!_objects.TryGetValue(objectId, out var objectToken)) { return false; }
 
-        if (objectToken is not JObject jsonObject) {
-            Console.Error.WriteLine($"Object '{objectId.ToString()}' is not a JObject.");
-            return false;
-        }
+        if (objectToken is not JObject jsonObject) { return false; }
 
         return jsonObject.TryGetValue(key, out result);
     }
@@ -153,27 +149,19 @@ public ref struct Unpacker {
             var typeListKey = typeProperty.Name;
             if (_tryResolveTypeId(typeListKey, out _, out _)) { continue; }
 
-            // An entry without a type name can't be resolved, so it's skipped.
+            // Entries that are malformed or name an unknown type are skipped. A reference to one of
+            // them then fails in TryCreateFromReference, which is where the caller finds out.
             if (typeProperty.Value is not JObject typeObj ||
                 !typeObj.TryGetValue("fullname", out var typeNameToken)) { continue; }
 
             var typeName = typeNameToken.ToString();
             if (_tryResolveTypeId(typeName, out var type, out var isBuiltIn)) {
-                if (!isBuiltIn) {
-                    if (!_explicitTypes.TryAdd(type, typeListKey)) {
-                        Console.Error.WriteLine(
-                            $"Could not register type '{typeListKey}' as '{type.FullName}'.");
-                    }
-                }
-
+                if (!isBuiltIn) { _explicitTypes.TryAdd(type, typeListKey); }
                 continue;
             }
 
             var found = Type.GetType(typeName);
-            if (found == null) {
-                Console.Error.WriteLine($"Did not find type for: '{typeObj.ToString(Formatting.None)}'.");
-                continue;
-            }
+            if (found == null) { continue; }
 
             if (!_explicitTypes.Contains(found)) { _explicitTypes[typeListKey] = found; }
         }
