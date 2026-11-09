@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Runtime.CompilerServices;
 using Newtonsoft.Json.Linq;
 using Yewnyx.Collections;
@@ -52,29 +51,19 @@ public ref struct Packer {
 
         result["root"] = PackReference(root);
 
-        var alreadySeen = new HashSet<IPackable>(ReferenceComparer.Instance);
         var objs = new JObject();
 
-        const int recursionLimit = 8;
-        for (var i = 0; i < recursionLimit; i++) {
-            var snapshot = _objects.ToArray();
-            foreach (var packable in snapshot) {
-                // Skip already-packed objects
-                if (alreadySeen.Contains(packable)) { continue; }
+        // Packing an object can reach new ones, which join the end of _objects, so this runs until
+        // nothing new turns up. Objects are packed in id order.
+        for (var i = 0; i < _objects.Count; i++) {
+            var packable = _objects[i];
+            var obj = new JObject();
+            packable.PackInto(ref this, obj);
 
-                alreadySeen.Add(packable);
+            // Set the packed type (registering if needed) TODO: Fix this
+            obj["isa"] = _makeTypeInfo(packable);
 
-                // Pack the object
-                var obj = new JObject();
-                var packableId = _addObject(packable);
-                packable.PackInto(ref this, obj);
-
-                // Set the packed type (registering if needed) TODO: Fix this
-                obj["isa"] = _makeTypeInfo(packable);
-
-                // Attach the packed object to the refs dict
-                objs[packableId] = obj;
-            }
+            objs[_objectIds[packable]] = obj;
         }
 
         result["objects"] = objs;

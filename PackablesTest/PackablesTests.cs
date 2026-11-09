@@ -88,6 +88,23 @@ public class PackablesTests {
         packed["objects"].Should().HaveCount(3);
     }
 
+    [Fact]
+    public void ShouldPackDeepChains() {
+        Node? head = null;
+        for (var value = 20; value > 0; value--) { head = new Node { value = value, next = head }; }
+        var packer = new Packer();
+        var packed = packer.Pack(head!);
+
+        packed["objects"].Should().HaveCount(20);
+
+        var unpacked = new Node();
+        var unpacker = new Unpacker(packed);
+        unpacker.TryUnpack(ref unpacked).Should().BeTrue();
+        var values = new List<int>();
+        for (var node = unpacked; node != null; node = node.next) { values.Add(node.value); }
+        values.Should().Equal(Enumerable.Range(1, 20));
+    }
+
     // [Fact]
     public void ShouldHandleBuiltInTypes() { // TODO: Type aliases/renames need fixing, along with the built-in types
         var testValue = new Foo {
@@ -243,6 +260,24 @@ public class PackablesTests {
             }
             if (unpacker.TryGetJson("second", objectId, out token)) {
                 unpacker.TryCreateFromReference(token, out second, _ => new Baz());
+            }
+        }
+    }
+
+    // A linked chain, which may loop back on itself.
+    sealed class Node : IPackable {
+        public int value;
+        public Node? next;
+
+        public void PackInto(ref Packer packer, JObject storage) {
+            storage["value"] = value;
+            storage["next"] = packer.PackReference(next);
+        }
+
+        public void UnpackFrom(ref Unpacker unpacker, ObjectId objectId) {
+            if (unpacker.TryGetJson("value", objectId, out var token)) { value = token.ToObject<int>(); }
+            if (unpacker.TryGetJson("next", objectId, out token)) {
+                unpacker.TryCreateFromReference(token, out next, _ => new Node());
             }
         }
     }
