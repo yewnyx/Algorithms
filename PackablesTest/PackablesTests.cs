@@ -78,6 +78,16 @@ public class PackablesTests {
         other.TryUnpack(true, ref unpacked).Should().BeTrue();
     }
 
+    [Fact]
+    public void ShouldKeepEqualObjectsSeparate() {
+        // Baz compares by value, but these are two objects and must be packed as two.
+        var pair = new Pair { first = new Baz { z = 1, w = "a" }, second = new Baz { z = 1, w = "a" } };
+        var packer = new Packer();
+        var packed = packer.Pack(pair);
+
+        packed["objects"].Should().HaveCount(3);
+    }
+
     // [Fact]
     public void ShouldHandleBuiltInTypes() { // TODO: Type aliases/renames need fixing, along with the built-in types
         var testValue = new Foo {
@@ -213,7 +223,27 @@ public class PackablesTests {
         public static bool operator ==(Baz? left, Baz? right) => 
             Equals(left, right);
 
-        public static bool operator !=(Baz? left, Baz? right) => 
+        public static bool operator !=(Baz? left, Baz? right) =>
             !Equals(left, right);
+    }
+
+    // Two references, which may point at the same object.
+    sealed class Pair : IPackable {
+        public Baz? first;
+        public Baz? second;
+
+        public void PackInto(ref Packer packer, JObject storage) {
+            storage["first"] = packer.PackReference(first);
+            storage["second"] = packer.PackReference(second);
+        }
+
+        public void UnpackFrom(ref Unpacker unpacker, ObjectId objectId) {
+            if (unpacker.TryGetJson("first", objectId, out var token)) {
+                unpacker.TryCreateFromReference(token, out first, _ => new Baz());
+            }
+            if (unpacker.TryGetJson("second", objectId, out token)) {
+                unpacker.TryCreateFromReference(token, out second, _ => new Baz());
+            }
+        }
     }
 }

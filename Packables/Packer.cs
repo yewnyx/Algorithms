@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using Newtonsoft.Json.Linq;
 using Yewnyx.Collections;
 
@@ -14,7 +15,10 @@ public ref struct Packer {
     private int objectIdInt;
     private int typeIdInt;
 
-    private TwoWayDictionary<string, IPackable> _objectsDict;
+    // Objects are told apart by reference, never by Equals: two equal objects are still two objects,
+    // and a mutable object's hash can change while it's being packed.
+    private Dictionary<IPackable, string> _objectIds;
+    private List<IPackable> _objects; // In id order.
 
     private IReadOnlyTwoWayDictionary<Type, string> _builtInTypes;
     private TwoWayDictionary<Type, string> _explicitTypes;
@@ -28,7 +32,8 @@ public ref struct Packer {
         _contentType = contentType;
         objectIdInt = 0;
         typeIdInt = 0;
-        _objectsDict = new TwoWayDictionary<string, IPackable>();
+        _objectIds = new Dictionary<IPackable, string>(ReferenceComparer.Instance);
+        _objects = new List<IPackable>();
         
         if (builtInTypes == null) {
             _builtInTypes = new TwoWayDictionary<Type, string>();
@@ -47,13 +52,13 @@ public ref struct Packer {
 
         result["root"] = PackReference(root);
 
-        var alreadySeen = new HashSet<IPackable>();
+        var alreadySeen = new HashSet<IPackable>(ReferenceComparer.Instance);
         var objs = new JObject();
 
         const int recursionLimit = 8;
         for (var i = 0; i < recursionLimit; i++) {
-            var snapshot = _objectsDict.ToArray();
-            foreach (var (_, packable) in snapshot) {
+            var snapshot = _objects.ToArray();
+            foreach (var packable in snapshot) {
                 // Skip already-packed objects
                 if (alreadySeen.Contains(packable)) { continue; }
 
@@ -101,11 +106,12 @@ public ref struct Packer {
     private ObjectId _addObject(IPackable? value) {
         if (value is null) { return new ObjectId("o:null"); }
 
-        if (_objectsDict.TryGet(value, out var foundId)) { return foundId; }
+        if (_objectIds.TryGetValue(value, out var foundId)) { return foundId; }
 
         objectIdInt++;
         var objectId = (ObjectId)objectIdInt;
-        _objectsDict[objectId] = value;
+        _objectIds[value] = objectId;
+        _objects.Add(value);
         return objectId;
     }
 
@@ -140,5 +146,12 @@ public ref struct Packer {
         }
 
         return refInfo;
+    }
+
+    // ReferenceEqualityComparer is .NET 5+, so netstandard2.1 needs its own.
+    private sealed class ReferenceComparer : IEqualityComparer<IPackable> {
+        public static readonly ReferenceComparer Instance = new();
+        public bool Equals(IPackable? x, IPackable? y) => ReferenceEquals(x, y);
+        public int GetHashCode(IPackable obj) => RuntimeHelpers.GetHashCode(obj);
     }
 }

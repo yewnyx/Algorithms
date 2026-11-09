@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Yewnyx.Collections;
@@ -13,7 +14,8 @@ public ref struct Unpacker {
     private JObject _document;
     private JObject _objects;
 
-    private TwoWayDictionary<string, IPackable> _objectsDict;
+    // Looked up by id only. Objects are never hashed: they change while being unpacked.
+    private Dictionary<string, IPackable> _objectsDict;
 
     private IReadOnlyTwoWayDictionary<Type, string> _builtInTypes;
     private TwoWayDictionary<Type, string> _explicitTypes;
@@ -101,7 +103,7 @@ public ref struct Unpacker {
 
         // Add the raw packable first.
         // If it needed to be added, create then unpack. Else it was already there.
-        if (!_objectsDict.Contains(objectId)) {
+        if (!_objectsDict.ContainsKey(objectId)) {
             packable = factory(type);
             if (packable == null) { return false; }
 
