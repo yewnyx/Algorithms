@@ -132,6 +132,18 @@ public class PackablesTests {
         unpacked.next.next.Should().BeSameAs(unpacked);
     }
 
+    [Fact]
+    public void ShouldSkipMalformedTypeEntries() {
+        var packer = new Packer();
+        var packed = packer.Pack(new Baz { z = 1, w = "a" });
+        packed["types"]!["t:9"] = "not a type entry";
+
+        var unpacked = new Baz();
+        var unpacker = new Unpacker(packed);
+        unpacker.TryUnpack(ref unpacked).Should().BeTrue();
+        unpacked.z.Should().Be(1);
+    }
+
     // [Fact]
     public void ShouldHandleBuiltInTypes() { // TODO: Type aliases/renames need fixing, along with the built-in types
         var testValue = new Foo {

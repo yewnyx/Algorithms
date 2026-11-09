@@ -153,29 +153,29 @@ public ref struct Unpacker {
             var typeListKey = typeProperty.Name;
             if (_tryResolveTypeId(typeListKey, out _, out _)) { continue; }
 
-            Type type = null;
+            // An entry without a type name can't be resolved, so it's skipped.
+            if (typeProperty.Value is not JObject typeObj ||
+                !typeObj.TryGetValue("fullname", out var typeNameToken)) { continue; }
 
-            if (typeProperty.Value is JObject typeObj && typeObj.TryGetValue("fullname", out var typeNameToken)) {
-                var typeName = typeNameToken.ToString();
-                if (_tryResolveTypeId(typeName, out type, out var isBuiltIn)) {
-                    if (!isBuiltIn) {
-                        if (!_explicitTypes.TryAdd(type, typeListKey)) {
-                            Console.Error.WriteLine(
-                                $"Could not register type '{typeListKey}' as '{type.FullName}'.");
-                        }
+            var typeName = typeNameToken.ToString();
+            if (_tryResolveTypeId(typeName, out var type, out var isBuiltIn)) {
+                if (!isBuiltIn) {
+                    if (!_explicitTypes.TryAdd(type, typeListKey)) {
+                        Console.Error.WriteLine(
+                            $"Could not register type '{typeListKey}' as '{type.FullName}'.");
                     }
-
-                    continue;
                 }
 
-                type = Type.GetType(typeName);
-                if (type == null) {
-                    Console.Error.WriteLine($"Did not find type for: '{typeObj.ToString(Formatting.None)}'.");
-                    continue;
-                }
+                continue;
             }
 
-            if (!_explicitTypes.Contains(type)) { _explicitTypes[typeListKey] = type; }
+            var found = Type.GetType(typeName);
+            if (found == null) {
+                Console.Error.WriteLine($"Did not find type for: '{typeObj.ToString(Formatting.None)}'.");
+                continue;
+            }
+
+            if (!_explicitTypes.Contains(found)) { _explicitTypes[typeListKey] = found; }
         }
     }
 }
