@@ -2,6 +2,20 @@ using System;
 
 namespace Yewnyx.Algorithms.Diffing;
 
+/// <summary>A moved item: deleted at <see cref="Original"/> and inserted at <see cref="Revised"/>.</summary>
+public readonly struct Move(int original, int revised) : IEquatable<Move> {
+    public readonly int Original = original;
+    public readonly int Revised = revised;
+
+    public bool Equals(Move other) => Original == other.Original && Revised == other.Revised;
+    public override bool Equals(object? obj) => obj is Move other && Equals(other);
+    public static bool operator ==(Move left, Move right) => left.Equals(right);
+    public static bool operator !=(Move left, Move right) => !left.Equals(right);
+    public override int GetHashCode() => HashCode.Combine(Original, Revised);
+
+    public void Deconstruct(out int original, out int revised) => (original, revised) = (Original, Revised);
+}
+
 /// <summary>
 /// A diff that can be kept and used later, without the revised sequence: the hunks plus copies of the
 /// items they delete and insert. Buffers only grow, so a reused patch stops allocating.
@@ -13,6 +27,12 @@ public sealed class Patch<T> where T : IEquatable<T> {
     private int _hunkCount;
     private int _deletedCount;
     private int _insertedCount;
+
+    // For FindMoves: inserted items chained by hash, in order.
+    private int[] _buckets = [];
+    private int[] _chain = [];
+    private int[] _revisedPositions = [];
+    private Move[] _moves = [];
 
     public int OriginalLength { get; private set; }
     public int RevisedLength { get; private set; }
@@ -74,6 +94,56 @@ public sealed class Patch<T> where T : IEquatable<T> {
     public bool TryRevert(ReadOnlySpan<T> revised, Span<T> result) =>
         _tryRebuild(revised, result, RevisedLength, OriginalLength, Inserted, Deleted, reverse: true);
 
+    /// <summary>
+    /// Pairs deleted items with equal inserted items as moves. Each deleted item, in order, takes the
+    /// earliest inserted item equal to it that is still free. The span is valid until the next call or
+    /// <see cref="Set"/>. Speed depends on the items' <c>GetHashCode</c> varying in its low bits, as for
+    /// <see cref="HistogramDiff"/>.
+    /// </summary>
+    public ReadOnlySpan<Move> FindMoves() {
+        if (_deletedCount == 0 || _insertedCount == 0) { return default; }
+
+        // Buckets hold the first inserted item of each hash (or -1); _chain links the rest, in order.
+        var bucketCount = 1;
+        while (bucketCount < 2 * _insertedCount) { bucketCount <<= 1; }
+        _grow(ref _buckets, bucketCount);
+        _grow(ref _chain, _insertedCount);
+        _grow(ref _revisedPositions, _insertedCount);
+        _grow(ref _moves, Math.Min(_deletedCount, _insertedCount));
+        var buckets = _buckets.AsSpan(0, bucketCount);
+        var chain = _chain.AsSpan(0, _insertedCount);
+        buckets.Fill(-1);
+
+        var item = _insertedCount;
+        for (var h = _hunkCount - 1; h >= 0; h--) {
+            var revised = _hunks[h].Revised;
+            for (var i = revised.Size - 1; i >= 0; i--) {
+                item--;
+                _revisedPositions[item] = revised.Offset + i;
+                ref var bucket = ref buckets[_hash(_inserted[item]) & (bucketCount - 1)];
+                chain[item] = bucket;
+                bucket = item;
+            }
+        }
+
+        var count = 0;
+        var deletedItem = 0;
+        for (var h = 0; h < _hunkCount; h++) {
+            var original = _hunks[h].Original;
+            for (var i = 0; i < original.Size; i++, deletedItem++) {
+                var value = _deleted[deletedItem];
+                ref var link = ref buckets[_hash(value) & (bucketCount - 1)];
+                while (link != -1 && !Diffing.Hunks.Equal(_inserted[link], value)) { link = ref chain[link]; }
+                if (link == -1) { continue; }
+
+                _moves[count++] = new Move(original.Offset + i, _revisedPositions[link]);
+                link = chain[link]; // Unlink it so it pairs once.
+            }
+        }
+
+        return _moves.AsSpan(0, count);
+    }
+
     private bool _tryRebuild(ReadOnlySpan<T> from, Span<T> result, int fromLength, int toLength,
         ReadOnlySpan<T> removed, ReadOnlySpan<T> added, bool reverse) {
         if (result.Length < toLength) { throw new ArgumentException($"Needs at least {toLength} elements.", nameof(result)); }
@@ -110,6 +180,8 @@ public sealed class Patch<T> where T : IEquatable<T> {
         }
         return true;
     }
+
+    private static int _hash(T item) => item is null ? 0 : item.GetHashCode();
 
     private static void _grow<TItem>(ref TItem[] array, int length) {
         if (array.Length < length) { array = new TItem[length]; }
