@@ -141,5 +141,8 @@
         <TabItem Header="Shortest paths">
             <views:ShortestPathsPanel />
         </TabItem>
+        <TabItem Header="Packed documents">
+            <views:PackedDocumentsPanel />
+        </TabItem>
     </TabControl>
 </UserControl>

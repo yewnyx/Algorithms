@@ -1,0 +1,66 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:views="using:Yewnyx.Algorithms.Visualizer.Views"
+             x:Class="Yewnyx.Algorithms.Visualizer.Views.PackedDocumentsPanel">
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="#181B21" Padding="8,6" BorderBrush="#262B33" BorderThickness="0,0,0,1">
+            <WrapPanel Orientation="Horizontal">
+                <TextBlock Classes="section" Text="SOURCE" Width="56" />
+                <ComboBox x:Name="Source" SelectedIndex="0" Width="116" VerticalAlignment="Center">
+                    <ComboBoxItem Content="Generated" />
+                    <ComboBoxItem Content="File" />
+                </ComboBox>
+                <WrapPanel x:Name="GeneratedFields" Orientation="Horizontal">
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Shelves" ToolTip.Tip="Entries in the map the root object keeps, each a reference to a shelf." /><NumericUpDown x:Name="Shelves" Minimum="0" Maximum="5000" Increment="1" Value="3" FormatString="N0" Width="72" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Books / shelf" ToolTip.Tip="Mean references in the array each shelf keeps." /><NumericUpDown x:Name="BooksPerShelf" Minimum="0" Maximum="100" Increment="1" Value="3" FormatString="0.#" Width="56" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Authors" ToolTip.Tip="Each book points at its author and the author points back, which is a loop." /><NumericUpDown x:Name="Authors" Minimum="1" Maximum="5000" Increment="1" Value="3" FormatString="N0" Width="72" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Shared %" ToolTip.Tip="Share of shelf slots that hold a book already on another shelf, so one object is referenced twice." /><NumericUpDown x:Name="SharedPercent" Minimum="0" Maximum="90" Increment="5" Value="20" FormatString="0" Width="52" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Seed" /><NumericUpDown x:Name="Seed" Minimum="0" Maximum="2147483647" Increment="1" Value="1" FormatString="0" Width="64" /></StackPanel>
+                    <Button x:Name="GenerateButton" Content="Generate" Margin="8,0,0,0" VerticalAlignment="Center" />
+                </WrapPanel>
+                <WrapPanel x:Name="FileFields" Orientation="Horizontal" IsVisible="False">
+                    <Button x:Name="OpenButton" Content="Open…" Margin="8,0,0,0" VerticalAlignment="Center" />
+                    <TextBlock Classes="label" Text="The file is read as data only: nothing it names is loaded or created." />
+                </WrapPanel>
+            </WrapPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Top" Background="#14171D" Padding="12,8" BorderBrush="#262B33" BorderThickness="0,0,0,1">
+            <StackPanel Spacing="3">
+                <TextBlock x:Name="HeadlineText" Foreground="#E8EDF4" FontSize="14" TextWrapping="Wrap" />
+                <TextBlock x:Name="TraceText" Foreground="#C8D0DC" FontSize="12" TextWrapping="Wrap" />
+                <TextBlock x:Name="NoteText" Foreground="#9AA3B2" FontSize="12" TextWrapping="Wrap" />
+            </StackPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Bottom" Background="#181B21" Padding="10,5" BorderBrush="#262B33" BorderThickness="0,1,0,0">
+            <TextBlock x:Name="HoverText" Foreground="#FFD54F" FontFamily="Cascadia Mono, Consolas, monospace" FontSize="12" TextTrimming="CharacterEllipsis" />
+        </Border>
+
+        <Grid ColumnDefinitions="*,4,*">
+            <Panel Grid.Column="0">
+                <views:GraphView x:Name="Graph" />
+                <TextBlock x:Name="GraphCaption" Classes="pane" TextWrapping="Wrap" Text="Objects and the references between them, left to right from the root. Colour per type; red is not reached from the root; orange edges lie on a loop." />
+            </Panel>
+            <GridSplitter Grid.Column="1" ResizeDirection="Columns" />
+            <ListBox x:Name="Blocks" Grid.Column="2" Background="#101318" Padding="0" SelectionMode="Single">
+                <ListBox.Styles>
+                    <Style Selector="ListBoxItem">
+                        <Setter Property="Padding" Value="0" />
+                        <Setter Property="MinHeight" Value="0" />
+                    </Style>
+                </ListBox.Styles>
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="views:DocBlock">
+                        <Border Background="{Binding Background}" BorderBrush="{Binding TitleBrush}" BorderThickness="3,0,0,0" Padding="9,4,8,5">
+                            <StackPanel>
+                                <TextBlock Text="{Binding Title}" Foreground="{Binding TitleBrush}" FontFamily="Cascadia Mono, Consolas, monospace" FontSize="12" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding Body}" Foreground="#C8D0DC" FontFamily="Cascadia Mono, Consolas, monospace" FontSize="12" />
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Grid>
+    </DockPanel>
+</UserControl>
