@@ -24,6 +24,7 @@
 
     <ItemGroup>
         <ProjectReference Include="..\Algorithms\Algorithms.csproj" />
+        <ProjectReference Include="..\Packables\Packables.csproj" />
     </ItemGroup>
 
 </Project>
