@@ -53,10 +53,10 @@
         </Border>
 
         <Grid ColumnDefinitions="*,4,*">
-            <Panel Grid.Column="0">
-                <views:GraphView x:Name="Graph" />
-                <TextBlock x:Name="GraphCaption" Classes="pane" TextWrapping="Wrap" Text="Objects and the references between them, left to right from the root. Colour per type; red is not reached from the root; orange edges lie on a loop." />
-            </Panel>
+            <Grid Grid.Column="0" RowDefinitions="Auto,*">
+                <views:GraphView x:Name="Graph" Grid.Row="1" />
+                <TextBlock x:Name="GraphCaption" Grid.Row="0" Classes="pane" TextWrapping="Wrap" Text="Objects and the references between them, left to right from the root. Colour per type; red is not reached from the root; orange edges lie on a loop." />
+            </Grid>
             <GridSplitter Grid.Column="1" ResizeDirection="Columns" />
             <ListBox x:Name="Blocks" Grid.Column="2" Background="#101318" Padding="0" SelectionMode="Single">
                 <ListBox.Styles>
