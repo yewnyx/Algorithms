@@ -3,20 +3,43 @@ using FluentAssertions;
 namespace Yewnyx.Packables.Test;
 
 public class RegistryTest {
-    private sealed class Ship { }
+    private sealed class Ship : IPackable {
+        public void PackInto(Packer packer) { }
+        public void UnpackFrom(Unpacker unpacker) { }
+    }
 
-    private sealed class Crew { }
+    private struct Point : IPackable {
+        public void PackInto(Packer packer) { }
+        public void UnpackFrom(Unpacker unpacker) { }
+    }
+
+    private sealed class Crew : IPackable {
+        public void PackInto(Packer packer) { }
+        public void UnpackFrom(Unpacker unpacker) { }
+    }
+
+    private abstract class Vessel : IPackable {
+        public abstract void PackInto(Packer packer);
+        public abstract void UnpackFrom(Unpacker unpacker);
+    }
+
+    private sealed class Box<T> : IPackable {
+        public void PackInto(Packer packer) { }
+        public void UnpackFrom(Unpacker unpacker) { }
+    }
 
     [Fact]
     public void LooksUpByTypeAndName() {
         var registry = new PackableRegistry.Builder()
             .Add(typeof(Ship), "Owner.Ship", 2, "Ship", "Old.Vessel")
-            .Add(typeof(Crew), "Owner.Crew", 0)
+            .Add<Crew>("Owner.Crew", 0)
             .Build();
 
         registry.TryGet(typeof(Ship), out var ship).Should().BeTrue();
         (ship!.Name, ship.Version, ship.VersionedName).Should().Be(("Owner.Ship", 2, "Owner.Ship#2"));
         ship.Aliases.Should().Equal("Ship", "Old.Vessel");
+        registry.TryGet<Ship>(out var same).Should().BeTrue();
+        same.Should().BeSameAs(ship);
         registry.TryGet("Owner.Crew", out var crew).Should().BeTrue();
         crew!.Type.Should().Be(typeof(Crew));
 
@@ -53,6 +76,18 @@ public class RegistryTest {
         act.Should().Throw<ArgumentException>().WithParameterName("name");
         act = () => builder.Add(typeof(Crew), "Crew", 0, "");
         act.Should().Throw<ArgumentException>().WithParameterName("aliases");
+        act = () => builder.Add(typeof(string), "Text", 0);
+        act.Should().Throw<ArgumentException>().WithMessage("*doesn't implement IPackable*");
+        act = () => builder.Add(typeof(Point), "Point", 0);
+        act.Should().Throw<ArgumentException>().WithMessage("*is a struct*");
+        // No object's exact type is abstract, an interface or an open generic, so these could never match.
+        act = () => builder.Add<Vessel>("Vessel", 0);
+        act.Should().Throw<ArgumentException>().WithMessage("*can't be an object's type*");
+        act = () => builder.Add<IPackable>("Anything", 0);
+        act.Should().Throw<ArgumentException>().WithMessage("*can't be an object's type*");
+        act = () => builder.Add(typeof(Box<>), "Box", 0);
+        act.Should().Throw<ArgumentException>().WithMessage("*can't be an object's type*");
+        builder.Add<Box<int>>("Box", 0); // A closed generic is a concrete type.
         act = () => builder.Add(null!, "Nothing", 0);
         act.Should().Throw<ArgumentNullException>();
     }

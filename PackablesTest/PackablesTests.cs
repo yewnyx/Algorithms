@@ -4,9 +4,11 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Xunit.Abstractions;
 using Yewnyx.Collections;
-using Yewnyx.Packables.Format1;
 
 namespace Yewnyx.Packables.Test;
+
+// Inside the namespace, so these names win over format 3's in Yewnyx.Packables.
+using Yewnyx.Packables.Format1;
 
 public class PackablesTests {
     

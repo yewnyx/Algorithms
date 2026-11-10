@@ -2,9 +2,11 @@ using System.Runtime.CompilerServices;
 using FluentAssertions;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using Yewnyx.Packables.Format1;
 
 namespace Yewnyx.Packables.Test.Format1;
+
+// Inside the namespace, so these names win over format 3's in Yewnyx.Packables.
+using Yewnyx.Packables.Format1;
 
 // Format 1 documents, kept so the format 1 to 3 converter has real input once format 1 is no longer
 // written. Fixtures/Format1/README.md describes each one. Run with UPDATE_FIXTURES=1 to regenerate.

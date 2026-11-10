@@ -52,6 +52,9 @@ public sealed class PackableRegistry {
     public bool TryGet(Type type, [NotNullWhen(true)] out PackableRegistration? registration) =>
         _byType.TryGetValue(type, out registration);
 
+    public bool TryGet<T>([NotNullWhen(true)] out PackableRegistration? registration) where T : class, IPackable =>
+        _byType.TryGetValue(typeof(T), out registration);
+
     /// <summary>Looks up a registered name, without its version.</summary>
     public bool TryGet(string name, [NotNullWhen(true)] out PackableRegistration? registration) =>
         _byName.TryGetValue(name, out registration);
@@ -60,11 +63,30 @@ public sealed class PackableRegistry {
         private readonly List<PackableRegistration> _registrations = new();
 
         /// <summary>
+        /// Registers <typeparamref name="T"/> as <paramref name="name"/> at <paramref name="version"/>,
+        /// as <see cref="Add(Type, string, int, string[])"/> does.
+        /// </summary>
+        public Builder Add<T>(string name, int version, params string[] aliases) where T : class, IPackable =>
+            Add(typeof(T), name, version, aliases);
+
+        /// <summary>
         /// Registers <paramref name="type"/> as <paramref name="name"/> at <paramref name="version"/>.
-        /// Throws if the name breaks the naming rules, an alias is empty, or the type or name is already taken.
+        /// Throws if the type isn't a concrete packable class, the name breaks the naming rules, an alias
+        /// is empty, or the type or name is already taken.
         /// </summary>
         public Builder Add(Type type, string name, int version, params string[] aliases) {
             if (type is null) { throw new ArgumentNullException(nameof(type)); }
+            if (type.IsValueType) {
+                // Each ref would box a new copy, so a struct could never be shared, looped or unpacked.
+                throw new ArgumentException($"{_describe(type)} is a struct; packables are classes.", nameof(type));
+            }
+            if (!typeof(IPackable).IsAssignableFrom(type)) {
+                throw new ArgumentException($"{_describe(type)} doesn't implement IPackable.", nameof(type));
+            }
+            if (type.IsAbstract || type.ContainsGenericParameters) {
+                // Objects are looked up by their exact type, which is never abstract, an interface or open.
+                throw new ArgumentException($"{_describe(type)} can't be an object's type; register the concrete types.", nameof(type));
+            }
             if (!PackableNames.IsValidName(name)) { throw new ArgumentException($"\"{name}\" isn't a valid name.", nameof(name)); }
             if (version < 0) { throw new ArgumentOutOfRangeException(nameof(version), version, "Versions start at 0."); }
             foreach (var alias in aliases) {
