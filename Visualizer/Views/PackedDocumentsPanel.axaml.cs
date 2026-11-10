@@ -63,7 +63,7 @@ public partial class PackedDocumentsPanel : UserControl {
     /// <summary>Where a document came from. Only a generated one may ever be unpacked.</summary>
     private enum Origin { Generated, File, Url }
 
-    private sealed record Shown(Origin Origin, string Title, PackedDocument? Document, string? Failure, string? Note = null);
+    private sealed record Shown(Origin Origin, string Title, PackedDocument? Document, string? Failure, string? Note = null, RoundTripResult? Trip = null);
 
     private readonly Dictionary<uint, IBrush> _brushes = new();
     private Shown? _generated;
@@ -144,8 +144,9 @@ public partial class PackedDocumentsPanel : UserControl {
         if (Source.SelectedIndex == 0) { HeadlineText.Text = "Generating and packing…"; }
         Shown shown;
         try {
-            var document = await Task.Run(() => PackedDocument.Read(PackedDemo.Pack(PackedDemo.Generate(spec)), ct: cts.Token), cts.Token);
-            shown = new Shown(Origin.Generated, title, document, null);
+            // The round trip unpacks, so it takes a spec and nothing else: no document can be passed in.
+            var trip = await Task.Run(() => PackedDemo.RoundTrip(spec, cts.Token), cts.Token);
+            shown = new Shown(Origin.Generated, title, trip.Document, null, Trip: trip);
         } catch (OperationCanceledException) {
             return;
         } catch (Exception ex) {
@@ -287,7 +288,8 @@ public partial class PackedDocumentsPanel : UserControl {
         _graphHover = _listHover = _selected = -1;
         Graph.LinkedHighlight = -1;
         Graph.Labels = null;
-        HoverText.Text = TraceText.Text = NoteText.Text = "";
+        HoverText.Text = TraceText.Text = NoteText.Text = RoundTripText.Text = "";
+        RoundTripText.IsVisible = false;
         Blocks.ItemsSource = null;
         GraphCaption.IsVisible = d?.Graph is not null;
 
@@ -338,6 +340,10 @@ public partial class PackedDocumentsPanel : UserControl {
         if (d.NotObjects > 0) { notes.Add(d.NotObjects == 1 ? "1 entry of the objects table is not an object." : $"{d.NotObjects:N0} entries of the objects table are not objects."); }
         if (shown.Note is not null) { notes.Add(shown.Note); }
         NoteText.Text = string.Join("  ", notes);
+        if (shown.Origin == Origin.Generated && shown.Trip is { } trip) {
+            RoundTripText.Text = TripText(trip, d.N);
+            RoundTripText.IsVisible = true;
+        }
 
         for (var v = 0; v < d.N; v++) {
             var vertex = v;
@@ -352,6 +358,33 @@ public partial class PackedDocumentsPanel : UserControl {
 
         Graph.SetModel(d.Graph, null);
         UpdateLabels();
+    }
+
+    private static string TripText(RoundTripResult t, int objects) {
+        var per = Math.Max(1, objects);
+        var sb = new StringBuilder();
+        sb.Append($"Packed in {t.PackTime.TotalMilliseconds:N2} ms: {t.PackBytes / per:N0} bytes allocated per object, ");
+        sb.Append($"{t.Characters / per:N0} JSON characters per object ({t.Characters:N0} in all).  ");
+        if (t.Failure is not null) {
+            return sb.Append($"THE ROUND TRIP THROUGH TEXT FAILED: {OneLine(t.Failure)}.").ToString();
+        }
+        if (t.FirstDifference >= 0) {
+            sb.Append("THE ROUND TRIP THROUGH TEXT CHANGED THE DOCUMENT: unpacked and packed again it is ");
+            sb.Append($"{t.RepackedCharacters:N0} characters and first differs at character {t.FirstDifference:N0}.");
+        } else {
+            sb.Append("Round trip through text: written out, read back, unpacked into a new library in ");
+            sb.Append($"{t.UnpackTime.TotalMilliseconds:N2} ms and packed again, it gives the same {t.Characters:N0} characters.");
+        }
+        if (t.Unrated > 0) {
+            sb.Append(t.Unrated == 1 ? "  1 rating is NaN" : $"  {t.Unrated:N0} ratings are NaN");
+            sb.Append(t.UnratedBack == t.Unrated ? " and came back as NaN" : $" AND {t.UnratedBack:N0} CAME BACK AS NaN");
+            sb.Append(t.SameInMemory
+                ? "."
+                : "; the text holds NaN as a string, so token for token it is not the document that was in memory.");
+        } else if (!t.SameInMemory) {
+            sb.Append("  Token for token, the text is not the document that was in memory.");
+        }
+        return sb.ToString();
     }
 
     private static string EnvelopeText(PackedDocument d) {

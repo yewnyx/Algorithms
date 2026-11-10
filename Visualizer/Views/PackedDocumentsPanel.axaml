@@ -36,6 +36,7 @@
             <StackPanel Spacing="3">
                 <TextBlock x:Name="HeadlineText" Foreground="#E8EDF4" FontSize="14" TextWrapping="Wrap" />
                 <TextBlock x:Name="TraceText" Foreground="#C8D0DC" FontSize="12" TextWrapping="Wrap" />
+                <TextBlock x:Name="RoundTripText" Foreground="#C8D0DC" FontSize="12" TextWrapping="Wrap" IsVisible="False" />
                 <TextBlock x:Name="NoteText" Foreground="#9AA3B2" FontSize="12" TextWrapping="Wrap" />
             </StackPanel>
         </Border>
