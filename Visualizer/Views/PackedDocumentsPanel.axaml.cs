@@ -63,21 +63,25 @@ public partial class PackedDocumentsPanel : UserControl {
     /// <summary>Where a document came from. Only a generated one may ever be unpacked.</summary>
     private enum Origin { Generated, File, Url }
 
-    private sealed record Shown(Origin Origin, string Title, PackedDocument? Document, string? Failure, string? Note = null, RoundTripResult? Trip = null);
+    private sealed record Shown(Origin Origin, string Title, PackedDocument? Document, string? Failure, string? Note = null, RoundTripResult? Trip = null, BreakResult? Break = null);
 
     private readonly Dictionary<uint, IBrush> _brushes = new();
     private Shown? _generated;
+    private Shown? _pristine; // the generated document as packed, which Reset goes back to
+    private DemoSpec? _spec;  // what it was generated from, which is all Break it is given
     private Shown? _file;
     private Shown? _url;
     private PackedDocument? _doc;
     private List<DocBlock>? _blocks;
     private DocBlock? _marked;
     private CancellationTokenSource? _generation;
+    private CancellationTokenSource? _breaking;
     private CancellationTokenSource? _loading;
     private CancellationTokenSource? _fetching;
     private int _graphHover = -1;
     private int _listHover = -1;
     private int _selected = -1;
+    private int _changed = -1; // the object a break changed, pointed out while nothing is hovered
 
     public PackedDocumentsPanel() {
         InitializeComponent();
@@ -94,6 +98,13 @@ public partial class PackedDocumentsPanel : UserControl {
         OpenButton.Click += async (_, _) => await OpenFileAsync();
         LoadButton.Click += async (_, _) => await LoadAddressAsync(Address.Text);
         CancelButton.Click += (_, _) => _fetching?.Cancel();
+        foreach (var preset in PackedBreak.Presets) {
+            var button = new Button { Content = preset.Label, Padding = new Thickness(8, 3), FontSize = 12, Margin = new Thickness(0, 0, 4, 4) };
+            ToolTip.SetTip(button, preset.Hint);
+            button.Click += async (_, _) => await BreakAsync(preset);
+            BreakRow.Children.Insert(BreakRow.Children.Count - 1, button);
+        }
+        ResetButton.Click += (_, _) => Reset();
         Address.KeyDown += async (_, e) => {
             if (e.Key == Key.Enter) { await LoadAddressAsync(Address.Text); }
         };
@@ -127,11 +138,13 @@ public partial class PackedDocumentsPanel : UserControl {
         GeneratedFields.IsVisible = source == 0;
         FileFields.IsVisible = source == 1;
         UrlFields.IsVisible = source == 2;
+        BreakRow.IsVisible = source == 0;
         Show(source switch { 0 => _generated, 1 => _file, _ => _url });
     }
 
     private async Task GenerateAsync() {
         _generation?.Cancel();
+        _breaking?.Cancel();
         var cts = _generation = new CancellationTokenSource();
         var spec = new DemoSpec(
             (int)(Shelves.Value ?? 0),
@@ -155,8 +168,41 @@ public partial class PackedDocumentsPanel : UserControl {
             if (_generation == cts) { GenerateButton.IsEnabled = true; }
         }
         if (cts.IsCancellationRequested) { return; }
+        _generated = _pristine = shown;
+        _spec = spec;
+        if (Source.SelectedIndex == 0) { Show(shown); }
+    }
+
+    // Break it unpacks, so like the round trip it is given the spec of the generated document and
+    // nothing else. A document from a file or an address has no spec and cannot be passed in.
+    private async Task BreakAsync(BreakPreset preset) {
+        if (_pristine is not { Document: not null } pristine || _spec is not { } spec || Source.SelectedIndex != 0) { return; }
+        _breaking?.Cancel();
+        var cts = _breaking = new CancellationTokenSource();
+        BreakRow.IsEnabled = false;
+        Shown shown;
+        try {
+            var result = await Task.Run(() => PackedBreak.Run(spec, preset.Kind, cts.Token), cts.Token);
+            shown = result.Applied
+                ? new Shown(Origin.Generated, $"{pristine.Title}, then changed", result.Document, null, Break: result)
+                : pristine with { Break = result };
+        } catch (OperationCanceledException) {
+            return;
+        } catch (Exception ex) {
+            shown = pristine with { Note = $"{preset.Label} failed: {OneLine(ex.Message)}" };
+        } finally {
+            if (_breaking == cts) { BreakRow.IsEnabled = true; }
+        }
+        if (cts.IsCancellationRequested || !ReferenceEquals(_pristine, pristine)) { return; }
         _generated = shown;
         if (Source.SelectedIndex == 0) { Show(shown); }
+    }
+
+    private void Reset() {
+        _breaking?.Cancel();
+        if (_pristine is null || ReferenceEquals(_generated, _pristine)) { return; }
+        _generated = _pristine;
+        if (Source.SelectedIndex == 0) { Show(_pristine); }
     }
 
     private async Task OpenFileAsync() {
@@ -285,11 +331,11 @@ public partial class PackedDocumentsPanel : UserControl {
         var d = _doc = shown?.Document;
         _blocks = null;
         _marked = null;
-        _graphHover = _listHover = _selected = -1;
+        _graphHover = _listHover = _selected = _changed = -1;
         Graph.LinkedHighlight = -1;
         Graph.Labels = null;
-        HoverText.Text = TraceText.Text = NoteText.Text = RoundTripText.Text = "";
-        RoundTripText.IsVisible = false;
+        HoverText.Text = TraceText.Text = NoteText.Text = RoundTripText.Text = BreakText.Text = "";
+        RoundTripText.IsVisible = BreakText.IsVisible = false;
         Blocks.ItemsSource = null;
         GraphCaption.IsVisible = d?.Graph is not null;
 
@@ -344,12 +390,18 @@ public partial class PackedDocumentsPanel : UserControl {
             RoundTripText.Text = TripText(trip, d.N);
             RoundTripText.IsVisible = true;
         }
+        if (shown.Origin == Origin.Generated && shown.Break is { } broken) {
+            BreakText.Text = BrokenText(broken);
+            BreakText.IsVisible = true;
+            if (broken.Applied && broken.ChangedId is { } id && d.TryGetIndex(id, out var changed)) { _changed = changed; }
+        }
 
         for (var v = 0; v < d.N; v++) {
             var vertex = v;
             var title = $"{d.ObjectIds[v]}  {d.TypeName(v)}";
             if (v == d.Root) { title += "   root"; } else if (d.Root >= 0 && !d.Reached[v]) { title += "   not reached"; }
             if (d.InLoop[v]) { title += "   in a loop"; }
+            if (v == _changed) { title += "   changed"; }
             blocks.Add(new DocBlock(v, title, Brush(ColorOf(v)), () => d.BodyText(vertex)));
         }
         blocks.Add(new DocBlock(-1, "types", Brush(Neutral), () => TypesText(d)));
@@ -357,7 +409,33 @@ public partial class PackedDocumentsPanel : UserControl {
         Blocks.ItemsSource = blocks;
 
         Graph.SetModel(d.Graph, null);
+        if (_changed >= 0) {
+            // Selecting it labels it in the graph and describes it in the bar below.
+            Graph.LinkedHighlight = _changed;
+            Mark(_changed);
+            Blocks.SelectedItem = blocks[_changed + 1];
+            Blocks.ScrollIntoView(_changed + 1);
+        }
         UpdateLabels();
+    }
+
+    private static string BrokenText(BreakResult b) {
+        if (!b.Applied) { return $"Break it: {b.Change}"; }
+        var sb = new StringBuilder("Break it: ").Append(b.Change).Append("  ");
+        if (b.Exception is { } thrown) {
+            sb.Append("TryUnpack THREW ").Append(OneLine(thrown)).Append('.');
+        } else {
+            sb.Append($"TryUnpack returned {b.Returned}.");
+        }
+        if (!b.Touched) {
+            sb.Append("  The library handed to it was not touched.");
+        } else {
+            sb.Append($"  The library handed to it was written to: {b.Filled:N0} of the {b.Original:N0} objects came back filled");
+            if (b.Blank > 0) { sb.Append(b.Blank == 1 ? ", and 1 more was created and left blank" : $", and {b.Blank:N0} more were created and left blank"); }
+            sb.Append('.');
+        }
+        sb.Append(b.Loaded.Count == 0 ? "  No assembly was loaded while it ran." : $"  Loaded while it ran: {string.Join(", ", b.Loaded)}.");
+        return sb.ToString();
     }
 
     private static string TripText(RoundTripResult t, int objects) {
@@ -418,7 +496,7 @@ public partial class PackedDocumentsPanel : UserControl {
 
     private void OnGraphHover(int v) {
         _graphHover = v;
-        Mark(v >= 0 ? v : _listHover);
+        Mark(v >= 0 ? v : _listHover >= 0 ? _listHover : _changed);
         if (v >= 0 && _blocks is not null) { Blocks.ScrollIntoView(v + 1); }
         UpdateLabels();
         UpdateHoverText();
@@ -427,8 +505,8 @@ public partial class PackedDocumentsPanel : UserControl {
     private void SetListHover(int v) {
         if (v == _listHover) { return; }
         _listHover = v;
-        Graph.LinkedHighlight = v;
-        Mark(v);
+        Graph.LinkedHighlight = v >= 0 ? v : _changed;
+        Mark(v >= 0 ? v : _changed);
         UpdateLabels();
         UpdateHoverText();
     }
