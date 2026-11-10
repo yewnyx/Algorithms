@@ -13,7 +13,7 @@ dotnet publish -c Release Visualizer.Browser -o publish
 dotnet publish -c Release Visualizer.Browser -o artifacts/single/publish --artifacts-path artifacts/single -p:WasmEnableThreads=false
 ```
 
-The second build is a single-threaded fallback. Copy its `wwwroot/_framework` to `publish/wwwroot/single/_framework`, then serve `publish/wwwroot` over HTTP. Threads need a cross-origin isolated page: send `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`, or rely on the bundled `coi-serviceworker.js` (MIT licence), which adds them and reloads the page once. GitHub Pages works the second way; `.github/workflows/pages.yml` publishes there. Where the page cannot get isolation or the threaded start fails, it runs the fallback, which scans Serial only. Add `?single` to the address to force it.
+The second build is a single-threaded fallback. Copy its `wwwroot/_framework` to `publish/wwwroot/single/_framework`, then serve `publish/wwwroot` over HTTP. Threads need a cross-origin isolated page: send `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`, or rely on the bundled `coi-serviceworker.js` (MIT licence, in `coi-serviceworker.LICENSE.txt` beside it), which adds them and reloads the page once. GitHub Pages works the second way; `.github/workflows/pages.yml` publishes there. Where the page cannot get isolation or the threaded start fails, it runs the fallback, which scans Serial only. Add `?single` to the address to force it.
 
 ![Tarjan islands tab](screenshots/tab-islands.png)
 
