@@ -25,6 +25,7 @@ public sealed class GraphView : Control {
     private const int EdgeBudget = 250_000;
     private const int BucketSize = 12;
     private const int MaxHighlightEdges = 4000;
+    private const double SelfLoopRadius = 12;
 
     private readonly PixelSurface _nodes = new();
     private readonly DispatcherTimer _settle;
@@ -241,6 +242,17 @@ public sealed class GraphView : Control {
                 if (!visible.Contains(a) && !visible.Contains(b)) { continue; }
                 var inner = markCycles && islandOf[from[i]] == islandOf[to[i]];
                 var head = inner ? ih : ch;
+                if (from[i] == to[i]) {
+                    // An edge from a vertex to itself has no length, so it is drawn as a loop up and to the
+                    // left of the vertex, clear of where a label goes.
+                    var radius = new Size(SelfLoopRadius, SelfLoopRadius);
+                    var across = SelfLoopRadius * Math.Sqrt(2);
+                    head.BeginFigure(a, false);
+                    head.ArcTo(new Point(a.X - across, a.Y - across), radius, 0, false, SweepDirection.Clockwise);
+                    head.ArcTo(a, radius, 0, false, SweepDirection.Clockwise);
+                    head.EndFigure(false);
+                    continue;
+                }
                 if (halves) {
                     var mid = (a + b) / 2;
                     var tail = inner ? it : ct;
