@@ -32,7 +32,8 @@ public static class HistogramDiff {
     /// </summary>
     /// <remarks>
     /// <paramref name="hunks"/> needs <see cref="MaxHunks"/> elements and <paramref name="workspace"/>
-    /// needs <see cref="WorkspaceLength"/>.
+    /// needs <see cref="WorkspaceLength"/>. The inputs may overlap each other; hunks and workspace
+    /// must not share memory with them.
     /// </remarks>
     public static int Diff<T>(ReadOnlySpan<T> original, ReadOnlySpan<T> revised, Span<Hunk> hunks, Span<int> workspace)
         where T : IEquatable<T> {
@@ -42,6 +43,7 @@ public static class HistogramDiff {
         if (workspace.Length < workspaceLength) {
             throw new ArgumentException($"Needs at least {workspaceLength} elements.", nameof(workspace));
         }
+        Hunks.RequireApart(original, revised, hunks, workspace);
 
         // Regions still to diff, four ints each. The left side of a split is pushed last so it comes
         // off first, which keeps the hunks in order.

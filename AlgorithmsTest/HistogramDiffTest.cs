@@ -76,4 +76,32 @@ public class HistogramDiffTest {
         act = () => HistogramDiff.Diff("ab".AsSpan(), "cd".AsSpan(), new Hunk[1], new int[100]);
         act.Should().Throw<ArgumentException>().WithParameterName("hunks");
     }
+
+    [Fact]
+    public void InputsMayOverlapButBuffersMayNot() {
+        // One array holds both sides, which overlap, and then room for the workspace.
+        var memory = new int[6 + HistogramDiff.WorkspaceLength(4, 4)];
+        int[] items = [1, 2, 3, 4, 5, 6];
+        items.CopyTo(memory, 0);
+        var hunks = new Hunk[HistogramDiff.MaxHunks(4, 4)];
+
+        var count = HistogramDiff.Diff<int>(memory.AsSpan(0, 4), memory.AsSpan(2, 4), hunks, memory.AsSpan(6));
+        hunks[..count].Should().Equal(new Hunk((0, 2), (0, 0)), new Hunk((4, 0), (2, 2)));
+
+        // A workspace over the revised side only, then over the original side only.
+        var act = () => HistogramDiff.Diff<int>(memory.AsSpan(0, 4), memory.AsSpan(2, 4), hunks, memory.AsSpan(5));
+        act.Should().Throw<ArgumentException>().WithParameterName("workspace");
+        var apart = new int[8 + HistogramDiff.WorkspaceLength(4, 4)];
+        act = () => HistogramDiff.Diff<int>(apart.AsSpan(4, 4), apart.AsSpan(0, 4), hunks, apart.AsSpan(6));
+        act.Should().Throw<ArgumentException>().WithParameterName("workspace");
+
+        // Hunks are items too, so a diff of hunks can be handed one of its inputs to write to: here
+        // hunks over the original side only, then over the revised side only.
+        var hunkMemory = new Hunk[6];
+        var workspace = new int[HistogramDiff.WorkspaceLength(2, 2)];
+        act = () => HistogramDiff.Diff<Hunk>(hunkMemory.AsSpan(2, 2), hunkMemory.AsSpan(0, 2), hunkMemory.AsSpan(3, 3), workspace);
+        act.Should().Throw<ArgumentException>().WithParameterName("hunks");
+        act = () => HistogramDiff.Diff<Hunk>(hunkMemory.AsSpan(0, 2), hunkMemory.AsSpan(2, 2), hunkMemory.AsSpan(3, 3), workspace);
+        act.Should().Throw<ArgumentException>().WithParameterName("hunks");
+    }
 }

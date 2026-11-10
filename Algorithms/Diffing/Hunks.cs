@@ -8,6 +8,30 @@ internal static class Hunks {
     // Null-safe, and for value types the null checks fold away.
     public static bool Equal<T>(T a, T b) where T : IEquatable<T> => a is null ? b is null : a.Equals(b);
 
+    // Throws if the hunks or workspace share memory with either input. The inputs may overlap each
+    // other: they're only read.
+    public static void RequireApart<T>(ReadOnlySpan<T> original, ReadOnlySpan<T> revised, Span<Hunk> hunks, Span<int> workspace) {
+        if (_sharesMemory<T, int>(original, workspace) || _sharesMemory<T, int>(revised, workspace)) {
+            throw new ArgumentException("Shares memory with the input.", nameof(workspace));
+        }
+        if (_sharesMemory<T, Hunk>(original, hunks) || _sharesMemory<T, Hunk>(revised, hunks)) {
+            throw new ArgumentException("Shares memory with the input.", nameof(hunks));
+        }
+    }
+
+    // Short of reinterpreting memory, spans can only share it if their items are the same type.
+    // T has no struct constraint, so the check goes through a delegate made once per pair of types.
+    private static bool _sharesMemory<T, TOther>(ReadOnlySpan<T> items, ReadOnlySpan<TOther> other) =>
+        SameType<T, TOther>.Overlaps is { } overlaps && overlaps(items, other);
+
+    private static class SameType<T, TOther> {
+        public delegate bool Check(ReadOnlySpan<T> items, ReadOnlySpan<TOther> other);
+
+        public static readonly Check? Overlaps = typeof(T) == typeof(TOther)
+            ? (Check)(object)new SameType<T, T>.Check(static (items, other) => items.Overlaps(other))
+            : null;
+    }
+
     // Appends a hunk, merging it into the previous one when nothing matches between them.
     public static void Emit(Span<Hunk> hunks, ref int count, int aStart, int aLength, int bStart, int bLength) {
         if (count > 0) {

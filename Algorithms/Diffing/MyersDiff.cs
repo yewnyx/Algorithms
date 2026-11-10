@@ -23,7 +23,8 @@ public static class MyersDiff {
     /// </summary>
     /// <remarks>
     /// <paramref name="hunks"/> needs <see cref="MaxHunks"/> elements and <paramref name="workspace"/>
-    /// needs <see cref="WorkspaceLength"/>.
+    /// needs <see cref="WorkspaceLength"/>. The inputs may overlap each other; hunks and workspace
+    /// must not share memory with them.
     /// </remarks>
     public static int Diff<T>(ReadOnlySpan<T> original, ReadOnlySpan<T> revised, Span<Hunk> hunks, Span<int> workspace)
         where T : IEquatable<T> {
@@ -33,6 +34,7 @@ public static class MyersDiff {
         if (workspace.Length < workspaceLength) {
             throw new ArgumentException($"Needs at least {workspaceLength} elements.", nameof(workspace));
         }
+        Hunks.RequireApart(original, revised, hunks, workspace);
 
         var count = 0;
         Compare(original, revised, 0, original.Length, 0, revised.Length, hunks, ref count, workspace);
