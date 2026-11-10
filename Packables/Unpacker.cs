@@ -26,14 +26,21 @@ public enum UnpackProblemKind {
     NotCreated,
 }
 
-/// <summary>One problem met while unpacking, and where: the object (-1 for the document), its type and the key.</summary>
-public readonly struct UnpackProblem(UnpackProblemKind kind, int @object, string? type, string? key) {
+/// <summary>
+/// One problem met while unpacking, and where: the object (-1 for the document), its type and the key,
+/// and the object's id in the text it was read from, if it was.
+/// </summary>
+public readonly struct UnpackProblem(UnpackProblemKind kind, int @object, string? type, string? key, string? id = null) {
     public readonly UnpackProblemKind Kind = kind;
     public readonly int Object = @object;
     public readonly string? Type = type;
     public readonly string? Key = key;
 
-    public override string ToString() => $"{Kind} in object {Object} ({Type}){(Key is null ? "" : $" at \"{Key}\"")}";
+    /// <summary>The object's id in the text, which can differ from <see cref="Object"/>; see <see cref="PackedDocument.ObjectId"/>.</summary>
+    public readonly string? Id = id;
+
+    public override string ToString() =>
+        $"{Kind} in object {Id ?? Object.ToString()} ({Type}){(Key is null ? "" : $" at \"{Key}\"")}";
 }
 
 [Flags]
@@ -511,7 +518,9 @@ internal sealed class UnpackSession {
     // Records a problem and returns false, so callers can return its result.
     public bool Record(UnpackProblemKind kind, int @object, string? key) {
         _anyProblem = true;
-        _problems?.Add(new UnpackProblem(kind, @object, @object >= 0 ? Document.ObjectType(@object) : null, key));
+        _problems?.Add(@object >= 0
+            ? new UnpackProblem(kind, @object, Document.ObjectType(@object), key, Document.ObjectId(@object))
+            : new UnpackProblem(kind, @object, null, key));
         if ((_options & UnpackOptions.FailFast) != 0) { Failed = true; }
         return false;
     }

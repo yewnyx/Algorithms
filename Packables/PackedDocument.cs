@@ -84,8 +84,10 @@ public readonly struct PackedEntry(string? key, PackedValue value) {
 /// </summary>
 public sealed class PackedDocument {
     private struct ObjectRecord {
-        public string Type;
+        public string? Type; // Null while reserved and not yet defined.
         public int Fields;
+        public string? Id;
+        public int Defined; // How many objects were defined before this one.
     }
 
     private struct ContainerRecord {
@@ -105,7 +107,7 @@ public sealed class PackedDocument {
     private PackedEntry[] _entries = [];
     private int[] _remap = [];
     private ObjectRecord[] _reordered = [];
-    private int _objectCount, _containerCount, _buildingCount;
+    private int _objectCount, _containerCount, _buildingCount, _definedCount;
 
     public bool IsSealed { get; private set; }
 
@@ -115,7 +117,13 @@ public sealed class PackedDocument {
     public int ObjectCount => _objectCount;
 
     /// <summary>The object's type, as "Name#Version" or whatever the document said.</summary>
-    public string ObjectType(int index) => _object(index).Type;
+    public string ObjectType(int index) => _object(index).Type!;
+
+    /// <summary>
+    /// The id the object had in the text it was read from, which needn't match its index, and which
+    /// writing keeps; null for a document packed or converted, whose ids are written from indices.
+    /// </summary>
+    public string? ObjectId(int index) => _object(index).Id;
 
     /// <summary>The map holding the object's fields.</summary>
     public int ObjectFields(int index) => _object(index).Fields;
@@ -135,18 +143,74 @@ public sealed class PackedDocument {
         System.Array.Clear(_objects, 0, _objectCount);
         System.Array.Clear(_building, 0, _buildingCount);
         System.Array.Clear(_entries, 0, Math.Min(_entries.Length, _buildingCount));
-        _objectCount = _containerCount = _buildingCount = 0;
+        _objectCount = _containerCount = _buildingCount = _definedCount = 0;
         Root = PackedValue.Null;
         IsSealed = false;
     }
 
     /// <summary>Adds an object with an empty map for its fields, and returns its index.</summary>
     internal int AddObject(string type) {
-        _requireSealed(false);
         var fields = AddMap();
         _grow(ref _objects, _objectCount + 1);
-        _objects[_objectCount] = new ObjectRecord { Type = type, Fields = fields };
+        _objects[_objectCount] = new ObjectRecord { Type = type, Fields = fields, Defined = _definedCount++ };
         return _objectCount++;
+    }
+
+    /// <summary>
+    /// Reserves an index for the object a text calls <paramref name="id"/>, for decoders that meet a
+    /// ref before its object. <see cref="DefineObject"/> fills it; <see cref="OrderAsDefined"/> then
+    /// puts objects in the order they were defined and drops any left unfilled.
+    /// </summary>
+    internal int ReserveObject(string id) {
+        _requireSealed(false);
+        _grow(ref _objects, _objectCount + 1);
+        _objects[_objectCount] = new ObjectRecord { Fields = -1, Id = id };
+        return _objectCount++;
+    }
+
+    internal bool IsDefined(int index) => _object(index).Type is not null;
+
+    /// <summary>Gives a reserved object its type and the map holding its fields.</summary>
+    internal void DefineObject(int index, string type, int fields) {
+        _requireSealed(false);
+        if (!_container(fields).Keyed) { throw new ArgumentException("Fields are a map.", nameof(fields)); }
+        ref var record = ref _object(index);
+        if (record.Type is not null) { throw new InvalidOperationException($"Object {index} is defined already."); }
+        (record.Type, record.Fields, record.Defined) = (type ?? throw new ArgumentNullException(nameof(type)), fields, _definedCount++);
+    }
+
+    /// <summary>
+    /// Puts objects in the order they were defined, which for a decoder is the order its text lists
+    /// them, and removes reserved objects never defined. Refs follow their objects; refs to removed
+    /// ones, the root's included, become refs to missing objects (-1). Does nothing if every object
+    /// is defined and in order already.
+    /// </summary>
+    internal void OrderAsDefined() {
+        _requireSealed(true);
+        _grow(ref _remap, _objectCount);
+        _grow(ref _reordered, _objectCount);
+        var moved = false;
+        for (var i = 0; i < _objectCount; i++) {
+            var to = _objects[i].Type is null ? -1 : _objects[i].Defined;
+            _remap[i] = to;
+            if (to >= 0) { _reordered[to] = _objects[i]; }
+            moved |= to != i;
+        }
+        if (!moved) { return; }
+        System.Array.Copy(_reordered, _objects, _definedCount);
+        System.Array.Clear(_objects, _definedCount, _objectCount - _definedCount);
+        System.Array.Clear(_reordered, 0, _definedCount);
+
+        for (var e = 0; e < _buildingCount; e++) {
+            var value = _entries[e].Value;
+            if (value.Kind == PackedKind.Ref && (uint)value.Target < (uint)_objectCount) {
+                _entries[e] = new PackedEntry(_entries[e].Key, PackedValue.Ref(_remap[value.Target], value.RefType));
+            }
+        }
+        if (Root.Kind == PackedKind.Ref && (uint)Root.Target < (uint)_objectCount) {
+            Root = PackedValue.Ref(_remap[Root.Target], Root.RefType);
+        }
+        _objectCount = _definedCount;
     }
 
     internal int AddMap() => _addContainer(true);
@@ -196,7 +260,8 @@ public sealed class PackedDocument {
 
     /// <summary>
     /// Renumbers objects breadth-first from the root, visiting fields and maps in key order and arrays
-    /// in order, and drops objects the root can't reach. Refs to missing objects (-1) stay as they are.
+    /// in order, and drops objects the root can't reach. Refs to missing objects (-1) stay as they are,
+    /// and ids from a text are cleared.
     /// </summary>
     internal void Canonicalize() {
         _requireSealed(true);
@@ -217,7 +282,11 @@ public sealed class PackedDocument {
         for (var next = 0; next < kept; next++) { _visit(_reordered[next].Fields, remap, ref kept); }
 
         System.Array.Copy(_reordered, _objects, kept);
-        _objectCount = kept;
+        System.Array.Clear(_objects, kept, _objectCount - kept);
+        System.Array.Clear(_reordered, 0, kept);
+        // Renumbered, so ids from a text no longer apply: they're written from indices again.
+        for (var i = 0; i < kept; i++) { (_objects[i].Id, _objects[i].Defined) = (null, i); }
+        _objectCount = _definedCount = kept;
     }
 
     private void _visit(int container, Span<int> remap, ref int kept) {
