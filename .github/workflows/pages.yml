@@ -1,0 +1,52 @@
+name: Visualizer on GitHub Pages
+on:
+  push:
+    branches:
+    - main
+    paths:
+    - 'Algorithms/**'
+    - 'Visualizer/**'
+    - 'Visualizer.Browser/**'
+    - '.github/workflows/pages.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Setup dotnet
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10'
+    - name: Install WebAssembly workload
+      run: dotnet workload install wasm-tools
+    - name: Publish
+      run: dotnet publish Visualizer.Browser --configuration Release --output publish -p:CompressionEnabled=false
+    - name: Publish the single-threaded fallback
+      run: |
+        dotnet publish Visualizer.Browser --configuration Release --output artifacts/single/publish --artifacts-path artifacts/single -p:WasmEnableThreads=false -p:CompressionEnabled=false
+        mkdir -p publish/wwwroot/single
+        cp -r artifacts/single/publish/wwwroot/_framework publish/wwwroot/single/_framework
+    - name: Upload
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: publish/wwwroot
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+    - name: Deploy
+      id: deployment
+      uses: actions/deploy-pages@v4

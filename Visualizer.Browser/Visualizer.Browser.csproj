@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+
+    <!-- Browser build of the visualizer, sharing the desktop project's source files.
+         Needs the .NET 10 SDK with the wasm-tools workload. Not in Algorithms.sln, so CI does not build it. -->
+    <PropertyGroup>
+        <TargetFramework>net10.0-browser</TargetFramework>
+        <OutputType>Exe</OutputType>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <LangVersion>latest</LangVersion>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <RootNamespace>Yewnyx.Algorithms.Visualizer</RootNamespace>
+        <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+        <InvariantGlobalization>true</InvariantGlobalization>
+        <!-- The scans run on real threads. The page must be cross-origin isolated; see wwwroot/main.js.
+             Publishing with -p:WasmEnableThreads=false makes the single-threaded fallback build. -->
+        <WasmEnableThreads Condition="'$(WasmEnableThreads)' == ''">true</WasmEnableThreads>
+        <!-- Thread.Start is flagged as unsupported on browser, but it works with WasmEnableThreads. -->
+        <NoWarn>$(NoWarn);CA1416</NoWarn>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(WasmEnableThreads)' != 'true'">
+        <DefineConstants>$(DefineConstants);SINGLE_THREADED</DefineConstants>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Compile Include="..\Visualizer\**\*.cs" Exclude="..\Visualizer\Program.cs;..\Visualizer\bin\**;..\Visualizer\obj\**" LinkBase="Shared" />
+        <AvaloniaXaml Include="..\Visualizer\**\*.axaml" Exclude="..\Visualizer\bin\**;..\Visualizer\obj\**" LinkBase="Shared" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Avalonia" Version="11.3.22" />
+        <PackageReference Include="Avalonia.Browser" Version="11.3.22" />
+        <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.22" />
+        <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.22" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Algorithms\Algorithms.csproj" />
+    </ItemGroup>
+
+</Project>

@@ -11,9 +11,13 @@ public enum ScanMode { Serial, Parallel }
 /// Parallel mode runs a lock-free dependency-counting scheduler over islands: each island carries
 /// an atomic count of unfinished dependencies, a finished island decrements its dependents, and
 /// whoever drops a count to zero pushes that island onto a lock-free ready queue.
+/// Without threads (<see cref="Hosting.ThreadsAvailable"/>), only Serial runs, in slices driven by
+/// <see cref="Step"/> on the caller's thread.
 /// </summary>
 public sealed class Scanner : IDisposable {
     private readonly GraphModel _model;
+    private readonly bool _stepped;            // no threads: the caller drives a serial scan with Step
+    private int _next;                         // stepped scans: next slot in the execution order
     private readonly Thread[] _threads;
     private readonly int[] _remaining;         // per island: dependencies not yet complete
     private readonly ConcurrentQueue<int> _ready = new();
@@ -40,12 +44,14 @@ public sealed class Scanner : IDisposable {
     public Scanner(GraphModel model, ScanMode mode, int workers, double nodeCostMicroseconds) {
         _model = model;
         Mode = mode;
+        _stepped = !Hosting.ThreadsAvailable;
+        if (_stepped && mode == ScanMode.Parallel) { throw new NotSupportedException("Parallel scans need threads."); }
         workers = mode == ScanMode.Serial ? 1 : Math.Max(1, workers);
         _nodeCostMicroseconds = nodeCostMicroseconds;
         State = new ScanState(model.N, workers);
         _remaining = new int[model.IslandCount];
-        _threads = new Thread[workers];
-        for (var w = 0; w < workers; w++) {
+        _threads = _stepped ? [] : new Thread[workers];
+        for (var w = 0; w < _threads.Length; w++) {
             var id = w;
             _threads[w] = new Thread(() => {
                 try {
@@ -63,7 +69,7 @@ public sealed class Scanner : IDisposable {
             Array.Copy(_model.IslandInDegree, _remaining, _remaining.Length);
             for (var i = 0; i < _remaining.Length; i++) { if (_remaining[i] == 0) { _ready.Enqueue(i); } }
         }
-        Volatile.Write(ref _running, _threads.Length);
+        Volatile.Write(ref _running, _stepped ? 1 : _threads.Length);
         Volatile.Write(ref State.StartTicks, Stopwatch.GetTimestamp());
         if (_model.N == 0) {
             Volatile.Write(ref State.EndTicks, Stopwatch.GetTimestamp());
@@ -103,6 +109,25 @@ public sealed class Scanner : IDisposable {
             if (!WaitWhilePaused()) { return; }
             Process(order[k], 0);
         }
+        FinishSerial();
+    }
+
+    /// <summary>
+    /// Without threads, the caller calls this once per frame: it continues the serial scan for about
+    /// <paramref name="budget"/> and returns. Does nothing when threads run the scan.
+    /// </summary>
+    public void Step(TimeSpan budget) {
+        if (!_stepped || !IsRunning || IsPaused) { return; }
+        var order = _model.ExecutionOrder;
+        var until = Stopwatch.GetTimestamp() + (long)(budget.TotalSeconds * Stopwatch.Frequency);
+        while (_next < order.Length && Volatile.Read(ref _cancelled) == 0 && Stopwatch.GetTimestamp() < until) {
+            Process(order[_next++], 0);
+        }
+        if (_next == order.Length) { FinishSerial(); }
+        if (_next == order.Length || Volatile.Read(ref _cancelled) == 1) { Volatile.Write(ref _running, 0); }
+    }
+
+    private void FinishSerial() {
         Volatile.Write(ref State.WorkerCurrent[0].Value, -1);
         Volatile.Write(ref State.EndTicks, Stopwatch.GetTimestamp());
     }

@@ -7,7 +7,7 @@ using Yewnyx.Algorithms.Visualizer.Views;
 
 namespace Yewnyx.Algorithms.Visualizer;
 
-public partial class MainWindow : Window {
+public partial class MainView : UserControl {
     private readonly DispatcherTimer _frame;
     private GraphModel? _model;
     private Scanner? _scanner;
@@ -17,7 +17,7 @@ public partial class MainWindow : Window {
     private string _verification = "";
     private long _lastStatusTick;
 
-    public MainWindow() {
+    public MainView() {
         InitializeComponent();
 
         BeforeView.Layout = LayoutKind.IndexGrid;
@@ -48,11 +48,16 @@ public partial class MainWindow : Window {
         };
         CostLabel.Text = FormatCost(NodeCost);
         Workers.Value = Math.Clamp(Environment.ProcessorCount / 2, 2, 16);
+        if (!Hosting.ThreadsAvailable) {
+            ((ComboBoxItem)ModeBox.Items[1]!).IsEnabled = false;
+            Workers.IsEnabled = false;
+            ToolTip.SetTip(ModeBox, "Parallel needs threads, which this single-threaded build does not have.");
+        }
 
         _frame = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(16) };
         _frame.Tick += (_, _) => OnFrame();
 
-        Opened += async (_, _) => await GenerateAsync();
+        Loaded += async (_, _) => await GenerateAsync();
     }
 
     private double NodeCost => Math.Pow(10, CostSlider.Value);
@@ -164,6 +169,7 @@ public partial class MainWindow : Window {
     }
 
     private void OnFrame() {
+        _scanner?.Step(TimeSpan.FromMilliseconds(10));
         Redraw();
         var now = Stopwatch.GetTimestamp();
         if (now - _lastStatusTick > Stopwatch.Frequency / 10) {
@@ -184,7 +190,9 @@ public partial class MainWindow : Window {
 
     private void UpdateScanText() {
         if (_scanner is null || _model is null) {
-            ScanText.Text = _model is null ? "" : "Press Play to scan the execution order. Serial walks it linearly; Parallel runs islands as their dependencies complete.";
+            ScanText.Text = _model is null ? "" : Hosting.ThreadsAvailable
+                ? "Press Play to scan the execution order. Serial walks it linearly; Parallel runs islands as their dependencies complete."
+                : "Press Play to scan the execution order. Serial walks it linearly. Parallel needs threads, which this single-threaded build does not have.";
             return;
         }
         var state = _scanner.State;
@@ -223,10 +231,10 @@ public partial class MainWindow : Window {
         if (!_frame.IsEnabled) { Redraw(); }
     }
 
-    protected override void OnClosed(EventArgs e) {
+    protected override void OnUnloaded(RoutedEventArgs e) {
         _generation?.Cancel();
         _scanner?.Dispose();
         _frame.Stop();
-        base.OnClosed(e);
+        base.OnUnloaded(e);
     }
 }
