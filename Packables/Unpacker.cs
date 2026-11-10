@@ -1,5 +1,5 @@
 ﻿using System;
-using Newtonsoft.Json;
+using System.Collections.Generic;
 using Newtonsoft.Json.Linq;
 using Yewnyx.Collections;
 
@@ -13,20 +13,21 @@ public ref struct Unpacker {
     private JObject _document;
     private JObject _objects;
 
-    private TwoWayDictionary<string, IPackable> _objectsDict;
+    // Looked up by id only. Objects are never hashed: they change while being unpacked.
+    private Dictionary<string, IPackable> _objectsDict;
 
     private IReadOnlyTwoWayDictionary<Type, string> _builtInTypes;
     private TwoWayDictionary<Type, string> _explicitTypes;
 
-    public Unpacker(JObject document) : this(IPackable.DEFAULT_CONTENT_TYPE, document) { }
-
-    public Unpacker(string contentType, JObject document,
+    public Unpacker(JObject document, string contentType = IPackable.DEFAULT_CONTENT_TYPE,
         IReadOnlyTwoWayDictionary<Type, string>? builtInTypes = null) {
         _contentType = contentType;
         _document = document;
         _objectsDict = new();
 
-        if (builtInTypes == null) { _builtInTypes = new TwoWayDictionary<Type, string>(); } else {
+        if (builtInTypes == null) {
+            _builtInTypes = new TwoWayDictionary<Type, string>();
+        } else {
             _builtInTypes = new TwoWayDictionary<Type, string>(builtInTypes);
         }
 
@@ -36,6 +37,11 @@ public ref struct Unpacker {
     public bool TryUnpack<TPackable>(ref TPackable packable) where TPackable : class, IPackable =>
         TryUnpack(false, ref packable);
 
+    /// <summary>
+    /// Unpacks the document's root object into <paramref name="packable"/>. Returns false, before
+    /// touching it, if the content type doesn't match (unless lenient), the document is from a newer
+    /// format version, or it has no root object.
+    /// </summary>
     public bool TryUnpack<TPackable>(bool lenientContentType, ref TPackable packable)
         where TPackable : class, IPackable {
         if (_document == null) { return false; }
@@ -45,6 +51,12 @@ public ref struct Unpacker {
             if (!_document.TryGetValue("Content-Type", out var contentTypeToken)) { return false; }
 
             if (contentTypeToken.ToString() != _contentType) { return false; }
+        }
+
+        // A newer format can't be read safely. A missing version is accepted: Packer always writes one.
+        if (_document.TryGetValue("version", out var versionToken) &&
+            (versionToken.Type != JTokenType.Integer || versionToken.Value<long>() > IPackable.PACKABLE_VERSION)) {
+            return false;
         }
 
         // Doesn't have { ... "root": { ... } }
@@ -74,8 +86,7 @@ public ref struct Unpacker {
 
         _objectsDict[rootObjectId] = packable;
         packable.UnpackFrom(ref this, rootObjectId);
-
-        return false;
+        return true;
     }
 
     public bool TryCreateFromReference<TPackable>(JToken token, out TPackable? packable, Func<Type, TPackable?> factory)
@@ -100,18 +111,19 @@ public ref struct Unpacker {
         // Type doesn't resolve
         if (!_tryResolveTypeId(typeId, out var type, out _)) { return false; }
 
-        // Add the raw packable first.
-        // If it needed to be added, create then unpack. Else it was already there.
-        if (!_objectsDict.Contains(objectId)) {
-            packable = factory(type);
-            if (packable == null) { return false; }
-
-            _objectsDict[objectId] = packable;
-            packable.UnpackFrom(ref this, objectId);
-            return true;
+        // Already unpacked: a shared reference, or a loop back to an object still being unpacked.
+        if (_objectsDict.TryGetValue(objectId, out var existing)) {
+            packable = existing as TPackable;
+            return packable != null;
         }
 
-        return false;
+        // Registered before unpacking, so references back to it find it.
+        packable = factory(type);
+        if (packable == null) { return false; }
+
+        _objectsDict[objectId] = packable;
+        packable.UnpackFrom(ref this, objectId);
+        return true;
     }
 
     public bool TryGetJson(string key, ObjectId objectId, out JToken result) {
@@ -120,10 +132,7 @@ public ref struct Unpacker {
         // Get the object's dictionary
         if (!_objects.TryGetValue(objectId, out var objectToken)) { return false; }
 
-        if (objectToken is not JObject jsonObject) {
-            Console.Error.WriteLine($"Object '{objectId.ToString()}' is not a JObject.");
-            return false;
-        }
+        if (objectToken is not JObject jsonObject) { return false; }
 
         return jsonObject.TryGetValue(key, out result);
     }
@@ -151,29 +160,21 @@ public ref struct Unpacker {
             var typeListKey = typeProperty.Name;
             if (_tryResolveTypeId(typeListKey, out _, out _)) { continue; }
 
-            Type type = null;
+            // Entries that are malformed or name an unknown type are skipped. A reference to one of
+            // them then fails in TryCreateFromReference, which is where the caller finds out.
+            if (typeProperty.Value is not JObject typeObj ||
+                !typeObj.TryGetValue("fullname", out var typeNameToken)) { continue; }
 
-            if (typeProperty.Value is JObject typeObj && typeObj.TryGetValue("fullname", out var typeNameToken)) {
-                var typeName = typeNameToken.ToString();
-                if (_tryResolveTypeId(typeName, out type, out var isBuiltIn)) {
-                    if (!isBuiltIn) {
-                        if (!_explicitTypes.TryAdd(type, typeListKey)) {
-                            Console.Error.WriteLine(
-                                $"Could not register type '{typeListKey}' as '{type.FullName}'.");
-                        }
-                    }
-
-                    continue;
-                }
-
-                type = Type.GetType(typeName);
-                if (type == null) {
-                    Console.Error.WriteLine($"Did not find type for: '{typeObj.ToString(Formatting.None)}'.");
-                    continue;
-                }
+            var typeName = typeNameToken.ToString();
+            if (_tryResolveTypeId(typeName, out var type, out var isBuiltIn)) {
+                if (!isBuiltIn) { _explicitTypes.TryAdd(type, typeListKey); }
+                continue;
             }
 
-            if (!_explicitTypes.Contains(type)) { _explicitTypes[typeListKey] = type; }
+            var found = Type.GetType(typeName);
+            if (found == null) { continue; }
+
+            if (!_explicitTypes.Contains(found)) { _explicitTypes[typeListKey] = found; }
         }
     }
 }

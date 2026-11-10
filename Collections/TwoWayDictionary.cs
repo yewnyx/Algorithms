@@ -49,21 +49,30 @@ public class TwoWayDictionary<TKey, TValue> : ITwoWayDictionary<TKey, TValue>
         set => _set(value, val);
     }
 
+    // Keeps the pairs one-to-one: the key's old value and the value's old key are dropped first.
     private void _set(TKey key, TValue value) {
+        if (_dictionary.TryGetValue(key, out var oldValue)) { _reverseDictionary.Remove(oldValue); }
+        if (_reverseDictionary.TryGetValue(value, out var oldKey)) { _dictionary.Remove(oldKey); }
         _dictionary[key] = value;
         _reverseDictionary[value] = key;
     }
 
+    /// <summary>
+    /// Adds the pair. Does nothing if the key or the value is already present (unlike Dictionary.Add,
+    /// which throws).
+    /// </summary>
     public void Add(TKey key, TValue value) => _ = TryAdd(key, value);
 
     public bool TryAdd(TKey key, TValue value) {
         if (!_dictionary.TryAdd(key, value)) { return false; }
         if (_reverseDictionary.TryAdd(value, key)) { return true; }
 
+        // The value already belongs to another key.
         _dictionary.Remove(key);
-        return true;
+        return false;
     }
 
+    /// <inheritdoc cref="Add(TKey, TValue)"/>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Add(TValue value, TKey key) => _ = TryAdd(key, value);
 
