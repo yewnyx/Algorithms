@@ -50,8 +50,8 @@ public sealed class DocBlock : INotifyPropertyChanged {
 /// <summary>
 /// Shows a packed document as a graph of objects beside its text: one the library packed from a
 /// generated object graph, or one opened from a file or an https address. A file or a download is
-/// only ever read as data; this panel never hands it to an Unpacker, because unpacking creates the
-/// types a document names.
+/// only ever read as data; this panel never hands it to an Unpacker, because unpacking runs the code
+/// of the types a document names.
 /// </summary>
 public partial class PackedDocumentsPanel : UserControl {
     private const uint NotReached = 0xFFFF1744;
@@ -63,13 +63,13 @@ public partial class PackedDocumentsPanel : UserControl {
     /// <summary>Where a document came from. Only a generated one may ever be unpacked.</summary>
     private enum Origin { Generated, File, Url }
 
-    private sealed record Shown(Origin Origin, string Title, PackedDocument? Document, string? Failure, string? Note = null, RoundTripResult? Trip = null);
+    private sealed record Shown(Origin Origin, string Title, ViewedDocument? Document, string? Failure, string? Note = null, RoundTripResult? Trip = null);
 
     private readonly Dictionary<uint, IBrush> _brushes = new();
     private Shown? _generated;
     private Shown? _file;
     private Shown? _url;
-    private PackedDocument? _doc;
+    private ViewedDocument? _doc;
     private List<DocBlock>? _blocks;
     private DocBlock? _marked;
     private CancellationTokenSource? _generation;
@@ -253,14 +253,14 @@ public partial class PackedDocumentsPanel : UserControl {
     private static Shown ReadText(Origin origin, string title, string text, string? note, CancellationToken ct) {
         JObject json;
         try {
-            json = PackedDocument.Parse(text);
+            json = ViewedDocument.Parse(text);
         } catch (JsonException ex) {
             var why = text.AsSpan().TrimStart().StartsWith("<")
                 ? "is not JSON: it starts like an HTML or XML page"
                 : "is not a JSON document: " + OneLine(ex.Message);
             return new Shown(origin, title, null, why, note);
         }
-        return new Shown(origin, title, PackedDocument.Read(json, ct: ct), null, note);
+        return new Shown(origin, title, ViewedDocument.Read(json, ct: ct), null, note);
     }
 
     // Null when the text is longer than the cap. Reads with await so it also works where blocking is not allowed.
@@ -387,7 +387,7 @@ public partial class PackedDocumentsPanel : UserControl {
         return sb.ToString();
     }
 
-    private static string EnvelopeText(PackedDocument d) {
+    private static string EnvelopeText(ViewedDocument d) {
         var layout = d.Layout;
         var sb = new StringBuilder();
         foreach (var p in d.Json.Properties()) {
@@ -406,7 +406,7 @@ public partial class PackedDocumentsPanel : UserControl {
         return sb.Length == 0 ? "  (empty)" : sb.ToString(0, sb.Length - 1);
     }
 
-    private static string TypesText(PackedDocument d) {
+    private static string TypesText(ViewedDocument d) {
         if (d.Types.Count == 0) { return "  (none)"; }
         var sb = new StringBuilder();
         foreach (var t in d.Types) {
@@ -471,7 +471,7 @@ public partial class PackedDocumentsPanel : UserControl {
         HoverText.Text = _doc is { } d && v >= 0 && v < d.N ? Describe(d, v) : "";
     }
 
-    private static string Describe(PackedDocument d, int v) {
+    private static string Describe(ViewedDocument d, int v) {
         const int show = 4;
         var sb = new StringBuilder();
         sb.Append(d.ObjectIds[v]).Append("  ").Append(d.TypeName(v));
@@ -501,7 +501,10 @@ public partial class PackedDocumentsPanel : UserControl {
         if (incoming > show) { sb.Append(", +").Append(incoming - show).Append(" more"); }
 
         foreach (var dangling in d.Dangling) {
-            if (dangling.From == v) { sb.Append("   DANGLING ").Append(dangling.Path).Append(" -> ").Append(dangling.TargetId); }
+            if (dangling.From == v) {
+                sb.Append("   DANGLING ").Append(dangling.Path).Append(" -> ")
+                    .Append(dangling.TargetId == DocumentLayout.MissingObjectId ? "(missing object)" : dangling.TargetId);
+            }
         }
         return sb.ToString();
     }

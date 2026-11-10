@@ -23,7 +23,33 @@ public sealed class DocumentLayout {
     public required string TypeKey { get; init; }
     public required string RefKey { get; init; }
     public required string TypeNameKey { get; init; }
-    public required string NullObjectId { get; init; }
+
+    /// <summary>The id a null ref names, in layouts that write null refs as refs; format 3 writes null.</summary>
+    public required string? NullObjectId { get; init; }
+
+    /// <summary>
+    /// Format 3: a ref is {"$ref": id, "$type": name}, or {"$ref": null, ...} for a ref to a missing
+    /// object; fields sit under "$fields", and maps and arrays are wrapped in {"$map": ...} and {"$array": ...}.
+    /// </summary>
+    public bool Wrapped { get; init; }
+
+    /// <summary>The id a ref to a missing object is read as. Ids are never empty, so it can't name one.</summary>
+    public const string MissingObjectId = "";
+
+    public static readonly DocumentLayout V3 = new() {
+        Name = "v3",
+        ContentTypeKey = "Content-Type",
+        VersionKey = "version",
+        RootKey = "root",
+        ObjectsKey = "objects",
+        TypesKey = "types",
+        IsaKey = "$type",
+        TypeKey = "$type",
+        RefKey = "$ref",
+        TypeNameKey = "fullname",
+        NullObjectId = null,
+        Wrapped = true,
+    };
 
     public static readonly DocumentLayout V1 = new() {
         Name = "v1",
@@ -47,13 +73,18 @@ public sealed class DocumentLayout {
         objectId = "";
         if (token is not JObject { Count: 2 } o) { return false; }
         if (o[TypeKey] is not JValue { Type: JTokenType.String }) { return false; }
+        if (Wrapped && o[RefKey] is JValue { Type: JTokenType.Null }) {
+            objectId = MissingObjectId;
+            return true;
+        }
         if (o[RefKey] is not JValue { Type: JTokenType.String } id) { return false; }
         objectId = (string)id!;
         return true;
     }
 
-    public string? TypeIdOf(JObject body) =>
-        body[IsaKey] is JObject isa && isa[TypeKey] is JValue { Type: JTokenType.String } type ? (string?)type : null;
+    public string? TypeIdOf(JObject body) => Wrapped
+        ? body[TypeKey] is JValue { Type: JTokenType.String } named ? (string?)named : null
+        : body[IsaKey] is JObject isa && isa[TypeKey] is JValue { Type: JTokenType.String } type ? (string?)type : null;
 }
 
 /// <param name="Listed">False when objects name this type but the types table has no entry for it.</param>
@@ -69,7 +100,7 @@ public readonly record struct DanglingRef(int From, string Path, string TargetId
 /// root, and what the root reaches. It never creates the objects the document describes, so it is
 /// safe on a document from anywhere. Vertices are objects and edges are references.
 /// </summary>
-public sealed class PackedDocument {
+public sealed class ViewedDocument {
     // Parsing stops here, so the walks below can recurse.
     private const int MaxDepth = 64;
 
@@ -147,10 +178,12 @@ public sealed class PackedDocument {
         _ => token.Type.ToString(),
     };
 
-    public static PackedDocument Read(JObject json, DocumentLayout? layout = null, CancellationToken ct = default) {
-        layout ??= DocumentLayout.V1;
+    public static ViewedDocument Read(JObject json, DocumentLayout? layout = null, CancellationToken ct = default) {
+        // Both layouts keep objects in a table keyed by id, so the version tells them apart. Format 1
+        // documents may have none.
+        layout ??= json[DocumentLayout.V3.VersionKey] is JValue { Type: JTokenType.Integer, Value: 3L } ? DocumentLayout.V3 : DocumentLayout.V1;
         var sw = Stopwatch.StartNew();
-        var doc = new PackedDocument {
+        var doc = new ViewedDocument {
             Json = json,
             Layout = layout,
             ContentType = Scalar(json[layout.ContentTypeKey]),
@@ -214,8 +247,10 @@ public sealed class PackedDocument {
         for (var v = 0; v < n; v++) {
             refStart[v] = from.Count;
             if (bodies[v] is not { } body) { continue; }
-            foreach (var p in body.Properties()) {
-                if (p.Name != layout.IsaKey) { Walk(p.Value, p.Name, v); }
+            var fields = layout.Wrapped ? body["$fields"] as JObject : body;
+            if (fields is null) { continue; }
+            foreach (var p in fields.Properties()) {
+                if (layout.Wrapped || p.Name != layout.IsaKey) { Walk(p.Value, p.Name, v); }
             }
         }
         refStart[n] = from.Count;
@@ -229,6 +264,9 @@ public sealed class PackedDocument {
             doc.RootId = rootId;
             if (rootId == layout.NullObjectId) {
                 missing.Add($"`{layout.RootKey}` is null");
+            } else if (rootId == DocumentLayout.MissingObjectId) {
+                missing.Add($"`{layout.RootKey}` points at a missing object");
+                dangling.Add(new DanglingRef(-1, layout.RootKey, rootId));
             } else if (index.TryGetValue(rootId, out var root)) {
                 doc.Root = root;
             } else {
@@ -257,6 +295,15 @@ public sealed class PackedDocument {
                     paths.Add(path);
                 } else {
                     dangling.Add(new DanglingRef(owner, path, id));
+                }
+                return;
+            }
+            // Format 3's wrappers add no step to the path: a map's entry is path/key, an element path[k].
+            if (layout.Wrapped && token is JObject { Count: 1 } wrapper && wrapper.Properties().First() is var tag) {
+                if (tag.Name == "$map" && tag.Value is JObject map) {
+                    foreach (var p in map.Properties()) { Walk(p.Value, path + "/" + p.Name, owner); }
+                } else if (tag.Name == "$array" && tag.Value is JArray array) {
+                    for (var k = 0; k < array.Count; k++) { Walk(array[k], $"{path}[{k}]", owner); }
                 }
                 return;
             }
@@ -383,7 +430,9 @@ public sealed class PackedDocument {
     }
 
     public string RefText(string id) =>
-        id == Layout.NullObjectId ? "-> null" : _index.ContainsKey(id) ? "-> " + id : "-> " + id + "  (no such object)";
+        id == Layout.NullObjectId ? "-> null" :
+        id == DocumentLayout.MissingObjectId ? "-> (missing object)" :
+        _index.ContainsKey(id) ? "-> " + id : "-> " + id + "  (no such object)";
 
     private static string? Scalar(JToken? token) => token is JValue value ? value.ToString() : null;
 
