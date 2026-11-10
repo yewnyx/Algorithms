@@ -9,6 +9,10 @@
         <TargetFrameworks>net8.0;netstandard2.1</TargetFrameworks>
     </PropertyGroup>
     <ItemGroup>
+      <InternalsVisibleTo Include="Packables.Newtonsoft" />
+      <InternalsVisibleTo Include="PackablesTest" />
+    </ItemGroup>
+    <ItemGroup>
       <PackageReference Include="JetBrains.Annotations" Version="2024.3.0" />
       <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
     </ItemGroup>
