@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 using Yewnyx.Packables;
 
 namespace Yewnyx.Algorithms.Visualizer.Model;
@@ -20,23 +18,22 @@ public sealed class Library : IPackable {
     public Dictionary<string, Shelf> Shelves = new();
     public Book? Featured;
 
-    public void PackInto(ref Packer packer, JObject storage) {
-        storage["name"] = Name;
-        var shelves = new JObject();
-        foreach (var (subject, shelf) in Shelves) { shelves[subject] = packer.PackReference(shelf); }
-        storage["shelves"] = shelves;
-        storage["featured"] = packer.PackReference(Featured);
+    public void PackInto(Packer packer) {
+        packer.WriteString("name", Name);
+        var shelves = packer.Map("shelves");
+        foreach (var (subject, shelf) in Shelves) { shelves.WriteRef(subject, shelf); }
+        packer.WriteRef("featured", Featured);
     }
 
-    public void UnpackFrom(ref Unpacker unpacker, ObjectId objectId) {
-        if (unpacker.TryGetJson("name", objectId, out var token)) { Name = token.ToObject<string>() ?? ""; }
+    public void UnpackFrom(Unpacker unpacker) {
+        Name = unpacker.TryReadString("name", out var name) ? name ?? "" : "";
         Shelves.Clear();
-        if (unpacker.TryGetJson("shelves", objectId, out token) && token is JObject shelves) {
-            foreach (var p in shelves.Properties()) {
-                if (unpacker.TryCreateFromReference<Shelf>(p.Value, out var shelf, _ => new Shelf())) { Shelves[p.Name] = shelf!; }
+        if (unpacker.TryReadMap("shelves", out var shelves)) {
+            foreach (var entry in shelves) {
+                if (entry.Value.TryReadRef(static () => new Shelf(), out Shelf? shelf) && shelf is not null) { Shelves[entry.Key] = shelf; }
             }
         }
-        if (unpacker.TryGetJson("featured", objectId, out token)) { unpacker.TryCreateFromReference(token, out Featured, _ => new Book()); }
+        unpacker.TryReadRef("featured", static () => new Book(), out Featured);
     }
 }
 
@@ -44,19 +41,18 @@ public sealed class Shelf : IPackable {
     public string Label = "";
     public List<Book> Books = new();
 
-    public void PackInto(ref Packer packer, JObject storage) {
-        storage["label"] = Label;
-        var books = new JArray();
-        foreach (var book in Books) { books.Add((JToken)packer.PackReference(book)); }
-        storage["books"] = books;
+    public void PackInto(Packer packer) {
+        packer.WriteString("label", Label);
+        var books = packer.Array("books");
+        foreach (var book in Books) { books.WriteRef(book); }
     }
 
-    public void UnpackFrom(ref Unpacker unpacker, ObjectId objectId) {
-        if (unpacker.TryGetJson("label", objectId, out var token)) { Label = token.ToObject<string>() ?? ""; }
+    public void UnpackFrom(Unpacker unpacker) {
+        Label = unpacker.TryReadString("label", out var label) ? label ?? "" : "";
         Books.Clear();
-        if (unpacker.TryGetJson("books", objectId, out token) && token is JArray books) {
-            foreach (var item in books) {
-                if (unpacker.TryCreateFromReference<Book>(item, out var book, _ => new Book())) { Books.Add(book!); }
+        if (unpacker.TryReadArray("books", out var books)) {
+            foreach (var element in books) {
+                if (element.TryReadRef(static () => new Book(), out Book? book) && book is not null) { Books.Add(book); }
             }
         }
     }
@@ -70,20 +66,20 @@ public sealed class Book : IPackable {
     public Author? Author;
     public Book? Sequel;
 
-    public void PackInto(ref Packer packer, JObject storage) {
-        storage["title"] = Title;
-        storage["pages"] = Pages;
-        storage["rating"] = Rating;
-        storage["author"] = packer.PackReference(Author);
-        storage["sequel"] = packer.PackReference(Sequel);
+    public void PackInto(Packer packer) {
+        packer.WriteString("title", Title);
+        packer.WriteInt32("pages", Pages);
+        packer.WriteDouble("rating", Rating);
+        packer.WriteRef("author", Author);
+        packer.WriteRef("sequel", Sequel);
     }
 
-    public void UnpackFrom(ref Unpacker unpacker, ObjectId objectId) {
-        if (unpacker.TryGetJson("title", objectId, out var token)) { Title = token.ToObject<string>() ?? ""; }
-        if (unpacker.TryGetJson("pages", objectId, out token)) { Pages = token.ToObject<int>(); }
-        if (unpacker.TryGetJson("rating", objectId, out token)) { Rating = token.ToObject<double>(); }
-        if (unpacker.TryGetJson("author", objectId, out token)) { unpacker.TryCreateFromReference(token, out Author, _ => new Author()); }
-        if (unpacker.TryGetJson("sequel", objectId, out token)) { unpacker.TryCreateFromReference(token, out Sequel, _ => new Book()); }
+    public void UnpackFrom(Unpacker unpacker) {
+        Title = unpacker.TryReadString("title", out var title) ? title ?? "" : "";
+        unpacker.TryReadInt32("pages", out Pages);
+        Rating = unpacker.TryReadDouble("rating", out var rating) ? rating : double.NaN;
+        unpacker.TryReadRef("author", static () => new Author(), out Author);
+        unpacker.TryReadRef("sequel", static () => new Book(), out Sequel);
     }
 }
 
@@ -91,19 +87,18 @@ public sealed class Author : IPackable {
     public string Name = "";
     public List<Book> Books = new();
 
-    public void PackInto(ref Packer packer, JObject storage) {
-        storage["name"] = Name;
-        var books = new JArray();
-        foreach (var book in Books) { books.Add((JToken)packer.PackReference(book)); }
-        storage["books"] = books;
+    public void PackInto(Packer packer) {
+        packer.WriteString("name", Name);
+        var books = packer.Array("books");
+        foreach (var book in Books) { books.WriteRef(book); }
     }
 
-    public void UnpackFrom(ref Unpacker unpacker, ObjectId objectId) {
-        if (unpacker.TryGetJson("name", objectId, out var token)) { Name = token.ToObject<string>() ?? ""; }
+    public void UnpackFrom(Unpacker unpacker) {
+        Name = unpacker.TryReadString("name", out var name) ? name ?? "" : "";
         Books.Clear();
-        if (unpacker.TryGetJson("books", objectId, out token) && token is JArray books) {
-            foreach (var item in books) {
-                if (unpacker.TryCreateFromReference<Book>(item, out var book, _ => new Book())) { Books.Add(book!); }
+        if (unpacker.TryReadArray("books", out var books)) {
+            foreach (var element in books) {
+                if (element.TryReadRef(static () => new Book(), out Book? book) && book is not null) { Books.Add(book); }
             }
         }
     }
@@ -112,13 +107,13 @@ public sealed class Author : IPackable {
 /// <summary>What packing a generated library, and taking it through text and back, gave.</summary>
 public sealed record RoundTripResult {
     /// <summary>The document as read back from the text, which is what a saved file would hold.</summary>
-    public required PackedDocument Document { get; init; }
+    public required ViewedDocument Document { get; init; }
     public TimeSpan PackTime { get; init; }
     /// <summary>Bytes the measured pack allocated.</summary>
     public long PackBytes { get; init; }
     /// <summary>Length of the document written as JSON without white space.</summary>
     public int Characters { get; init; }
-    /// <summary>Whether the document read from the text equals the packed one, token for token.</summary>
+    /// <summary>Whether the document read back from the text writes the same text again.</summary>
     public bool SameInMemory { get; init; }
     /// <summary>Why the trip stopped before the comparison, or null.</summary>
     public string? Failure { get; init; }
@@ -132,8 +127,18 @@ public sealed record RoundTripResult {
 }
 
 public static class PackedDemo {
-    // Unpacking recurses once per reference, so a long chain of sequels would overflow the stack.
+    // Unpacking fills objects from a queue, so even long chains of sequels would load; short series
+    // keep the graph readable.
     private const int MaxSeries = 6;
+
+    private const string ContentType = "application/packable+json";
+
+    private static readonly PackableRegistry Registry = new PackableRegistry.Builder()
+        .Add(typeof(Library), "Demo.Library", 0)
+        .Add(typeof(Shelf), "Demo.Shelf", 0)
+        .Add(typeof(Book), "Demo.Book", 0)
+        .Add(typeof(Author), "Demo.Author", 0)
+        .Build();
 
     private static readonly string[] Subjects = [
         "fiction", "history", "maps", "poetry", "science", "travel", "music", "cooking", "gardens", "letters", "plays", "essays",
@@ -192,17 +197,19 @@ public static class PackedDemo {
         return library;
     }
 
-    // Packer is a ref struct, so it lives only as a local inside this call.
-    public static JObject Pack(Library library) {
-        var packer = new Packer();
-        return packer.Pack(library);
+    /// <summary>Packs into <paramref name="document"/>; reusing it lets packing stop allocating.</summary>
+    public static void Pack(Library library, PackedDocument document) {
+        if (!Packer.TryPack(library, Registry, document, out var unregistered)) {
+            throw new InvalidOperationException($"{unregistered} isn't registered.");
+        }
     }
 
-    // Unpacker is a ref struct too. This is the only place the Visualizer unpacks anything, and the
-    // only caller hands it text this class packed itself.
-    private static bool Unpack(JObject document, ref Library into) {
-        var unpacker = new Unpacker(document);
-        return unpacker.TryUnpack(ref into);
+    // The only place the Visualizer unpacks anything, and the only caller hands it text this class
+    // packed itself.
+    private static UnpackOutcome Unpack(string text, Library into) {
+        var document = new PackedDocument();
+        if (!PackedJson.TryRead(text, document, ContentType, out var error)) { throw new InvalidOperationException(error.ToString()); }
+        return Unpacker.Unpack(document, into, Registry);
     }
 
     /// <summary>
@@ -212,46 +219,48 @@ public static class PackedDemo {
     /// </summary>
     public static RoundTripResult RoundTrip(DemoSpec spec, CancellationToken ct = default) {
         var library = Generate(spec);
-        Pack(library); // Once unmeasured, so the measured pack does not time first-run compilation.
+        var packed = new PackedDocument();
+        Pack(library, packed); // Once unmeasured: the measured pack then times neither compilation nor buffer growth.
         ct.ThrowIfCancellationRequested();
 
         var bytesBefore = GC.GetAllocatedBytesForCurrentThread();
         var start = Stopwatch.GetTimestamp();
-        var packed = Pack(library);
+        Pack(library, packed);
         var packTime = Stopwatch.GetElapsedTime(start);
         var packBytes = GC.GetAllocatedBytesForCurrentThread() - bytesBefore;
 
-        var text = packed.ToString(Formatting.None);
-        var document = PackedDocument.Read(PackedDocument.Parse(text), ct: ct);
+        var text = PackedJson.Write(packed, ContentType, indented: false);
+        var readBack = new PackedDocument();
+        var same = PackedJson.TryRead(text, readBack, ContentType, out _) &&
+                   PackedJson.Write(readBack, ContentType, indented: false) == text;
         var result = new RoundTripResult {
-            Document = document,
+            Document = ViewedDocument.Read(ViewedDocument.Parse(text), ct: ct),
             PackTime = packTime,
             PackBytes = packBytes,
             Characters = text.Length,
-            SameInMemory = JToken.DeepEquals(packed, document.Json),
+            SameInMemory = same,
             Unrated = CountUnrated(library),
         };
         ct.ThrowIfCancellationRequested();
 
-        // The unpacker gets its own copy of the document, so nothing it does can alter the one shown.
-        var read = PackedDocument.Parse(text);
         var copy = new Library();
-        bool unpacked;
+        UnpackOutcome outcome;
         try {
-            var unmeasured = new Library();
-            Unpack(PackedDocument.Parse(text), ref unmeasured);
+            Unpack(text, new Library()); // Unmeasured, as for packing.
             start = Stopwatch.GetTimestamp();
-            unpacked = Unpack(read, ref copy);
+            outcome = Unpack(text, copy);
         } catch (Exception ex) {
             return result with { Failure = $"unpacking threw {ex.GetType().Name}: {ex.Message}" };
         }
         var unpackTime = Stopwatch.GetElapsedTime(start);
-        if (!unpacked) { return result with { Failure = "TryUnpack returned false" }; }
+        if (outcome != UnpackOutcome.Clean) { return result with { Failure = $"unpacking gave {outcome}" }; }
 
-        var again = Pack(copy).ToString(Formatting.None);
-        var same = Math.Min(text.Length, again.Length);
+        var repacked = new PackedDocument();
+        Pack(copy, repacked);
+        var again = PackedJson.Write(repacked, ContentType, indented: false);
+        var common = Math.Min(text.Length, again.Length);
         var difference = 0;
-        while (difference < same && text[difference] == again[difference]) { difference++; }
+        while (difference < common && text[difference] == again[difference]) { difference++; }
         return result with {
             UnpackTime = unpackTime,
             RepackedCharacters = again.Length,
