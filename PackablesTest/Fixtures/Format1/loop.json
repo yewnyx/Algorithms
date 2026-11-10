@@ -1,0 +1,36 @@
+{
+  "Content-Type": "application/packable+json",
+  "version": 1,
+  "root": {
+    "type": "t:1",
+    "ref": "o:1"
+  },
+  "objects": {
+    "o:1": {
+      "value": 1,
+      "next": {
+        "type": "t:1",
+        "ref": "o:2"
+      },
+      "isa": {
+        "type": "t:1"
+      }
+    },
+    "o:2": {
+      "value": 2,
+      "next": {
+        "type": "t:1",
+        "ref": "o:1"
+      },
+      "isa": {
+        "type": "t:1"
+      }
+    }
+  },
+  "types": {
+    "t:1": {
+      "type": "t:1",
+      "fullname": "Yewnyx.Packables.Test.Format1.Node, PackablesTest, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"
+    }
+  }
+}
