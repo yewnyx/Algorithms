@@ -18,7 +18,8 @@ public static class MyersDiff {
 
     /// <summary>
     /// Writes the hunks that turn <paramref name="original"/> into <paramref name="revised"/>, in order,
-    /// and returns how many. Everything outside the hunks matches, in order.
+    /// and returns how many. Everything outside the hunks matches, in order. Each pure insertion or
+    /// deletion sits as late as it can.
     /// </summary>
     /// <remarks>
     /// <paramref name="hunks"/> needs <see cref="MaxHunks"/> elements and <paramref name="workspace"/>
@@ -35,7 +36,7 @@ public static class MyersDiff {
 
         var count = 0;
         _compare(original, revised, 0, original.Length, 0, revised.Length, hunks, ref count, workspace);
-        return count;
+        return Hunks.SlideLate(original, revised, hunks, count);
     }
 
     /// <inheritdoc cref="Diff{T}(ReadOnlySpan{T}, ReadOnlySpan{T}, Span{Hunk}, Span{int})"/>

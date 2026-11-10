@@ -67,6 +67,13 @@ public class MyersDiffTest {
     }
 
     [Fact]
+    public void AmbiguousEditsSitLate() {
+        // Equally short scripts could put the inserted or deleted "a" an item earlier.
+        Diff("aba", "baa").Should().Equal("a[0] a -> b[0]", "a[3] -> b[2] a");
+        Diff("baa", "aaba").Should().Equal("a[0] -> b[0] aa", "a[2] a -> b[4]");
+    }
+
+    [Fact]
     public void ScriptsAreShortest() {
         // The example from Myers' paper: 5 edits, keeping "CABA" or "BABA" (both length 4).
         Edits("ABCABBA", "CBABAC").Should().Be(5);

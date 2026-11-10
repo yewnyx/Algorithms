@@ -21,4 +21,44 @@ internal static class Hunks {
         }
         hunks[count++] = new Hunk(new Segment(aStart, aLength), new Segment(bStart, bLength));
     }
+
+    // Moves each pure insertion or deletion as late as it can go without changing the result, and
+    // merges hunks that end up touching. Works from the last hunk back, so each hunk's limit (the next
+    // hunk) is already final. Returns the new count; the hunks stay at the front of the span.
+    public static int SlideLate<T>(ReadOnlySpan<T> a, ReadOnlySpan<T> b, Span<Hunk> hunks, int count)
+        where T : IEquatable<T> {
+        var write = count;
+        for (var read = count - 1; read >= 0; read--) {
+            var (original, revised) = hunks[read];
+            while (true) {
+                // The run of matches after this hunk ends where the next hunk starts.
+                var limit = write < count ? hunks[write].Original.Offset : a.Length;
+                if (original.Size == 0) {
+                    // An insertion moves past a match when it starts with that match's item.
+                    while (original.Offset < limit && Equal(b[revised.Offset], b[revised.Offset + revised.Size])) {
+                        original = new Segment(original.Offset + 1, 0);
+                        revised = new Segment(revised.Offset + 1, revised.Size);
+                    }
+                } else if (revised.Size == 0) {
+                    while (original.Offset + original.Size < limit &&
+                           Equal(a[original.Offset], a[original.Offset + original.Size])) {
+                        original = new Segment(original.Offset + 1, original.Size);
+                        revised = new Segment(revised.Offset + 1, 0);
+                    }
+                }
+
+                if (write == count) { break; }
+                var (nextOriginal, nextRevised) = hunks[write];
+                if (original.Offset + original.Size != nextOriginal.Offset) { break; }
+                original = new Segment(original.Offset, original.Size + nextOriginal.Size);
+                revised = new Segment(revised.Offset, revised.Size + nextRevised.Size);
+                write++;
+            }
+            hunks[--write] = new Hunk(original, revised);
+        }
+
+        var kept = count - write;
+        if (write > 0) { hunks.Slice(write, kept).CopyTo(hunks); }
+        return kept;
+    }
 }
