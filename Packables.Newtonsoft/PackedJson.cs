@@ -9,6 +9,8 @@ using Newtonsoft.Json.Linq;
 namespace Yewnyx.Packables;
 
 public enum PackedJsonErrorKind {
+    /// <summary>No error: what a successful read leaves.</summary>
+    None,
     /// <summary>Not JSON, or JSON of the wrong shape.</summary>
     Malformed,
     ContentType,
@@ -61,6 +63,19 @@ public readonly struct PackedJsonError(PackedJsonErrorKind kind, string path) {
 public static class PackedJson {
     public const int FormatVersion = 3;
     public const int DefaultMaxDepth = 64;
+
+    /// <summary>
+    /// The highest maxDepth the readers take. Reading recurses once per level of nesting, about 1 KB
+    /// of stack each on .NET 8, so the limit is what keeps deep input from overflowing the stack. 256
+    /// fits the 512 KB stacks some platforms give secondary threads; other runtimes' frames differ.
+    /// </summary>
+    public const int MaxDepthLimit = 256;
+
+    internal static void CheckMaxDepth(int maxDepth) {
+        if (maxDepth is < 1 or > MaxDepthLimit) {
+            throw new ArgumentOutOfRangeException(nameof(maxDepth), maxDepth, $"Depths run from 1 to {MaxDepthLimit}.");
+        }
+    }
 
     public static string Write(PackedDocument document, string contentType, bool indented = true) {
         var text = new StringWriter { NewLine = "\n" };
@@ -170,7 +185,8 @@ public static class PackedJson {
     /// <summary>
     /// Reads a format 3 document into <paramref name="document"/>, which is cleared first and sealed on
     /// success. The content type matches with or without a "+json" suffix. Nothing is rewritten on the
-    /// way in: dates stay strings.
+    /// way in: dates stay strings. Nesting deeper than <paramref name="maxDepth"/>, from 1 to
+    /// <see cref="MaxDepthLimit"/>, is refused as TooDeep.
     /// </summary>
     public static bool TryRead(string json, PackedDocument document, string contentType, out PackedJsonError error,
         int maxDepth = DefaultMaxDepth) => TryRead(new StringReader(json), document, contentType, out error, maxDepth);
@@ -180,6 +196,7 @@ public static class PackedJson {
 
     public static bool TryRead(TextReader text, PackedDocument document, string contentType, out PackedJsonError error,
         int maxDepth = DefaultMaxDepth) {
+        CheckMaxDepth(maxDepth);
         using var reader = new JsonTextReader(text) { DateParseHandling = DateParseHandling.None, FloatParseHandling = FloatParseHandling.Double, MaxDepth = null, CloseInput = false };
         return new Decoder(reader, document, contentType, maxDepth).Run(out error);
     }
@@ -190,6 +207,7 @@ public static class PackedJson {
     /// </summary>
     public static bool TryRead(JToken parsed, PackedDocument document, string contentType, out PackedJsonError error,
         int maxDepth = DefaultMaxDepth) {
+        CheckMaxDepth(maxDepth);
         using var reader = new JTokenReader(parsed) { MaxDepth = null };
         return new Decoder(reader, document, contentType, maxDepth).Run(out error);
     }

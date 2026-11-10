@@ -15,5 +15,7 @@ keeps their `\n` line endings.
 | dangling | A chain of 9 with `o:9` removed from `objects` | 1 to 8, then a `Node` with value 0: format 1 readers make an empty object for a missing id. |
 | unresolved-type | `shared`, with `Node`'s type named in an assembly that doesn't exist | The root loads, and both refs come back null. |
 
-The types are in `PackablesTest/Format1FixtureTests.cs`. While the format 1 Packer exists, run the
-tests with `UPDATE_FIXTURES=1` to regenerate.
+Format 1 is no longer written, so these are fixed. `PackablesTest/Format1FixtureTests.cs` converts each
+one to format 3 and unpacks it into the same types ported to format 3. The table above says what the
+format 1 reader gave. After conversion, maps come out sorted by key and -0.0 as 0.0. The dangling
+ref reads as missing, and is recorded instead of becoming an empty object.

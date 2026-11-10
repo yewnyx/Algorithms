@@ -11,7 +11,10 @@ public sealed class PackableRegistration {
     public string Name { get; }
     public int Version { get; }
 
-    /// <summary>Earlier names, kept as data: earlier registered names or old CLR type names. Nothing looks them up yet.</summary>
+    /// <summary>
+    /// Earlier names: old assembly-qualified type names, or earlier ids. The format 1 converter
+    /// matches them exactly, whole string; nothing else looks them up yet.
+    /// </summary>
     public IReadOnlyList<string> Aliases { get; }
 
     /// <summary>"Name#Version", as documents write it.</summary>
@@ -72,7 +75,7 @@ public sealed class PackableRegistry {
         /// <summary>
         /// Registers <paramref name="type"/> as <paramref name="name"/> at <paramref name="version"/>.
         /// Throws if the type isn't a concrete packable class, the name breaks the naming rules, an alias
-        /// is empty, or the type or name is already taken.
+        /// is empty, or the type, name or an old name is already taken.
         /// </summary>
         public Builder Add(Type type, string name, int version, params string[] aliases) {
             if (type is null) { throw new ArgumentNullException(nameof(type)); }
@@ -100,6 +103,15 @@ public sealed class PackableRegistry {
                     throw new ArgumentException(
                         $"\"{name}\" is registered by both {_describe(existing.Type)} and {_describe(type)}.", nameof(name));
                 }
+                // An old name, whether an alias or a type's own assembly-qualified name, maps to one registration.
+                foreach (var claimed in _oldNames(existing.Type, existing.Aliases)) {
+                    foreach (var mine in _oldNames(type, aliases)) {
+                        if (claimed == mine) {
+                            throw new ArgumentException(
+                                $"\"{mine}\" is claimed by both {_describe(existing.Type)} and {_describe(type)}.", nameof(aliases));
+                        }
+                    }
+                }
             }
 
             _registrations.Add(new PackableRegistration(type, name, version, (string[])aliases.Clone()));
@@ -110,6 +122,11 @@ public sealed class PackableRegistry {
         public PackableRegistry Build() => new(_registrations);
 
         private static string _describe(Type type) => $"{type.FullName} ({type.Assembly.GetName().Name})";
+
+        private static IEnumerable<string> _oldNames(Type type, IEnumerable<string> aliases) {
+            if (type.AssemblyQualifiedName is { } own) { yield return own; }
+            foreach (var alias in aliases) { yield return alias; }
+        }
     }
 }
 

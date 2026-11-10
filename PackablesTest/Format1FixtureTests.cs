@@ -1,113 +1,51 @@
 using System.Runtime.CompilerServices;
 using FluentAssertions;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 
 namespace Yewnyx.Packables.Test.Format1;
 
-// Inside the namespace, so these names win over format 3's in Yewnyx.Packables.
-using Yewnyx.Packables.Format1;
-
-// Format 1 documents, kept so the format 1 to 3 converter has real input once format 1 is no longer
-// written. Fixtures/Format1/README.md describes each one. Run with UPDATE_FIXTURES=1 to regenerate.
+// The format 1 documents in Fixtures/Format1, converted to format 3 and unpacked into the same types
+// ported to format 3, as a host does after porting. The types keep their names, so their
+// assembly-qualified names match the ones the documents hold.
 public class Format1FixtureTests {
-    private static string FixtureDirectory([CallerFilePath] string path = "") =>
-        Path.Combine(Path.GetDirectoryName(path)!, "Fixtures", "Format1");
+    private const string ContentType = "application/packable+json";
 
-    // Indented, "\n" newlines and a final newline, so the bytes are the same on every platform.
-    private static string Serialize(JObject document) {
-        var text = new StringWriter { NewLine = "\n" };
-        using (var writer = new JsonTextWriter(text) { Formatting = Formatting.Indented }) { document.WriteTo(writer); }
-        return text + "\n";
+    private static readonly PackableRegistry Registry = new PackableRegistry.Builder()
+        .Add(typeof(Scalars), "Test.Scalars", 0)
+        .Add(typeof(Vectors), "Test.Vectors", 0)
+        .Add(typeof(Node), "Test.Node", 0)
+        .Add(typeof(Pair), "Test.Pair", 0)
+        .Add(typeof(Table), "Test.Table", 0)
+        .Build();
+
+    private static string Fixture(string name, [CallerFilePath] string path = "") =>
+        File.ReadAllText(Path.Combine(Path.GetDirectoryName(path)!, "Fixtures", "Format1", name + ".json"));
+
+    private static PackedDocument Convert(string name) {
+        var document = new PackedDocument();
+        Format1Converter.TryConvert(Fixture(name), document, ContentType, Registry, out var error).Should().BeTrue(error.ToString());
+        return document;
     }
 
-    // The documents, as the format 1 Packer writes them (or derived from one, where noted).
-    private static readonly Dictionary<string, Func<JObject>> Documents = new() {
-        ["scalars"] = () => new Packer().Pack(new Scalars {
-            i = -7, l = 1L << 40, d = 0.1, nan = double.NaN, positiveInfinity = double.PositiveInfinity,
-            negativeInfinity = double.NegativeInfinity, negativeZero = -0.0, flag = true, text = "héllo \"quoted\"",
-            empty = "", none = null,
-        }),
-        ["nested"] = () => {
-            var counts = new Dictionary<string, int> { ["a"] = 1, ["b"] = 2, ["c"] = 3 };
-            counts.Remove("a");
-            counts["d"] = 4; // Reuses a's slot, so the order is d, b, c: not insertion or sorted order.
-            return new Packer().Pack(new Vectors {
-                points = new() { ["b"] = [1, 2, 3], ["a"] = [4.5, 5, 6, 7] },
-                counts = counts,
-            });
-        },
-        ["shared"] = () => {
-            var node = new Node { value = 7 };
-            return new Packer().Pack(new Pair { first = node, second = node });
-        },
-        ["loop"] = () => {
-            var first = new Node { value = 1, next = new Node { value = 2 } };
-            first.next.next = first;
-            return new Packer().Pack(first);
-        },
-        ["chain12"] = () => new Packer().Pack(Chain(12)),
-        ["map-of-refs"] = () => {
-            var one = new Node { value = 1 };
-            return new Packer().Pack(new Table {
-                entries = new() { ["id-2"] = new Node { value = 2 }, ["id-1"] = one, ["id-3"] = one },
-            });
-        },
-        // Derived: a chain of 9 with its last object removed, as the old Packer left refs past 8 levels.
-        ["dangling"] = () => {
-            var document = new Packer().Pack(Chain(9));
-            ((JObject)document["objects"]!).Remove("o:9");
-            return document;
-        },
-        // Derived: "shared" with Node's type named in an assembly that no longer exists.
-        ["unresolved-type"] = () => {
-            var document = Documents["shared"]();
-            document["types"]!["t:2"]!["fullname"] =
-                "Yewnyx.Packables.Test.Format1.Node, Gone, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null";
-            return document;
-        },
-    };
-
-    private static readonly string[] Derived = ["dangling", "unresolved-type"];
-
-    private static Node Chain(int length) {
-        var head = new Node { value = 1 };
-        var tail = head;
-        for (var value = 2; value <= length; value++) { tail = tail.next = new Node { value = value }; }
-        return head;
-    }
-
-    public static IEnumerable<object[]> Names() => Documents.Keys.Select(name => new object[] { name });
-
-    [Theory]
-    [MemberData(nameof(Names))]
-    public void FixtureMatchesWriter(string name) {
-        var path = Path.Combine(FixtureDirectory(), name + ".json");
-        var expected = Serialize(Documents[name]());
-        if (Environment.GetEnvironmentVariable("UPDATE_FIXTURES") == "1") {
-            Directory.CreateDirectory(FixtureDirectory());
-            File.WriteAllText(path, expected);
-        }
-
-        // Once format 1 is no longer written, only the files remain; this test goes with the Packer.
-        File.ReadAllText(path).Should().Be(expected, Derived.Contains(name) ? "it is derived from the Packer's output" : "");
-    }
-
-    private static T Read<T>(string name) where T : class, IPackable, new() {
-        var document = JObject.Parse(File.ReadAllText(Path.Combine(FixtureDirectory(), name + ".json")));
+    private static T Read<T>(string name, UnpackOutcome outcome = UnpackOutcome.Clean, List<UnpackProblem>? problems = null,
+        UnpackOptions options = UnpackOptions.None) where T : class, IPackable, new() {
         var root = new T();
-        new Unpacker(document).TryUnpack(ref root).Should().BeTrue();
+        Unpacker.Unpack(Convert(name), root, Registry, problems, options).Should().Be(outcome);
         return root;
+    }
+
+    private static List<int> Values(Node? node) {
+        var values = new List<int>();
+        for (; node != null; node = node.next) { values.Add(node.value); }
+        return values;
     }
 
     [Fact]
     public void Scalars() {
         var s = Read<Scalars>("scalars");
         (s.i, s.l, s.d, s.flag).Should().Be((-7, 1L << 40, 0.1, true));
-        double.IsNaN(s.nan).Should().BeTrue();
-        s.positiveInfinity.Should().Be(double.PositiveInfinity);
-        s.negativeInfinity.Should().Be(double.NegativeInfinity);
-        double.IsNegative(s.negativeZero).Should().BeTrue();
+        double.IsNaN(s.nan).Should().BeTrue(); // Format 1 wrote "NaN" as a string; typed reads accept it.
+        (s.positiveInfinity, s.negativeInfinity).Should().Be((double.PositiveInfinity, double.NegativeInfinity));
+        (s.negativeZero, double.IsNegative(s.negativeZero)).Should().Be((0.0, false)); // Normalised when converted.
         s.text.Should().Be("héllo \"quoted\"");
         s.empty.Should().BeEmpty();
         s.none.Should().BeNull();
@@ -115,12 +53,13 @@ public class Format1FixtureTests {
 
     [Fact]
     public void Nested() {
+        // Format 3 sorts maps by key: the Dictionary order format 1 kept (d, b, c) is gone.
         var v = Read<Vectors>("nested");
-        v.points.Keys.Should().Equal("b", "a");
-        v.points["b"].Should().Equal(1, 2, 3);
+        v.points.Keys.Should().Equal("a", "b");
         v.points["a"].Should().Equal(4.5, 5, 6, 7);
-        v.counts.Keys.Should().Equal("d", "b", "c");
-        v.counts.Values.Should().Equal(4, 2, 3);
+        v.points["b"].Should().Equal(1, 2, 3);
+        v.counts.Keys.Should().Equal("b", "c", "d");
+        v.counts.Values.Should().Equal(2, 3, 4);
     }
 
     [Fact]
@@ -138,35 +77,186 @@ public class Format1FixtureTests {
     }
 
     [Fact]
-    public void Chain12() {
-        var values = new List<int>();
-        for (Node? node = Read<Node>("chain12"); node != null; node = node.next) { values.Add(node.value); }
-        values.Should().Equal(Enumerable.Range(1, 12));
-    }
+    public void Chain12() => Values(Read<Node>("chain12")).Should().Equal(Enumerable.Range(1, 12));
 
     [Fact]
     public void MapOfRefs() {
         var table = Read<Table>("map-of-refs");
-        table.entries.Keys.Should().Equal("id-2", "id-1", "id-3");
-        table.entries["id-2"].value.Should().Be(2);
-        table.entries["id-1"].value.Should().Be(1);
+        table.entries.Keys.Should().Equal("id-1", "id-2", "id-3");
+        (table.entries["id-1"].value, table.entries["id-2"].value).Should().Be((1, 2));
         table.entries["id-3"].Should().BeSameAs(table.entries["id-1"]);
     }
 
     [Fact]
     public void Dangling() {
-        // Format 1 readers make an empty object for a ref to a missing id.
-        var values = new List<int>();
-        for (Node? node = Read<Node>("dangling"); node != null; node = node.next) { values.Add(node.value); }
-        values.Should().Equal(1, 2, 3, 4, 5, 6, 7, 8, 0);
+        // Format 1 readers made an empty object for the missing id. Format 3 never makes one: the ref
+        // reads as missing, which is recorded, and the rest loads.
+        var problems = new List<UnpackProblem>();
+        var head = Read<Node>("dangling", UnpackOutcome.WithProblems, problems);
+        Values(head).Should().Equal(1, 2, 3, 4, 5, 6, 7, 8);
+        problems.Single().Should().Be(new UnpackProblem(UnpackProblemKind.MissingObject, 7, "Test.Node#0", "next"));
     }
 
     [Fact]
     public void UnresolvedType() {
-        // The root still loads; refs whose type can't be found come back null.
-        var pair = Read<Pair>("unresolved-type");
+        // "Gone" matches no registration, so the name stays as it was and is an unknown type.
+        const string gone = "Yewnyx.Packables.Test.Format1.Node, Gone, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null";
+        var document = Convert("unresolved-type");
+        document.ObjectType(1).Should().Be(gone);
+
+        var problems = new List<UnpackProblem>();
+        Unpacker.Unpack(document, new Pair(), Registry, problems).Should().Be(UnpackOutcome.Failed);
+        problems.Single().Should().Be(new UnpackProblem(UnpackProblemKind.UnknownType, 1, gone, null));
+
+        var pair = Read<Pair>("unresolved-type", UnpackOutcome.WithProblems, options: UnpackOptions.Permissive);
         pair.first.Should().BeNull();
         pair.second.Should().BeNull();
+    }
+
+    // Converting a format 1 document, or unpacking it and packing the result afresh in format 3,
+    // gives the same text. NaN is the expected exception: format 1 stored it as a string.
+    [Theory]
+    [InlineData("nested")]
+    [InlineData("shared")]
+    [InlineData("loop")]
+    [InlineData("chain12")]
+    [InlineData("map-of-refs")]
+    public void ConvertingEqualsPackingAfresh(string name) {
+        var converted = Convert(name);
+        var rootType = Registry.Registrations.Single(r => PackableNames.Format(r.Name, 0) == converted.ObjectType(0)).Type;
+        var root = (IPackable)Activator.CreateInstance(rootType)!;
+        Unpacker.Unpack(converted, root, Registry).Should().Be(UnpackOutcome.Clean);
+
+        var fresh = new PackedDocument();
+        Packer.TryPack(root, Registry, fresh, out _).Should().BeTrue();
+        PackedJson.Write(fresh, ContentType).Should().Be(PackedJson.Write(converted, ContentType));
+    }
+
+    [Fact]
+    public void AliasesMatchOldNames() {
+        // The types moved out of the "Gone" assembly, as the host's did: the old name as an alias maps them back.
+        const string gone = "Yewnyx.Packables.Test.Format1.Node, Gone, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null";
+        var registry = new PackableRegistry.Builder().Add(typeof(Pair), "Test.Pair", 0).Add(typeof(Node), "Test.Node", 0, gone).Build();
+        var document = new PackedDocument();
+        Format1Converter.TryConvert(Fixture("unresolved-type"), document, ContentType, registry, out _).Should().BeTrue();
+        document.ObjectType(1).Should().Be("Test.Node#0");
+
+        var pair = new Pair();
+        Unpacker.Unpack(document, pair, registry).Should().Be(UnpackOutcome.Clean);
+        pair.first!.value.Should().Be(7);
+        pair.second.Should().BeSameAs(pair.first);
+    }
+
+    // A one-object format 1 document: a Node with value 1 and the given extra fields.
+    private static string Doc(string fields, string? typeId = null, bool typesTable = true) {
+        var id = typeId ?? "t:1";
+        var types = typesTable ? $$""", "types": { "{{id}}": { "type": "{{id}}", "fullname": "{{typeof(Node).AssemblyQualifiedName}}" } }""" : "";
+        return $$"""
+            { "Content-Type": "application/packable+json", "version": 1, "root": { "type": "{{id}}", "ref": "o:1" },
+              "objects": { "o:1": { "value": 1, {{fields}} "isa": { "type": "{{id}}" } } }{{types}} }
+            """;
+    }
+
+    private static PackedEntry[] Fields(string fields) {
+        var document = new PackedDocument();
+        Format1Converter.TryConvert(Doc(fields), document, ContentType, Registry, out var error).Should().BeTrue(error.ToString());
+        return document.Entries(document.ObjectFields(0)).ToArray();
+    }
+
+    [Fact]
+    public void RefsAreRecognisedOnlyByTheirExactShape() {
+        Fields("""  "next": { "type": "t:null", "ref": "o:null" },  """).Single(e => e.Key == "next").Value.Kind.Should().Be(PackedKind.Null);
+        var entries = Fields("""  "extra": { "type": "t:1", "ref": "o:1", "more": 1 }, "notAnId": { "type": "x", "ref": "y" },  """);
+        entries.Single(e => e.Key == "extra").Value.Kind.Should().Be(PackedKind.Map);
+        entries.Single(e => e.Key == "notAnId").Value.Kind.Should().Be(PackedKind.Map); // Format 1 ids all start "o:".
+    }
+
+    [Fact]
+    public void DatesStayStringsInTextAndAreRefusedInParsedTrees() {
+        Fields("""  "when": "2026-11-10T12:00:00Z",  """).Single(e => e.Key == "when").Value.AsString.Should().Be("2026-11-10T12:00:00Z");
+
+        var parsed = Newtonsoft.Json.Linq.JObject.Parse(Doc("""  "when": "2026-11-10T12:00:00Z",  """));
+        Format1Converter.TryConvert(parsed, new PackedDocument(), ContentType, Registry, out var error).Should().BeFalse();
+        error.Kind.Should().Be(PackedJsonErrorKind.DateValue);
+
+        var plain = Newtonsoft.Json.Linq.JObject.Parse(Doc(""));
+        Format1Converter.TryConvert(plain, new PackedDocument(), ContentType, Registry, out _).Should().BeTrue();
+    }
+
+    [Fact]
+    public void RepeatedKeysAreRefused() {
+        Format1Converter.TryConvert(Doc("""  "value": 2,  """), new PackedDocument(), ContentType, Registry, out var error).Should().BeFalse();
+        error.Kind.Should().Be(PackedJsonErrorKind.Malformed);
+    }
+
+    [Fact]
+    public void BuiltInIdsMatchAliasesToo() {
+        var registry = new PackableRegistry.Builder().Add(typeof(Node), "Test.Node", 0, "node").Build();
+        var document = new PackedDocument();
+        Format1Converter.TryConvert(Doc("", "node", typesTable: false), document, ContentType, registry, out _).Should().BeTrue();
+        document.ObjectType(0).Should().Be("Test.Node#0");
+    }
+
+    [Fact]
+    public void AFailedConversionLeavesTheDocumentEmpty() {
+        var document = Convert("chain12");
+        Format1Converter.TryConvert("not json", document, ContentType, Registry, out var error).Should().BeFalse();
+        error.Kind.Should().Be(PackedJsonErrorKind.Malformed);
+        (document.ObjectCount, document.IsSealed).Should().Be((0, false));
+    }
+
+    // A Node whose "deep" field holds a number inside this many arrays.
+    private static string NestedArrays(int arrays) => Doc($"  \"deep\": {new string('[', arrays)}1{new string(']', arrays)},  ");
+
+    [Theory]
+    [InlineData(6, true)]
+    [InlineData(7, false)]
+    public void NestingIsLimitedAsFormat3ReadsIt(int arrays, bool fits) {
+        // Whatever converts at a depth limit must read back as format 3 at the same limit.
+        const int maxDepth = 8;
+        var text = NestedArrays(arrays);
+        var parsed = Newtonsoft.Json.Linq.JObject.Parse(text);
+        Format1Converter.TryConvert(text, new PackedDocument(), ContentType, Registry, out var fromText, maxDepth).Should().Be(fits);
+        Format1Converter.TryConvert(parsed, new PackedDocument(), ContentType, Registry, out var fromTree, maxDepth).Should().Be(fits);
+        var expected = fits ? PackedJsonErrorKind.None : PackedJsonErrorKind.TooDeep;
+        (fromText.Kind, fromTree.Kind).Should().Be((expected, expected));
+
+        var document = new PackedDocument();
+        Format1Converter.TryConvert(text, document, ContentType, Registry, out _, maxDepth: 100).Should().BeTrue();
+        PackedJson.TryRead(PackedJson.Write(document, ContentType), new PackedDocument(), ContentType, out var reread, maxDepth)
+            .Should().Be(fits);
+        if (!fits) { reread.Kind.Should().Be(PackedJsonErrorKind.TooDeep); }
+    }
+
+    [Fact]
+    public void VeryDeepTextIsRefusedWithoutACrash() {
+        Format1Converter.TryConvert(NestedArrays(100_000), new PackedDocument(), ContentType, Registry, out var error).Should().BeFalse();
+        error.Kind.Should().Be(PackedJsonErrorKind.TooDeep);
+    }
+
+    [Fact]
+    public void DepthLimitsStopWhereTheStackStillHolds() {
+        // Reading recurses once per level, so the highest limit is one both readers survive.
+        var text = NestedArrays(PackedJson.MaxDepthLimit - 2);
+        var document = new PackedDocument();
+        Format1Converter.TryConvert(text, document, ContentType, Registry, out _, PackedJson.MaxDepthLimit).Should().BeTrue();
+        var written = PackedJson.Write(document, ContentType);
+        PackedJson.TryRead(written, new PackedDocument(), ContentType, out _, PackedJson.MaxDepthLimit).Should().BeTrue();
+
+        var act = () => Format1Converter.TryConvert(text, new PackedDocument(), ContentType, Registry, out _, PackedJson.MaxDepthLimit + 1);
+        act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName("maxDepth");
+        act = () => PackedJson.TryRead(written, new PackedDocument(), ContentType, out _, 0);
+        act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName("maxDepth");
+    }
+
+    [Fact]
+    public void ConversionChecksTheEnvelope() {
+        Format1Converter.TryConvert(Fixture("shared"), new PackedDocument(), "application/other", Registry, out var error).Should().BeFalse();
+        error.Kind.Should().Be(PackedJsonErrorKind.ContentType);
+
+        var newer = Fixture("shared").Replace("\"version\": 1", "\"version\": 3");
+        Format1Converter.TryConvert(newer, new PackedDocument(), ContentType, Registry, out error).Should().BeFalse();
+        error.Kind.Should().Be(PackedJsonErrorKind.Version);
     }
 }
 
@@ -177,57 +267,59 @@ public sealed class Scalars : IPackable {
     public bool flag;
     public string? text, empty, none;
 
-    public void PackInto(ref Packer packer, JObject storage) {
-        storage["i"] = i;
-        storage["l"] = l;
-        storage["d"] = d;
-        storage["nan"] = nan;
-        storage["positiveInfinity"] = positiveInfinity;
-        storage["negativeInfinity"] = negativeInfinity;
-        storage["negativeZero"] = negativeZero;
-        storage["flag"] = flag;
-        storage["text"] = text;
-        storage["empty"] = empty;
-        storage["none"] = none;
+    public void PackInto(Packer packer) {
+        packer.WriteInt32("i", i);
+        packer.WriteInt64("l", l);
+        packer.WriteDouble("d", d);
+        packer.WriteDouble("nan", nan);
+        packer.WriteDouble("positiveInfinity", positiveInfinity);
+        packer.WriteDouble("negativeInfinity", negativeInfinity);
+        packer.WriteDouble("negativeZero", negativeZero);
+        packer.WriteBoolean("flag", flag);
+        packer.WriteString("text", text);
+        packer.WriteString("empty", empty);
+        packer.WriteString("none", none);
     }
 
-    public void UnpackFrom(ref Unpacker unpacker, ObjectId objectId) {
-        i = Get<int>(ref unpacker, objectId, "i");
-        l = Get<long>(ref unpacker, objectId, "l");
-        d = Get<double>(ref unpacker, objectId, "d");
-        nan = Get<double>(ref unpacker, objectId, "nan");
-        positiveInfinity = Get<double>(ref unpacker, objectId, "positiveInfinity");
-        negativeInfinity = Get<double>(ref unpacker, objectId, "negativeInfinity");
-        negativeZero = Get<double>(ref unpacker, objectId, "negativeZero");
-        flag = Get<bool>(ref unpacker, objectId, "flag");
-        text = Get<string?>(ref unpacker, objectId, "text");
-        empty = Get<string?>(ref unpacker, objectId, "empty");
-        none = Get<string?>(ref unpacker, objectId, "none");
+    public void UnpackFrom(Unpacker unpacker) {
+        unpacker.TryReadInt32("i", out i);
+        unpacker.TryReadInt64("l", out l);
+        unpacker.TryReadDouble("d", out d);
+        unpacker.TryReadDouble("nan", out nan);
+        unpacker.TryReadDouble("positiveInfinity", out positiveInfinity);
+        unpacker.TryReadDouble("negativeInfinity", out negativeInfinity);
+        unpacker.TryReadDouble("negativeZero", out negativeZero);
+        unpacker.TryReadBoolean("flag", out flag);
+        unpacker.TryReadString("text", out text);
+        unpacker.TryReadString("empty", out empty);
+        unpacker.TryReadString("none", out none);
     }
-
-    private static T Get<T>(ref Unpacker unpacker, ObjectId objectId, string key) =>
-        unpacker.TryGetJson(key, objectId, out var token) ? token.ToObject<T>()! : default!;
 }
 
 public sealed class Vectors : IPackable {
     public Dictionary<string, double[]> points = new();
     public Dictionary<string, int> counts = new();
 
-    public void PackInto(ref Packer packer, JObject storage) {
-        var p = new JObject();
-        foreach (var (key, value) in points) { p[key] = new JArray(value.Cast<object>().ToArray()); }
-        storage["points"] = p;
-        var c = new JObject();
-        foreach (var (key, value) in counts) { c[key] = value; }
-        storage["counts"] = c;
+    public void PackInto(Packer packer) {
+        var p = packer.Map("points");
+        foreach (var (key, value) in points) { p.WriteDoubles(key, value); }
+        var c = packer.Map("counts");
+        foreach (var (key, value) in counts) { c.WriteInt32(key, value); }
     }
 
-    public void UnpackFrom(ref Unpacker unpacker, ObjectId objectId) {
-        if (unpacker.TryGetJson("points", objectId, out var p)) {
-            foreach (var property in ((JObject)p).Properties()) { points[property.Name] = property.Value.ToObject<double[]>()!; }
+    public void UnpackFrom(Unpacker unpacker) {
+        if (unpacker.TryReadMap("points", out var p)) {
+            foreach (var entry in p) {
+                if (!entry.Value.TryReadArray(out var array)) { continue; }
+                var values = new double[array.Count];
+                array.TryReadDoubles(values, out _);
+                points[entry.Key] = values;
+            }
         }
-        if (unpacker.TryGetJson("counts", objectId, out var c)) {
-            foreach (var property in ((JObject)c).Properties()) { counts[property.Name] = property.Value.ToObject<int>(); }
+        if (unpacker.TryReadMap("counts", out var c)) {
+            foreach (var entry in c) {
+                if (entry.Value.TryReadInt32(out var value)) { counts[entry.Key] = value; }
+            }
         }
     }
 }
@@ -236,44 +328,43 @@ public sealed class Node : IPackable {
     public int value;
     public Node? next;
 
-    public void PackInto(ref Packer packer, JObject storage) {
-        storage["value"] = value;
-        if (next != null) { storage["next"] = packer.PackReference(next); }
+    public void PackInto(Packer packer) {
+        packer.WriteInt32("value", value);
+        if (next != null) { packer.WriteRef("next", next); }
     }
 
-    public void UnpackFrom(ref Unpacker unpacker, ObjectId objectId) {
-        value = unpacker.TryGetJson("value", objectId, out var v) ? v.ToObject<int>() : 0;
-        if (unpacker.TryGetJson("next", objectId, out var n)) { unpacker.TryCreateFromReference(n, out next, _ => new Node()); }
+    public void UnpackFrom(Unpacker unpacker) {
+        unpacker.TryReadInt32("value", out value);
+        unpacker.TryReadRef("next", static () => new Node(), out next);
     }
 }
 
 public sealed class Pair : IPackable {
     public Node? first, second;
 
-    public void PackInto(ref Packer packer, JObject storage) {
-        storage["first"] = packer.PackReference(first);
-        storage["second"] = packer.PackReference(second);
+    public void PackInto(Packer packer) {
+        packer.WriteRef("first", first);
+        packer.WriteRef("second", second);
     }
 
-    public void UnpackFrom(ref Unpacker unpacker, ObjectId objectId) {
-        if (unpacker.TryGetJson("first", objectId, out var f)) { unpacker.TryCreateFromReference(f, out first, _ => new Node()); }
-        if (unpacker.TryGetJson("second", objectId, out var s)) { unpacker.TryCreateFromReference(s, out second, _ => new Node()); }
+    public void UnpackFrom(Unpacker unpacker) {
+        unpacker.TryReadRef("first", static () => new Node(), out first);
+        unpacker.TryReadRef("second", static () => new Node(), out second);
     }
 }
 
 public sealed class Table : IPackable {
     public Dictionary<string, Node> entries = new();
 
-    public void PackInto(ref Packer packer, JObject storage) {
-        var table = new JObject();
-        foreach (var (key, node) in entries) { table[key] = packer.PackReference(node); }
-        storage["entries"] = table;
+    public void PackInto(Packer packer) {
+        var table = packer.Map("entries");
+        foreach (var (key, node) in entries) { table.WriteRef(key, node); }
     }
 
-    public void UnpackFrom(ref Unpacker unpacker, ObjectId objectId) {
-        if (!unpacker.TryGetJson("entries", objectId, out var table)) { return; }
-        foreach (var property in ((JObject)table).Properties()) {
-            if (unpacker.TryCreateFromReference(property.Value, out Node? node, _ => new Node())) { entries[property.Name] = node!; }
+    public void UnpackFrom(Unpacker unpacker) {
+        if (!unpacker.TryReadMap("entries", out var table)) { return; }
+        foreach (var entry in table) {
+            if (entry.Value.TryReadRef(static () => new Node(), out Node? node) && node != null) { entries[entry.Key] = node; }
         }
     }
 }

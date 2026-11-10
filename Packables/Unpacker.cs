@@ -326,7 +326,10 @@ public readonly ref struct ValueReader {
         return true;
     }
 
-    /// <summary>Accepts an integer too, as JSON doesn't tell 1 from 1.0.</summary>
+    /// <summary>
+    /// Accepts an integer too, as JSON doesn't tell 1 from 1.0, and the strings "NaN", "Infinity" and
+    /// "-Infinity", which is how format 1 wrote them.
+    /// </summary>
     public bool TryReadDouble(out double value) {
         value = 0;
         if (!_present || _session.Failed) { return false; }
@@ -336,6 +339,9 @@ public readonly ref struct ValueReader {
                 return true;
             case PackedKind.Integer:
                 value = _value.AsInteger;
+                return true;
+            case PackedKind.String when _value.AsString is "NaN" or "Infinity" or "-Infinity":
+                value = _value.AsString switch { "NaN" => double.NaN, "Infinity" => double.PositiveInfinity, _ => double.NegativeInfinity };
                 return true;
             default:
                 return _session.Record(UnpackProblemKind.WrongKind, _object, _key);

@@ -43,7 +43,8 @@ public class RegistryTest {
         registry.TryGet("Owner.Crew", out var crew).Should().BeTrue();
         crew!.Type.Should().Be(typeof(Crew));
 
-        // Names are looked up without a version, and aliases aren't looked up yet.
+        // Names are looked up without a version. Aliases aren't registered names: only the format 1
+        // converter matches them.
         registry.TryGet("Owner.Crew#0", out _).Should().BeFalse();
         registry.TryGet("Ship", out _).Should().BeFalse();
         registry.TryGet(typeof(string), out _).Should().BeFalse();
@@ -88,6 +89,12 @@ public class RegistryTest {
         act = () => builder.Add(typeof(Box<>), "Box", 0);
         act.Should().Throw<ArgumentException>().WithMessage("*can't be an object's type*");
         builder.Add<Box<int>>("Box", 0); // A closed generic is a concrete type.
+        // One old name, alias or a type's own assembly-qualified name, can't map to two registrations.
+        var claiming = new PackableRegistry.Builder().Add(typeof(Ship), "Ship", 0, "Old.Vessel");
+        act = () => claiming.Add(typeof(Crew), "Crew", 0, "Old.Vessel");
+        act.Should().Throw<ArgumentException>().WithMessage("*\"Old.Vessel\" is claimed by both*");
+        act = () => claiming.Add(typeof(Crew), "Crew", 0, typeof(Ship).AssemblyQualifiedName!);
+        act.Should().Throw<ArgumentException>().WithMessage("*is claimed by both*");
         act = () => builder.Add(null!, "Nothing", 0);
         act.Should().Throw<ArgumentNullException>();
     }
