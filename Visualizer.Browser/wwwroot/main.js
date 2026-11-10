@@ -13,14 +13,16 @@ async function run(dotnetPath, config) {
     await runtime.runMain();
 }
 
-// Drops the service worker, so nothing intercepts requests any more, and reloads into the fallback.
+// Drops this page's service worker, so nothing intercepts requests any more, and reloads into the
+// fallback. Other service workers on the same origin belong to other pages and are left alone.
 let fallingBack = false;
 async function fallBack() {
     if (fallingBack) { return; }
     fallingBack = true;
     status('Threads failed to start. Loading the single-threaded version…');
+    const scope = new URL('./', location.href).href;
     const registrations = await navigator.serviceWorker?.getRegistrations() ?? [];
-    await Promise.all(registrations.map(r => r.unregister()));
+    await Promise.all(registrations.filter(r => r.scope === scope).map(r => r.unregister()));
     location.replace(location.pathname + '?single');
 }
 
