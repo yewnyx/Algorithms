@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Yewnyx.Packables;
 
@@ -63,12 +65,15 @@ public sealed class Shelf : IPackable {
 public sealed class Book : IPackable {
     public string Title = "";
     public int Pages;
+    /// <summary>Stars out of five; NaN while nobody has rated the book.</summary>
+    public double Rating = double.NaN;
     public Author? Author;
     public Book? Sequel;
 
     public void PackInto(ref Packer packer, JObject storage) {
         storage["title"] = Title;
         storage["pages"] = Pages;
+        storage["rating"] = Rating;
         storage["author"] = packer.PackReference(Author);
         storage["sequel"] = packer.PackReference(Sequel);
     }
@@ -76,6 +81,7 @@ public sealed class Book : IPackable {
     public void UnpackFrom(ref Unpacker unpacker, ObjectId objectId) {
         if (unpacker.TryGetJson("title", objectId, out var token)) { Title = token.ToObject<string>() ?? ""; }
         if (unpacker.TryGetJson("pages", objectId, out token)) { Pages = token.ToObject<int>(); }
+        if (unpacker.TryGetJson("rating", objectId, out token)) { Rating = token.ToObject<double>(); }
         if (unpacker.TryGetJson("author", objectId, out token)) { unpacker.TryCreateFromReference(token, out Author, _ => new Author()); }
         if (unpacker.TryGetJson("sequel", objectId, out token)) { unpacker.TryCreateFromReference(token, out Sequel, _ => new Book()); }
     }
@@ -101,6 +107,28 @@ public sealed class Author : IPackable {
             }
         }
     }
+}
+
+/// <summary>What packing a generated library, and taking it through text and back, gave.</summary>
+public sealed record RoundTripResult {
+    /// <summary>The document as read back from the text, which is what a saved file would hold.</summary>
+    public required PackedDocument Document { get; init; }
+    public TimeSpan PackTime { get; init; }
+    /// <summary>Bytes the measured pack allocated.</summary>
+    public long PackBytes { get; init; }
+    /// <summary>Length of the document written as JSON without white space.</summary>
+    public int Characters { get; init; }
+    /// <summary>Whether the document read from the text equals the packed one, token for token.</summary>
+    public bool SameInMemory { get; init; }
+    /// <summary>Why the trip stopped before the comparison, or null.</summary>
+    public string? Failure { get; init; }
+    public TimeSpan UnpackTime { get; init; }
+    public int RepackedCharacters { get; init; }
+    /// <summary>Where the repacked text first differs from the first text, or -1 if they are equal.</summary>
+    public int FirstDifference { get; init; } = -1;
+    /// <summary>Books whose rating is NaN in the generated library, and in the unpacked one.</summary>
+    public int Unrated { get; init; }
+    public int UnratedBack { get; init; }
 }
 
 public static class PackedDemo {
@@ -145,6 +173,8 @@ public static class PackedDemo {
                     Pages = 80 + rng.Next(520),
                     Author = authors[a],
                 };
+                // Taken from the page count, so adding ratings left every generated library as it was.
+                book.Rating = book.Pages % 9 == 0 ? double.NaN : 1 + book.Pages % 41 / 10.0;
                 authors[a].Books.Add(book);
                 if (lastBy[a] is { } previous && seriesLength[a] < MaxSeries && rng.NextDouble() < 0.4) {
                     previous.Sequel = book;
@@ -166,5 +196,78 @@ public static class PackedDemo {
     public static JObject Pack(Library library) {
         var packer = new Packer();
         return packer.Pack(library);
+    }
+
+    // Unpacker is a ref struct too. This is the only place the Visualizer unpacks anything, and the
+    // only caller hands it text this class packed itself.
+    private static bool Unpack(JObject document, ref Library into) {
+        var unpacker = new Unpacker(document);
+        return unpacker.TryUnpack(ref into);
+    }
+
+    /// <summary>
+    /// Packs a generated library and takes it the way a saved file goes: written out as text, read
+    /// back, unpacked into a new library and packed again. The two texts are then compared, because
+    /// comparing documents in memory would miss what writing them out changes.
+    /// </summary>
+    public static RoundTripResult RoundTrip(DemoSpec spec, CancellationToken ct = default) {
+        var library = Generate(spec);
+        Pack(library); // Once unmeasured, so the measured pack does not time first-run compilation.
+        ct.ThrowIfCancellationRequested();
+
+        var bytesBefore = GC.GetAllocatedBytesForCurrentThread();
+        var start = Stopwatch.GetTimestamp();
+        var packed = Pack(library);
+        var packTime = Stopwatch.GetElapsedTime(start);
+        var packBytes = GC.GetAllocatedBytesForCurrentThread() - bytesBefore;
+
+        var text = packed.ToString(Formatting.None);
+        var document = PackedDocument.Read(PackedDocument.Parse(text), ct: ct);
+        var result = new RoundTripResult {
+            Document = document,
+            PackTime = packTime,
+            PackBytes = packBytes,
+            Characters = text.Length,
+            SameInMemory = JToken.DeepEquals(packed, document.Json),
+            Unrated = CountUnrated(library),
+        };
+        ct.ThrowIfCancellationRequested();
+
+        // The unpacker gets its own copy of the document, so nothing it does can alter the one shown.
+        var read = PackedDocument.Parse(text);
+        var copy = new Library();
+        bool unpacked;
+        try {
+            var unmeasured = new Library();
+            Unpack(PackedDocument.Parse(text), ref unmeasured);
+            start = Stopwatch.GetTimestamp();
+            unpacked = Unpack(read, ref copy);
+        } catch (Exception ex) {
+            return result with { Failure = $"unpacking threw {ex.GetType().Name}: {ex.Message}" };
+        }
+        var unpackTime = Stopwatch.GetElapsedTime(start);
+        if (!unpacked) { return result with { Failure = "TryUnpack returned false" }; }
+
+        var again = Pack(copy).ToString(Formatting.None);
+        var same = Math.Min(text.Length, again.Length);
+        var difference = 0;
+        while (difference < same && text[difference] == again[difference]) { difference++; }
+        return result with {
+            UnpackTime = unpackTime,
+            RepackedCharacters = again.Length,
+            FirstDifference = difference == text.Length && difference == again.Length ? -1 : difference,
+            UnratedBack = CountUnrated(copy),
+        };
+    }
+
+    private static int CountUnrated(Library library) {
+        var seen = new HashSet<Book>(ReferenceEqualityComparer.Instance);
+        var count = 0;
+        foreach (var shelf in library.Shelves.Values) {
+            foreach (var book in shelf.Books) {
+                if (seen.Add(book) && double.IsNaN(book.Rating)) { count++; }
+            }
+        }
+        return count;
     }
 }
