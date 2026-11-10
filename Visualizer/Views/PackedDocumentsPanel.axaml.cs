@@ -49,8 +49,9 @@ public sealed class DocBlock : INotifyPropertyChanged {
 
 /// <summary>
 /// Shows a packed document as a graph of objects beside its text: one the library packed from a
-/// generated object graph, or one opened from a file. A file is only ever read as data; this panel
-/// never hands it to an Unpacker, because unpacking creates the types a document names.
+/// generated object graph, or one opened from a file or an https address. A file or a download is
+/// only ever read as data; this panel never hands it to an Unpacker, because unpacking creates the
+/// types a document names.
 /// </summary>
 public partial class PackedDocumentsPanel : UserControl {
     private const uint NotReached = 0xFFFF1744;
@@ -60,18 +61,20 @@ public partial class PackedDocumentsPanel : UserControl {
     private const int MaxFileCharacters = 64 << 20;
 
     /// <summary>Where a document came from. Only a generated one may ever be unpacked.</summary>
-    private enum Origin { Generated, File }
+    private enum Origin { Generated, File, Url }
 
-    private sealed record Shown(Origin Origin, string Title, PackedDocument? Document, string? Failure);
+    private sealed record Shown(Origin Origin, string Title, PackedDocument? Document, string? Failure, string? Note = null);
 
     private readonly Dictionary<uint, IBrush> _brushes = new();
     private Shown? _generated;
     private Shown? _file;
+    private Shown? _url;
     private PackedDocument? _doc;
     private List<DocBlock>? _blocks;
     private DocBlock? _marked;
     private CancellationTokenSource? _generation;
     private CancellationTokenSource? _loading;
+    private CancellationTokenSource? _fetching;
     private int _graphHover = -1;
     private int _listHover = -1;
     private int _selected = -1;
@@ -89,6 +92,11 @@ public partial class PackedDocumentsPanel : UserControl {
         Source.SelectionChanged += (_, _) => OnSourceChanged();
         GenerateButton.Click += async (_, _) => await GenerateAsync();
         OpenButton.Click += async (_, _) => await OpenFileAsync();
+        LoadButton.Click += async (_, _) => await LoadAddressAsync(Address.Text);
+        CancelButton.Click += (_, _) => _fetching?.Cancel();
+        Address.KeyDown += async (_, e) => {
+            if (e.Key == Key.Enter) { await LoadAddressAsync(Address.Text); }
+        };
 
         Blocks.PointerMoved += (_, e) => SetListHover(((e.Source as StyledElement)?.DataContext as DocBlock)?.Vertex ?? -1);
         Blocks.PointerExited += (_, _) => SetListHover(-1);
@@ -115,10 +123,11 @@ public partial class PackedDocumentsPanel : UserControl {
     }
 
     private void OnSourceChanged() {
-        var generated = Source.SelectedIndex == 0;
-        GeneratedFields.IsVisible = generated;
-        FileFields.IsVisible = !generated;
-        Show(generated ? _generated : _file);
+        var source = Source.SelectedIndex;
+        GeneratedFields.IsVisible = source == 0;
+        FileFields.IsVisible = source == 1;
+        UrlFields.IsVisible = source == 2;
+        Show(source switch { 0 => _generated, 1 => _file, _ => _url });
     }
 
     private async Task GenerateAsync() {
@@ -175,15 +184,7 @@ public partial class PackedDocumentsPanel : UserControl {
                 shown = new Shown(Origin.File, name, null, $"is longer than {MaxFileCharacters:N0} characters, so it was not read");
             } else {
                 var title = $"{name} ({text.Length:N0} characters)";
-                shown = await Task.Run(() => {
-                    JObject json;
-                    try {
-                        json = PackedDocument.Parse(text);
-                    } catch (JsonException ex) {
-                        return new Shown(Origin.File, title, null, "is not a JSON document: " + OneLine(ex.Message));
-                    }
-                    return new Shown(Origin.File, title, PackedDocument.Read(json, ct: cts.Token), null);
-                }, cts.Token);
+                shown = await Task.Run(() => ReadText(Origin.File, title, text, null, cts.Token), cts.Token);
             }
         } catch (OperationCanceledException) {
             return;
@@ -195,6 +196,70 @@ public partial class PackedDocumentsPanel : UserControl {
         if (cts.IsCancellationRequested) { return; }
         _file = shown;
         if (Source.SelectedIndex == 1) { Show(shown); }
+    }
+
+    /// <summary>Downloads a document from an https address, reads it as data only, and shows it under the URL source.</summary>
+    public async Task LoadAddressAsync(string? text) {
+        _fetching?.Cancel();
+        _fetching = null;
+        SetFetching(false);
+        Source.SelectedIndex = 2;
+        if (!DocumentFetch.TryAddress(text, out var address, out var refusal)) {
+            _url = null;
+            Show(null);
+            HeadlineText.Text = refusal;
+            return;
+        }
+
+        var cts = _fetching = new CancellationTokenSource();
+        var title = DocumentFetch.Describe(address);
+        SetFetching(true);
+        Show(null);
+        HeadlineText.Text = $"Fetching from {address.Host}…";
+        Shown shown;
+        try {
+            var fetched = await DocumentFetch.GetTextAsync(address, DocumentFetch.MaxBytes, DocumentFetch.Timeout, cts.Token);
+            if (fetched.Text is not { } body) {
+                shown = new Shown(Origin.Url, title, null, OneLine(fetched.Failure ?? "gave nothing"));
+            } else {
+                var note = $"Fetched over https in {fetched.Time.TotalMilliseconds:N0} ms, served as {fetched.MediaType ?? "no stated type"}; nothing was saved.";
+                shown = await Task.Run(() => ReadText(Origin.Url, $"{title} ({fetched.Bytes:N0} bytes)", body, note, cts.Token), cts.Token);
+            }
+        } catch (OperationCanceledException) {
+            // Cancelled by the button: back to whatever was loaded before. Replaced by a newer load: leave it alone.
+            if (_fetching == cts) {
+                _fetching = null;
+                SetFetching(false);
+                if (Source.SelectedIndex == 2) { Show(_url); }
+            }
+            return;
+        } catch (Exception ex) {
+            shown = new Shown(Origin.Url, title, null, "could not be read: " + OneLine(ex.Message));
+        }
+        if (_fetching != cts) { return; }
+        _fetching = null;
+        SetFetching(false);
+        _url = shown;
+        if (Source.SelectedIndex == 2) { Show(shown); }
+    }
+
+    private void SetFetching(bool fetching) {
+        LoadButton.IsEnabled = !fetching;
+        CancelButton.IsVisible = fetching;
+    }
+
+    // Text from a file or an address becomes a document here and nowhere else: parsed and traced as data.
+    private static Shown ReadText(Origin origin, string title, string text, string? note, CancellationToken ct) {
+        JObject json;
+        try {
+            json = PackedDocument.Parse(text);
+        } catch (JsonException ex) {
+            var why = text.AsSpan().TrimStart().StartsWith("<")
+                ? "is not JSON: it starts like an HTML or XML page"
+                : "is not a JSON document: " + OneLine(ex.Message);
+            return new Shown(origin, title, null, why, note);
+        }
+        return new Shown(origin, title, PackedDocument.Read(json, ct: ct), null, note);
     }
 
     // Null when the text is longer than the cap. Reads with await so it also works where blocking is not allowed.
@@ -227,12 +292,17 @@ public partial class PackedDocumentsPanel : UserControl {
         GraphCaption.IsVisible = d?.Graph is not null;
 
         if (shown is null) {
-            HeadlineText.Text = Source.SelectedIndex == 0 ? "" : "No file is open. Open… reads a packed document from a file.";
+            HeadlineText.Text = Source.SelectedIndex switch {
+                0 => "",
+                1 => "No file is open. Open… reads a packed document from a file.",
+                _ => "No address is loaded. Load fetches a packed document over https.",
+            };
             Graph.SetModel(null, null);
             return;
         }
         if (d is null) {
             HeadlineText.Text = $"{shown.Title} {shown.Failure}.";
+            NoteText.Text = shown.Note ?? "";
             Graph.SetModel(null, null);
             return;
         }
@@ -241,6 +311,7 @@ public partial class PackedDocumentsPanel : UserControl {
         if (!d.HasObjects) {
             HeadlineText.Text = $"{shown.Title} is not a packed document: {string.Join(", ", d.Missing)}.";
             TraceText.Text = "It is JSON, shown as found on the right.";
+            NoteText.Text = shown.Note ?? "";
             Blocks.ItemsSource = blocks;
             Graph.SetModel(null, null);
             return;
@@ -265,6 +336,7 @@ public partial class PackedDocumentsPanel : UserControl {
         if (unlisted > 0) { notes.Add(unlisted == 1 ? "1 type has no entry in the types table and is labelled by id." : $"{unlisted:N0} types have no entry in the types table and are labelled by id."); }
         if (d.Untyped > 0) { notes.Add(d.Untyped == 1 ? "1 object does not say what type it is." : $"{d.Untyped:N0} objects do not say what type they are."); }
         if (d.NotObjects > 0) { notes.Add(d.NotObjects == 1 ? "1 entry of the objects table is not an object." : $"{d.NotObjects:N0} entries of the objects table are not objects."); }
+        if (shown.Note is not null) { notes.Add(shown.Note); }
         NoteText.Text = string.Join("  ", notes);
 
         for (var v = 0; v < d.N; v++) {

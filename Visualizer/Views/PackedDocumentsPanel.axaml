@@ -9,6 +9,7 @@
                 <ComboBox x:Name="Source" SelectedIndex="0" Width="116" VerticalAlignment="Center">
                     <ComboBoxItem Content="Generated" />
                     <ComboBoxItem Content="File" />
+                    <ComboBoxItem Content="URL" />
                 </ComboBox>
                 <WrapPanel x:Name="GeneratedFields" Orientation="Horizontal">
                     <StackPanel Classes="field"><TextBlock Classes="label" Text="Shelves" ToolTip.Tip="Entries in the map the root object keeps, each a reference to a shelf." /><NumericUpDown x:Name="Shelves" Minimum="0" Maximum="5000" Increment="1" Value="3" FormatString="N0" Width="72" /></StackPanel>
@@ -21,6 +22,12 @@
                 <WrapPanel x:Name="FileFields" Orientation="Horizontal" IsVisible="False">
                     <Button x:Name="OpenButton" Content="Open…" Margin="8,0,0,0" VerticalAlignment="Center" />
                     <TextBlock Classes="label" Text="The file is read as data only: nothing it names is loaded or created." />
+                </WrapPanel>
+                <WrapPanel x:Name="UrlFields" Orientation="Horizontal" IsVisible="False">
+                    <TextBox x:Name="Address" Width="480" Margin="8,0,0,0" VerticalAlignment="Center" Watermark="https://…" />
+                    <Button x:Name="LoadButton" Content="Load" Margin="8,0,0,0" VerticalAlignment="Center" />
+                    <Button x:Name="CancelButton" Content="Cancel" Margin="8,0,0,0" VerticalAlignment="Center" IsVisible="False" />
+                    <TextBlock Classes="label" Text="Fetched over https as text and read as data only: nothing it names is loaded or created, and nothing is saved." />
                 </WrapPanel>
             </WrapPanel>
         </Border>
