@@ -4,6 +4,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Xunit.Abstractions;
 using Yewnyx.Collections;
+using Yewnyx.Packables.Format1;
 
 namespace Yewnyx.Packables.Test;
 

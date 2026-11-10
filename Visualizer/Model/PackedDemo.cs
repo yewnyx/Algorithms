@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using Yewnyx.Packables;
+using Yewnyx.Packables.Format1;
 
 namespace Yewnyx.Algorithms.Visualizer.Model;
 

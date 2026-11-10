@@ -4,7 +4,7 @@ using System.Runtime.CompilerServices;
 using Newtonsoft.Json.Linq;
 using Yewnyx.Collections;
 
-namespace Yewnyx.Packables;
+namespace Yewnyx.Packables.Format1;
 
 public ref struct Packer {
     public string ContentType => _contentType;

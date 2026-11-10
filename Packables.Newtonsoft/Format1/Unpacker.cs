@@ -1,9 +1,9 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using Newtonsoft.Json.Linq;
 using Yewnyx.Collections;
 
-namespace Yewnyx.Packables;
+namespace Yewnyx.Packables.Format1;
 
 public ref struct Unpacker {
     public string ContentType => _contentType;

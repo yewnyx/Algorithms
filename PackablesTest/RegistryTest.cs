@@ -1,18 +1,11 @@
 using FluentAssertions;
-using Newtonsoft.Json.Linq;
 
 namespace Yewnyx.Packables.Test;
 
 public class RegistryTest {
-    private sealed class Ship : IPackable {
-        public void PackInto(ref Packer packer, JObject storage) { }
-        public void UnpackFrom(ref Unpacker unpacker, ObjectId objectId) { }
-    }
+    private sealed class Ship { }
 
-    private sealed class Crew : IPackable {
-        public void PackInto(ref Packer packer, JObject storage) { }
-        public void UnpackFrom(ref Unpacker unpacker, ObjectId objectId) { }
-    }
+    private sealed class Crew { }
 
     [Fact]
     public void LooksUpByTypeAndName() {
@@ -60,8 +53,6 @@ public class RegistryTest {
         act.Should().Throw<ArgumentException>().WithParameterName("name");
         act = () => builder.Add(typeof(Crew), "Crew", 0, "");
         act.Should().Throw<ArgumentException>().WithParameterName("aliases");
-        act = () => builder.Add(typeof(string), "Text", 0);
-        act.Should().Throw<ArgumentException>().WithMessage("*doesn't implement IPackable*");
         act = () => builder.Add(null!, "Nothing", 0);
         act.Should().Throw<ArgumentNullException>();
     }

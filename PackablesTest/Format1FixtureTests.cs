@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using FluentAssertions;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using Yewnyx.Packables.Format1;
 
 namespace Yewnyx.Packables.Test.Format1;
 

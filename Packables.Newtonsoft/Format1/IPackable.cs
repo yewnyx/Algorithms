@@ -1,7 +1,7 @@
 using System;
 using Newtonsoft.Json.Linq;
 
-namespace Yewnyx.Packables;
+namespace Yewnyx.Packables.Format1;
 
 public interface IPackable {
     public const string DEFAULT_CONTENT_TYPE = "application/packable+json";

@@ -65,9 +65,6 @@ public sealed class PackableRegistry {
         /// </summary>
         public Builder Add(Type type, string name, int version, params string[] aliases) {
             if (type is null) { throw new ArgumentNullException(nameof(type)); }
-            if (!typeof(IPackable).IsAssignableFrom(type)) {
-                throw new ArgumentException($"{_describe(type)} doesn't implement IPackable.", nameof(type));
-            }
             if (!PackableNames.IsValidName(name)) { throw new ArgumentException($"\"{name}\" isn't a valid name.", nameof(name)); }
             if (version < 0) { throw new ArgumentOutOfRangeException(nameof(version), version, "Versions start at 0."); }
             foreach (var alias in aliases) {
