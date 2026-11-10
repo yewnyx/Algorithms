@@ -35,7 +35,7 @@ public static class MyersDiff {
         }
 
         var count = 0;
-        _compare(original, revised, 0, original.Length, 0, revised.Length, hunks, ref count, workspace);
+        Compare(original, revised, 0, original.Length, 0, revised.Length, hunks, ref count, workspace);
         return Hunks.SlideLate(original, revised, hunks, count);
     }
 
@@ -53,7 +53,7 @@ public static class MyersDiff {
 
     // Diffs a[aLo..aHi) against b[bLo..bHi). The left half of each split recurses and the right half
     // loops, so the depth stays near log d.
-    private static void _compare<T>(ReadOnlySpan<T> a, ReadOnlySpan<T> b, int aLo, int aHi, int bLo, int bHi,
+    internal static void Compare<T>(ReadOnlySpan<T> a, ReadOnlySpan<T> b, int aLo, int aHi, int bLo, int bHi,
         Span<Hunk> hunks, ref int count, Span<int> workspace) where T : IEquatable<T> {
         while (true) {
             while (aLo < aHi && bLo < bHi && Hunks.Equal(a[aLo], b[bLo])) {
@@ -79,7 +79,7 @@ public static class MyersDiff {
             x += aLo;
             y += bLo;
             Debug.Assert((x, y) != (aLo, bLo) && (x, y) != (aHi, bHi), "The split must shrink the problem.");
-            _compare(a, b, aLo, x, bLo, y, hunks, ref count, workspace);
+            Compare(a, b, aLo, x, bLo, y, hunks, ref count, workspace);
             aLo = x;
             bLo = y;
         }
