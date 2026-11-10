@@ -4,7 +4,6 @@
              x:Class="Yewnyx.Algorithms.Visualizer.Views.PackedDocumentsPanel">
     <DockPanel>
         <Border DockPanel.Dock="Top" Background="#181B21" Padding="8,6" BorderBrush="#262B33" BorderThickness="0,0,0,1">
-            <StackPanel>
             <WrapPanel Orientation="Horizontal">
                 <TextBlock Classes="section" Text="SOURCE" Width="56" />
                 <ComboBox x:Name="Source" SelectedIndex="0" Width="116" VerticalAlignment="Center">
@@ -31,11 +30,6 @@
                     <TextBlock Classes="label" Text="Fetched over https as text and read as data only: nothing it names is loaded or created, and nothing is saved." />
                 </WrapPanel>
             </WrapPanel>
-            <WrapPanel x:Name="BreakRow" Orientation="Horizontal" Margin="0,6,0,0">
-                <TextBlock Classes="section" Text="BREAK" Width="56" ToolTip.Tip="Each button makes one change to the generated document and unpacks the result into a new library." />
-                <Button x:Name="ResetButton" Content="Reset" Padding="8,3" FontSize="12" Margin="8,0,0,4" ToolTip.Tip="Shows the generated document as it was packed." />
-            </WrapPanel>
-            </StackPanel>
         </Border>
 
         <Border DockPanel.Dock="Top" Background="#14171D" Padding="12,8" BorderBrush="#262B33" BorderThickness="0,0,0,1">
@@ -43,7 +37,6 @@
                 <TextBlock x:Name="HeadlineText" Foreground="#E8EDF4" FontSize="14" TextWrapping="Wrap" />
                 <TextBlock x:Name="TraceText" Foreground="#C8D0DC" FontSize="12" TextWrapping="Wrap" />
                 <TextBlock x:Name="RoundTripText" Foreground="#C8D0DC" FontSize="12" TextWrapping="Wrap" IsVisible="False" />
-                <TextBlock x:Name="BreakText" Foreground="#FFB74D" FontSize="12" TextWrapping="Wrap" IsVisible="False" />
                 <TextBlock x:Name="NoteText" Foreground="#9AA3B2" FontSize="12" TextWrapping="Wrap" />
             </StackPanel>
         </Border>

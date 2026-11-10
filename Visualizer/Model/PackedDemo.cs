@@ -198,10 +198,9 @@ public static class PackedDemo {
         return packer.Pack(library);
     }
 
-    // Unpacker is a ref struct too. This is the only place the Visualizer unpacks anything. Its two
-    // callers, the round trip here and PackedBreak, both start from a spec and hand it a document
-    // packed from that spec, so a document from a file or an address cannot arrive here.
-    internal static bool Unpack(JObject document, ref Library into) {
+    // Unpacker is a ref struct too. This is the only place the Visualizer unpacks anything, and the
+    // only caller hands it text this class packed itself.
+    private static bool Unpack(JObject document, ref Library into) {
         var unpacker = new Unpacker(document);
         return unpacker.TryUnpack(ref into);
     }
