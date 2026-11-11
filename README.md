@@ -1,7 +1,7 @@
 Small .NET libraries for graph algorithms, diffing and saving object graphs. They are written to avoid allocating: results go into buffers you provide, and the `ref` overloads size the buffers for you.
 
 - **Graphs** (`Algorithms`): strongly connected components with `Graph.Tarjan` (also from chosen roots), `Graph.ConnectedComponents`, and all-pairs shortest paths with `FloydWarshall`.
-- **Diffing** (`Algorithms`): `MyersDiff`, `HistogramDiff`, `Patch` and move detection.
+- **Diffing** (`Algorithms`): `MyersDiff`, `HistogramDiff`, `HeckelDiff` (moved blocks), diffs of items in groups (lines, then the characters in them) and `Patch`.
 - **Packables** (`Packables`, `Packables.Newtonsoft`): versioned saving and loading of object graphs, with JSON text.
 - **Collections**: `TwoWayDictionary`, a dictionary with one-to-one pairs that looks up in both directions.
 - **Visualizer**: a desktop and browser app that shows the graph algorithms on random graphs and opens Packables documents. [Try it in the browser](https://yewnyx.github.io/Algorithms/).
@@ -96,7 +96,59 @@ patch.Set(a, b, hunks.AsSpan(0, moveCount));
 foreach (var (was, now) in patch.FindMoves()) { /* was 0, now 3: "a" moved to the end */ }
 ```
 
-Items must implement `IEquatable<T>`. `HistogramDiff` and `FindMoves` also hash their items, so `GetHashCode` should agree with `Equals` and vary in its low bits (a struct needs to override it). The inputs may overlap each other, but the workspace and hunk buffers must not share memory with either one, and `Diff` throws an `ArgumentException` if they do; a `Patch` result must not share memory with its input, and throws if it does.
+`FindMoves` pairs single items after the fact. `HeckelDiff` finds whole moved blocks as it diffs. It writes hunks that `Patch<T>` takes unchanged, and the blocks that moved: each pairs a run deleted in one hunk with an equal run inserted in another. A reordered list of distinct items costs O(n log n), where Myers' diff is quadratic. Use it where a move is worth showing: reordered lists, undo, and diff views that draw a moved block instead of a delete and an insert.
+
+```csharp
+string[] listBefore = ["Milk", "Eggs", "Bread", "Apples", "Coffee", "Rice"];
+string[] listAfter  = ["Coffee", "Milk", "Eggs", "Apples", "Rice", "Bread"];
+
+Hunk[]? listHunks = null;
+BlockMove[]? listMoves = null;
+int[]? listWorkspace = null;
+int listCount = HeckelDiff.Diff<string>(listBefore, listAfter, ref listHunks, ref listMoves, ref listWorkspace, out int listMoveCount);
+// 4 hunks: original [0, +0) -> revised [0, +1)   insert Coffee
+//          original [2, +1) -> revised [3, +0)   delete Bread
+//          original [4, +1) -> revised [4, +0)   delete Coffee
+//          original [6, +0) -> revised [5, +1)   insert Bread
+// 2 moves: (Original 2, Revised 5, Length 1)     Bread moved to the end
+//          (Original 4, Revised 0, Length 1)     Coffee moved to the front
+```
+
+`MyersDiff` and `HistogramDiff` give the same four hunks and no moves. Like them, `HeckelDiff` also has span overloads, with `MaxHunks`, `MaxMoves` and `WorkspaceLength`. A block made only of repeated items has no anchor, so it stays a delete and an insert (`FindMoves` can still pair its items one by one), and the script is as short as Myers' only between the blocks that stay.
+
+`GroupClasses` and `GroupedDiff` diff items split into groups, such as the characters of a text split into lines. Use them for text views that show which characters or words changed inside changed lines, and for lists of lists, such as rows of cells. There are three steps, so you pick the diff in the middle: give equal groups one id, diff the ids with `MyersDiff` or `HistogramDiff`, and refine the changed groups into item hunks:
+
+```csharp
+using Yewnyx.Algorithms.Graphs;
+
+string textBefore = "one\ntwo\nthree\n";
+string textAfter  = "one\ntwo!\nthree\n";
+Segment[] linesBefore = [new(0, 4), new(4, 4), new(8, 6)];   // the lines, with their line breaks
+Segment[] linesAfter  = [new(0, 4), new(4, 5), new(9, 6)];
+
+// 1. Equal lines share an id, numbered from 0 in the order they are first seen.
+int[] idsBefore = new int[linesBefore.Length];
+int[] idsAfter = new int[linesAfter.Length];
+int[] idWorkspace = new int[GroupClasses.WorkspaceLength(linesBefore.Length, linesAfter.Length)];
+GroupClasses.Assign<char>(textBefore, linesBefore, textAfter, linesAfter, idsBefore, idsAfter, idWorkspace);
+// idsBefore: [0, 1, 2]   idsAfter: [0, 3, 2]
+
+// 2. Diff the ids, which diffs the lines.
+Hunk[]? lineHunks = null;
+int[]? lineWorkspace = null;
+int lineCount = MyersDiff.Diff<int>(idsBefore, idsAfter, ref lineHunks, ref lineWorkspace);
+// original [1, +1) -> revised [1, +1)   the second line changed
+
+// 3. Refine the changed lines into hunks over the characters.
+var charHunks = new Hunk[GroupedDiff.MaxHunks(textBefore.Length, textAfter.Length)];
+var charWorkspace = new int[GroupedDiff.WorkspaceLength(textBefore.Length, textAfter.Length)];
+int charCount = GroupedDiff.Refine<char>(textBefore, linesBefore, textAfter, linesAfter, lineHunks.AsSpan(0, lineCount), charHunks, charWorkspace);
+// original [7, +0) -> revised [7, +1)   "!" inserted after "two"
+```
+
+The result is one complete script over the items, which `Patch<T>` takes unchanged. Where a run of lines is replaced by as many lines, they pair in order and each pair is diffed with Myers; a run replaced by a different number of lines is one hunk, with nothing refined inside it. The groups must tile the items in order, which for text means lines with their line breaks. You split the text, because the library never parses it, so the items could as well be words in lines or cells in rows. Two long, unrelated lines are diffed quadratically.
+
+Items must implement `IEquatable<T>`. `HistogramDiff`, `HeckelDiff`, `GroupClasses` and `FindMoves` also hash their items, so `GetHashCode` should agree with `Equals` and vary in its low bits (a struct needs to override it). The inputs may overlap each other, but the workspace and output buffers must not share memory with either one, and `Diff` throws an `ArgumentException` if they do; a `Patch` result must not share memory with its input, and throws if it does.
 
 ## Packables
 
