@@ -144,5 +144,8 @@
         <TabItem Header="Packed documents">
             <views:PackedDocumentsPanel />
         </TabItem>
+        <TabItem Header="Diffing">
+            <views:DiffingPanel />
+        </TabItem>
     </TabControl>
 </UserControl>

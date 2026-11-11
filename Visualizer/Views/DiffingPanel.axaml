@@ -1,0 +1,80 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Yewnyx.Algorithms.Visualizer.Views.DiffingPanel">
+    <UserControl.Styles>
+        <Style Selector="TextBox.source">
+            <Setter Property="AcceptsReturn" Value="True" />
+            <Setter Property="TextWrapping" Value="NoWrap" />
+            <Setter Property="FontFamily" Value="Cascadia Mono, Consolas, monospace" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Margin" Value="6,30,6,6" />
+        </Style>
+        <Style Selector="SelectableTextBlock.result">
+            <Setter Property="FontFamily" Value="Cascadia Mono, Consolas, monospace" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Foreground" Value="#8A93A3" />
+            <Setter Property="Margin" Value="10,34,10,10" />
+        </Style>
+    </UserControl.Styles>
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="#181B21" Padding="8,6" BorderBrush="#262B33" BorderThickness="0,0,0,1">
+            <WrapPanel Orientation="Horizontal">
+                <TextBlock Classes="section" Text="SAMPLE" Width="56" />
+                <ComboBox x:Name="SampleBox" SelectedIndex="0" Width="150" VerticalAlignment="Center">
+                    <ComboBoxItem Content="Code edit" />
+                    <ComboBoxItem Content="Reordered list" />
+                    <ComboBoxItem Content="Prose" />
+                </ComboBox>
+                <TextBlock Classes="section" Text="VIEW" Width="44" Margin="20,0,4,0" />
+                <ComboBox x:Name="ViewBox" SelectedIndex="0" Width="300" VerticalAlignment="Center">
+                    <ComboBoxItem Content="Myers and Histogram, by lines"
+                                  ToolTip.Tip="Each line is one item, compared whole." />
+                    <ComboBoxItem Content="Myers and Histogram, by characters"
+                                  ToolTip.Tip="Each character is one item." />
+                    <ComboBoxItem Content="Moves: Myers and Heckel, by lines"
+                                  ToolTip.Tip="Heckel's diff finds blocks of lines that moved, where the others delete and insert them." />
+                    <ComboBoxItem Content="Lines, then the characters in them"
+                                  ToolTip.Tip="Lines are diffed first; then each changed line is diffed against the line it replaced, character by character." />
+                </ComboBox>
+                <TextBlock Classes="label" Text="Edit either side: both diffs update as you type." Margin="16,0,0,0" />
+            </WrapPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Top" Background="#14171D" Padding="12,8" BorderBrush="#262B33" BorderThickness="0,0,0,1">
+            <StackPanel Spacing="3">
+                <TextBlock x:Name="HeadlineText" Foreground="#E8EDF4" FontSize="14" TextWrapping="Wrap" />
+                <TextBlock x:Name="ActionText" Foreground="#C8D0DC" FontSize="12" TextWrapping="Wrap" />
+            </StackPanel>
+        </Border>
+
+        <Grid RowDefinitions="2*,4,3*">
+            <Grid Grid.Row="0" ColumnDefinitions="*,4,*">
+                <Panel Grid.Column="0">
+                    <TextBox x:Name="OriginalBox" Classes="source" />
+                    <TextBlock Classes="pane" Text="Original" />
+                </Panel>
+                <GridSplitter Grid.Column="1" ResizeDirection="Columns" />
+                <Panel Grid.Column="2">
+                    <TextBox x:Name="RevisedBox" Classes="source" />
+                    <TextBlock Classes="pane" Text="Revised" />
+                </Panel>
+            </Grid>
+            <GridSplitter Grid.Row="1" ResizeDirection="Rows" />
+            <Grid Grid.Row="2" ColumnDefinitions="*,4,*">
+                <Panel Grid.Column="0">
+                    <ScrollViewer HorizontalScrollBarVisibility="Auto">
+                        <SelectableTextBlock x:Name="LeftText" Classes="result" />
+                    </ScrollViewer>
+                    <TextBlock x:Name="LeftCaption" Classes="pane" />
+                </Panel>
+                <GridSplitter Grid.Column="1" ResizeDirection="Columns" />
+                <Panel Grid.Column="2">
+                    <ScrollViewer HorizontalScrollBarVisibility="Auto">
+                        <SelectableTextBlock x:Name="RightText" Classes="result" />
+                    </ScrollViewer>
+                    <TextBlock x:Name="RightCaption" Classes="pane" />
+                </Panel>
+            </Grid>
+        </Grid>
+    </DockPanel>
+</UserControl>
