@@ -1,0 +1,32 @@
+<Project>
+    <!-- NuGet packages for the four libraries. Every other project (tests, tools, the Visualizer) isn't packable. -->
+    <PropertyGroup>
+        <IsLibrary Condition="'$(MSBuildProjectName)' == 'Algorithms' Or '$(MSBuildProjectName)' == 'Collections' Or '$(MSBuildProjectName)' == 'Packables' Or '$(MSBuildProjectName)' == 'Packables.Newtonsoft'">true</IsLibrary>
+        <IsPackable>false</IsPackable>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(IsLibrary)' == 'true'">
+        <IsPackable>true</IsPackable>
+        <!-- Release builds set the version from the tag, v0.2.0 giving -p:Version=0.2.0. -->
+        <Version>0.0.0-dev</Version>
+        <Authors>yewnyx</Authors>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageProjectUrl>https://github.com/yewnyx/Algorithms</PackageProjectUrl>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <IncludeSymbols>true</IncludeSymbols>
+        <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+        <!-- Source Link comes with the SDK: the PDBs point at the commit's sources on GitHub. -->
+        <PublishRepositoryUrl>true</PublishRepositoryUrl>
+        <EmbedUntrackedSources>true</EmbedUntrackedSources>
+        <Deterministic>true</Deterministic>
+    </PropertyGroup>
+
+    <ItemGroup Condition="'$(IsLibrary)' == 'true'">
+        <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="/" Visible="false" />
+    </ItemGroup>
+
+    <!-- Paths in the PDBs are normalised only on the build server, so local debugging keeps local paths. -->
+    <PropertyGroup Condition="'$(GITHUB_ACTIONS)' == 'true'">
+        <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+    </PropertyGroup>
+</Project>

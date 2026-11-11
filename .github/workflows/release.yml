@@ -1,6 +1,7 @@
-name: Visualizer release
-# A pushed v* tag builds the desktop Visualizer and attaches it to a draft release, to be checked and
-# published by hand. Running it by hand only uploads the zip as a workflow artifact.
+name: Release
+# A pushed v* tag builds the desktop Visualizer and the library packages, and attaches them to a draft
+# release, to be checked and published by hand. Running it by hand only uploads them as a workflow
+# artifact.
 on:
   push:
     tags:
@@ -19,6 +20,13 @@ jobs:
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '8'
+    - name: Choose the version
+      shell: bash
+      run: |
+        # v0.2.0 gives 0.2.0; a run by hand gets a prerelease number.
+        if [[ "$GITHUB_REF" == refs/tags/v* ]]; then version="${GITHUB_REF_NAME#v}"; else version="0.0.0-ci.$GITHUB_RUN_NUMBER"; fi
+        if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then echo "Not a version: $version"; exit 1; fi
+        echo "PACKAGE_VERSION=$version" >> "$GITHUB_ENV"
     - name: Publish
       run: dotnet publish Visualizer/Visualizer.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true --output publish
     - name: Write BUILD.txt
@@ -34,11 +42,20 @@ jobs:
     - name: Zip
       shell: pwsh
       run: Compress-Archive -Path publish/* -DestinationPath "AlgorithmsVisualizer-$($env:GITHUB_REF_NAME -replace '[^A-Za-z0-9._-]', '-')-win-x64.zip"
+    - name: Pack the libraries
+      shell: bash
+      run: |
+        for project in Algorithms/Algorithms.csproj Collections/Collections.csproj Packables/Packables.csproj Packables.Newtonsoft/Packables.Newtonsoft.csproj; do
+          dotnet pack "$project" --configuration Release -p:Version="$PACKAGE_VERSION" --output packages
+        done
     - name: Upload
       uses: actions/upload-artifact@v4
       with:
-        name: visualizer-win-x64
-        path: AlgorithmsVisualizer-*-win-x64.zip
+        name: release
+        path: |
+          AlgorithmsVisualizer-*-win-x64.zip
+          packages/*.nupkg
+          packages/*.snupkg
         if-no-files-found: error
   release:
     needs: build
@@ -51,8 +68,8 @@ jobs:
     - name: Download
       uses: actions/download-artifact@v4
       with:
-        name: visualizer-win-x64
+        name: release
     - name: Create the draft release
       env:
         GH_TOKEN: ${{ github.token }}
-      run: gh release create "$GITHUB_REF_NAME" AlgorithmsVisualizer-*-win-x64.zip --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --draft --generate-notes
+      run: gh release create "$GITHUB_REF_NAME" AlgorithmsVisualizer-*-win-x64.zip packages/*.nupkg packages/*.snupkg --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --draft --generate-notes

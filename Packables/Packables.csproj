@@ -4,6 +4,8 @@
         <RootNamespace>Yewnyx.Packables</RootNamespace>
         <LangVersion>latest</LangVersion>
         <PackageId>Yewnyx.Packables</PackageId>
+        <Description>Versioned saving and loading of object graphs: shared and looping references keep their identity, each type's version travels with its data, and a damaged document is reported as problems instead of thrown.</Description>
+        <PackageTags>serialization;object-graph;save;versioning</PackageTags>
         <RepositoryType>git</RepositoryType>
         <RepositoryUrl>https://github.com/yewnyx/Algorithms</RepositoryUrl>
         <TargetFrameworks>net8.0;netstandard2.1</TargetFrameworks>
@@ -13,6 +15,7 @@
       <InternalsVisibleTo Include="PackablesTest" />
     </ItemGroup>
     <ItemGroup>
-      <PackageReference Include="JetBrains.Annotations" Version="2024.3.0" />
+      <!-- Attributes for the IDE only, so not a dependency of the package. -->
+      <PackageReference Include="JetBrains.Annotations" Version="2024.3.0" PrivateAssets="all" />
     </ItemGroup>
 </Project>

@@ -4,6 +4,8 @@
         <RootNamespace>Yewnyx.Algorithms</RootNamespace>
         <LangVersion>latest</LangVersion>
         <PackageId>Yewnyx.Algorithms</PackageId>
+        <Description>Graph algorithms (Tarjan's strongly connected components, connected components, Floyd-Warshall) and sequence diffs (Myers, histogram, Heckel's moves, grouped items) over spans, without allocating.</Description>
+        <PackageTags>graph;tarjan;strongly-connected-components;floyd-warshall;diff;myers;histogram;span</PackageTags>
         <RepositoryType>git</RepositoryType>
         <RepositoryUrl>https://github.com/yewnyx/Algorithms</RepositoryUrl>
         <TargetFrameworks>net8.0;netstandard2.1</TargetFrameworks>
