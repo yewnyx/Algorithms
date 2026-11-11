@@ -25,8 +25,9 @@
         <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="/" Visible="false" />
     </ItemGroup>
 
-    <!-- Paths in the PDBs are normalised only on the build server, so local debugging keeps local paths. -->
-    <PropertyGroup Condition="'$(GITHUB_ACTIONS)' == 'true'">
+    <!-- The libraries' paths are normalised only on the build server, so local debugging keeps local paths.
+         Only the libraries: tests that find their files through [CallerFilePath] need real paths. -->
+    <PropertyGroup Condition="'$(GITHUB_ACTIONS)' == 'true' And '$(IsLibrary)' == 'true'">
         <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
     </PropertyGroup>
 </Project>
