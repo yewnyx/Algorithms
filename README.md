@@ -4,7 +4,7 @@ Small .NET libraries for graph algorithms, diffing and saving object graphs. The
 - **Diffing** (`Algorithms`): `MyersDiff`, `HistogramDiff`, `HeckelDiff` (moved blocks), diffs of items in groups (lines, then the characters in them) and `Patch`.
 - **Packables** (`Packables`, `Packables.Newtonsoft`): versioned saving and loading of object graphs, with JSON text.
 - **Collections**: `TwoWayDictionary`, a dictionary with one-to-one pairs that looks up in both directions.
-- **Visualizer**: a desktop and browser app that shows the graph algorithms on random graphs and opens Packables documents. [Try it in the browser](https://yewnyx.github.io/Algorithms/).
+- **Visualizer**: a desktop and browser app that shows the graph algorithms on random graphs, opens Packables documents and diffs two texts you edit, with moved lines and the characters changed inside lines. [Try it in the browser](https://yewnyx.github.io/Algorithms/).
 
 ## Graphs
 
