@@ -4,6 +4,8 @@
         <RootNamespace>Yewnyx.Packables</RootNamespace>
         <LangVersion>latest</LangVersion>
         <PackageId>Yewnyx.Packables.Newtonsoft</PackageId>
+        <Description>JSON text for Packables documents, with Newtonsoft.Json, and a converter that reads format 1 documents.</Description>
+        <PackageTags>serialization;json;newtonsoft;packables</PackageTags>
         <RepositoryType>git</RepositoryType>
         <RepositoryUrl>https://github.com/yewnyx/Algorithms</RepositoryUrl>
         <TargetFrameworks>net8.0;netstandard2.1</TargetFrameworks>

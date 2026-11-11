@@ -4,6 +4,8 @@
         <RootNamespace>Yewnyx.Collections</RootNamespace>
         <LangVersion>latest</LangVersion>
         <PackageId>Yewnyx.Collections</PackageId>
+        <Description>TwoWayDictionary: a dictionary of one-to-one pairs that looks up in both directions.</Description>
+        <PackageTags>dictionary;bidirectional;bimap;collections</PackageTags>
         <RepositoryType>git</RepositoryType>
         <RepositoryUrl>https://github.com/yewnyx/Algorithms</RepositoryUrl>
         <TargetFrameworks>net8.0;netstandard2.1</TargetFrameworks>
