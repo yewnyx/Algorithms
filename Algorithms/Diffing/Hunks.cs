@@ -19,6 +19,13 @@ internal static class Hunks {
         }
     }
 
+    // As above, for a buffer of moves.
+    public static void RequireApart<T>(ReadOnlySpan<T> original, ReadOnlySpan<T> revised, Span<BlockMove> moves) {
+        if (_sharesMemory<T, BlockMove>(original, moves) || _sharesMemory<T, BlockMove>(revised, moves)) {
+            throw new ArgumentException("Shares memory with the input.", nameof(moves));
+        }
+    }
+
     // Short of reinterpreting memory, spans can only share it if their items are the same type.
     // T has no struct constraint, so the check goes through a delegate made once per pair of types.
     private static bool _sharesMemory<T, TOther>(ReadOnlySpan<T> items, ReadOnlySpan<TOther> other) =>
