@@ -12,6 +12,8 @@
         <ApplicationManifest>app.manifest</ApplicationManifest>
         <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
         <TieredPGO>true</TieredPGO>
+        <!-- No ICU needed at run time, so the Linux build starts on systems without libicu. The browser build does the same. -->
+        <InvariantGlobalization>true</InvariantGlobalization>
     </PropertyGroup>
 
     <ItemGroup>
