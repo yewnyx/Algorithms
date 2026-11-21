@@ -1,7 +1,7 @@
 Small .NET libraries for graph algorithms, diffing and saving object graphs. They are written to avoid allocating: results go into buffers you provide, and the `ref` overloads size the buffers for you.
 
 - **Graphs** (`Algorithms`): strongly connected components with `Graph.Tarjan` (also from chosen roots), `Graph.ConnectedComponents`, and all-pairs shortest paths with `FloydWarshall`.
-- **Diffing** (`Algorithms`): `MyersDiff`, `HistogramDiff`, `HeckelDiff` (moved blocks), diffs of items in groups (lines, then the characters in them) and `Patch`.
+- **Diffing** (`Algorithms`): `MyersDiff`, `HistogramDiff`, `HeckelDiff` (moved blocks), diffs of items in groups (lines, then the characters in them), `Patch`, and an optional edit budget for all but `HistogramDiff`.
 - **Packables** (`Packables`, `Packables.Newtonsoft`): versioned saving and loading of object graphs, with JSON text.
 - **Collections**: `TwoWayDictionary`, a dictionary with one-to-one pairs that looks up in both directions.
 - **Visualizer**: a desktop and browser app that shows the graph algorithms on random graphs, opens Packables documents and diffs two texts you edit, with moved lines and the characters changed inside lines. [Try it in the browser](https://yewnyx.github.io/Algorithms/).
@@ -146,7 +146,17 @@ int charCount = GroupedDiff.Refine<char>(textBefore, linesBefore, textAfter, lin
 // original [7, +0) -> revised [7, +1)   "!" inserted after "two"
 ```
 
-The result is one complete script over the items, which `Patch<T>` takes unchanged. Where a run of lines is replaced by as many lines, they pair in order and each pair is diffed with Myers; a run replaced by a different number of lines is one hunk, with nothing refined inside it. The groups must tile the items in order, which for text means lines with their line breaks. You split the text, because the library never parses it, so the items could as well be words in lines or cells in rows. Two long, unrelated lines are diffed quadratically.
+The result is one complete script over the items, which `Patch<T>` takes unchanged. Where a run of lines is replaced by as many lines, they pair in order and each pair is diffed with Myers; a run replaced by a different number of lines is one hunk, with nothing refined inside it. The groups must tile the items in order, which for text means lines with their line breaks. You split the text, because the library never parses it, so the items could as well be words in lines or cells in rows. Two long, unrelated lines are diffed quadratically, unless a budget limits it.
+
+An edit budget bounds how hard a diff searches, for callers that diff interactively or inside a frame. `MyersDiff`, `HeckelDiff` and `GroupedDiff.Refine` have overloads taking `int budget, out bool cutShort`; `HistogramDiff` has none, because its cost is in finding anchors, which a budget wouldn't limit. The budget is how many edits (items inserted or deleted) one search looks for, not a limit on the script or on the total work: a script of at most that many edits comes out as it does without one, and past it the search splits at the furthest point it reached, so the script is complete and `Patch<T>` takes it, but it may be longer than the shortest, as `cutShort` tells you. A budget of 0 matches only the common start and end, `int.MaxValue` is no limit, and an odd budget searches as far as the next even one. The time is about `(n + m) * (budget + 7)` item comparisons, where the 7 only matters under 10, so for a total allowance pass `allowance / (n + m) - 7`, but not below 0. `HeckelDiff` budgets its Myers diffs between blocks, not the finding of blocks, and `GroupedDiff.Refine` budgets each pair of lines. Where `HistogramDiff` would be slow, as for many unique items with every second one changed, use `MyersDiff` with a budget.
+
+```csharp
+// The shortest script from "AAAABBBB" to "BBBBAAAA" has 8 edits; a budget of 2 cuts the search short.
+Hunk[]? budgetHunks = null;
+int[]? budgetWorkspace = null;
+int budgetCount = MyersDiff.Diff<char>("AAAABBBB", "BBBBAAAA", ref budgetHunks, ref budgetWorkspace, 2, out bool cutShort);
+// cutShort is true: original [0, +2) -> revised [0, +4) and original [4, +4) -> revised [6, +2), a valid script of 12 edits.
+```
 
 Items must implement `IEquatable<T>`. `HistogramDiff`, `HeckelDiff`, `GroupClasses` and `FindMoves` also hash their items, so `GetHashCode` should agree with `Equals` and vary in its low bits (a struct needs to override it). The inputs may overlap each other, but the workspace and output buffers must not share memory with either one, and `Diff` throws an `ArgumentException` if they do; a `Patch` result must not share memory with its input, and throws if it does.
 
