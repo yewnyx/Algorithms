@@ -8,6 +8,8 @@ on:
     - 'Collections/**'
     - 'Packables/**'
     - 'Packables.Newtonsoft/**'
+    - 'Spatial/**'
+    - 'Spatial.Unity/Core/**'
     - 'Visualizer/**'
     - 'Visualizer.Browser/**'
     - '.github/workflows/pages.yml'

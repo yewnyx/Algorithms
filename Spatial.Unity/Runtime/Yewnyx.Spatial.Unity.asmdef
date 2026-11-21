@@ -1,0 +1,13 @@
+{
+    "name": "Yewnyx.Spatial.Unity",
+    "references": [
+        "Yewnyx.Spatial",
+        "Unity.Burst",
+        "Unity.Collections",
+        "Unity.Mathematics"
+    ],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [],
+    "autoReferenced": true
+}

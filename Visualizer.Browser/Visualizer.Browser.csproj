@@ -37,6 +37,7 @@
 
     <ItemGroup>
         <ProjectReference Include="..\Algorithms\Algorithms.csproj" />
+        <ProjectReference Include="..\Spatial\Spatial.csproj" />
         <ProjectReference Include="..\Packables\Packables.csproj" />
         <ProjectReference Include="..\Packables.Newtonsoft\Packables.Newtonsoft.csproj" />
     </ItemGroup>

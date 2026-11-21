@@ -1,0 +1,56 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:views="using:Yewnyx.Algorithms.Visualizer.Views"
+             x:Class="Yewnyx.Algorithms.Visualizer.Views.SpatialPanel">
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="#181B21" Padding="8,6" BorderBrush="#262B33" BorderThickness="0,0,0,1">
+            <StackPanel Spacing="6">
+                <WrapPanel Orientation="Horizontal">
+                    <TextBlock Classes="section" Text="BOXES" Width="56" />
+                    <StackPanel Classes="field">
+                        <TextBlock Classes="label" Text="View" ToolTip.Tip="3D: boxes fill a volume, seen from a camera you orbit. Top-down: the boxes lie in one plane." />
+                        <ComboBox x:Name="ViewBox" SelectedIndex="0" VerticalAlignment="Center" Width="130">
+                            <ComboBoxItem Content="3D" />
+                            <ComboBoxItem Content="Top-down plane" />
+                        </ComboBox>
+                    </StackPanel>
+                    <Button x:Name="ResetViewButton" Content="Reset view" VerticalAlignment="Center" Margin="0,0,8,0" ToolTip.Tip="Back to the starting camera." />
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Count" ToolTip.Tip="How many boxes there are." /><NumericUpDown x:Name="CountBox" Minimum="1" Maximum="20000" Increment="100" Value="800" FormatString="N0" Width="80" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Drifting %" ToolTip.Tip="Share of the boxes that move. The rest rest, as most boxes do." /><NumericUpDown x:Name="MovingBox" Minimum="0" Maximum="100" Increment="5" Value="15" FormatString="0" Width="56" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Seed" /><NumericUpDown x:Name="SeedBox" Minimum="0" Maximum="2147483647" Increment="1" Value="1" FormatString="0" Width="64" /></StackPanel>
+                    <Button x:Name="NewButton" Content="New boxes" Margin="8,0,0,0" VerticalAlignment="Center" />
+                    <Button x:Name="PlayButton" Content="⏸ Pause" VerticalAlignment="Center" Margin="12,0,0,0" MinWidth="88"
+                            ToolTip.Tip="The drifting boxes move, and the tree is rebuilt whole after every step." />
+                </WrapPanel>
+                <WrapPanel Orientation="Horizontal">
+                    <TextBlock Classes="section" Text="QUERY" Width="56" />
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Radius" ToolTip.Tip="The circle (the sphere, in 3D) that follows the pointer: boxes within this distance are found." /><NumericUpDown x:Name="RadiusBox" Minimum="1" Maximum="2000" Increment="10" Value="140" FormatString="0" Width="64" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Nearest" ToolTip.Tip="How many of the nearest boxes are numbered, 1 being the nearest." /><NumericUpDown x:Name="NearestBox" Minimum="1" Maximum="20" Increment="1" Value="5" FormatString="0" Width="52" /></StackPanel>
+                    <StackPanel Classes="field">
+                        <TextBlock Classes="label" Text="Show hits from" ToolTip.Tip="The scan and the tree find the same boxes; this picks whose answer is drawn." />
+                        <ComboBox x:Name="MethodBox" SelectedIndex="1" VerticalAlignment="Center" Width="150">
+                            <ComboBoxItem Content="Scan (BoxScan)" />
+                            <ComboBoxItem Content="Tree (BoxTree)" />
+                        </ComboBox>
+                    </StackPanel>
+                    <CheckBox x:Name="TreeBox" Content="Show the tree's nodes" IsChecked="True" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#C8D0DC"
+                              ToolTip.Tip="Each node is the box around everything beneath it. The ones the tree's walk visited for this query are lit yellow; the rest it skipped without looking inside (in 3D, only the leaves reached and the subtrees skipped next to them are drawn)." />
+                </WrapPanel>
+            </StackPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Top" Background="#14171D" Padding="12,8" MinHeight="96" BorderBrush="#262B33" BorderThickness="0,0,0,1">
+            <StackPanel Spacing="3">
+                <TextBlock x:Name="HeadlineText" Foreground="#E8EDF4" FontSize="14" TextWrapping="Wrap" />
+                <TextBlock x:Name="CountsText" Foreground="#C8D0DC" FontSize="12" TextWrapping="Wrap" />
+                <TextBlock x:Name="NoteText" Foreground="#7F8896" FontSize="11" TextWrapping="Wrap" />
+            </StackPanel>
+        </Border>
+
+        <Panel>
+            <views:BoxView x:Name="Boxes" IsVisible="False" />
+            <views:BoxView3D x:Name="Boxes3D" />
+            <TextBlock x:Name="PaneText" Classes="pane" TextWrapping="Wrap" />
+        </Panel>
+    </DockPanel>
+</UserControl>

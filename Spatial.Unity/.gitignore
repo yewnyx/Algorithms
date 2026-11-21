@@ -1,0 +1,4 @@
+# Unity needs the .meta files of a package taken from a repository.
+!*.meta
+# Samples live in a folder Unity does not import until asked.
+!Samples~/

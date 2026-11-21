@@ -1,0 +1,23 @@
+{
+  "name": "xyz.yewnyx.spatial",
+  "version": "0.0.0",
+  "displayName": "Spatial",
+  "description": "Experimental. Queries over many boxes from jobs: which are within a radius of a point, and which are nearest.",
+  "unity": "6000.3",
+  "dependencies": {
+    "com.unity.burst": "1.8.29",
+    "com.unity.collections": "2.6.5",
+    "com.unity.mathematics": "1.3.3"
+  },
+  "author": {
+    "name": "yewnyx"
+  },
+  "license": "MIT",
+  "samples": [
+    {
+      "displayName": "Moving boxes",
+      "description": "A few hundred boxes, most resting and some drifting, a query that follows an object, and the gizmo drawing it all.",
+      "path": "Samples~/MovingBoxes"
+    }
+  ]
+}
