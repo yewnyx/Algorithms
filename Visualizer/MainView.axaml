@@ -147,5 +147,8 @@
         <TabItem Header="Diffing">
             <views:DiffingPanel />
         </TabItem>
+        <TabItem Header="Spatial">
+            <views:SpatialPanel />
+        </TabItem>
     </TabControl>
 </UserControl>
