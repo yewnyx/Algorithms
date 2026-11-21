@@ -43,4 +43,51 @@ public class TwoWayDictionaryTest {
         map["a"].Should().Be(1);
         map.Count.Should().Be(1);
     }
+
+    [Fact]
+    public void AForeachOverItDoesntAllocate() {
+        var map = new TwoWayDictionary<string, int>();
+        for (var i = 0; i < 10; i++) { map.Add("k" + i, i + 100); }
+        long Sum() {
+            long sum = 0;
+            foreach (var (key, value) in map) { sum += key.Length + value; }
+            return sum;
+        }
+
+        // The enumerator is the dictionary's own struct, not the interface it'd be boxed to.
+        Dictionary<string, int>.Enumerator enumerator = map.GetEnumerator();
+        enumerator.Dispose();
+
+        Sum();
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        var sum = Sum();
+        (GC.GetAllocatedBytesForCurrentThread() - before).Should().Be(0);
+        sum.Should().Be(10 * 2 + 1045);
+    }
+
+    [Fact]
+    public void ItStillEnumeratesThroughTheInterfaces() {
+        var map = new TwoWayDictionary<string, int> { { "a", 1 }, { "b", 2 } };
+
+        ((IEnumerable<KeyValuePair<string, int>>)map).Should().BeEquivalentTo(
+            new[] { KeyValuePair.Create("a", 1), KeyValuePair.Create("b", 2) });
+        var untyped = new List<object>();
+        foreach (var pair in (System.Collections.IEnumerable)map) { untyped.Add(pair); }
+        untyped.Should().HaveCount(2);
+        ((IReadOnlyCollection<KeyValuePair<string, int>>)map).Count.Should().Be(2);
+    }
+
+    [Fact]
+    public void TryGetFindsEitherWayAndALeavesDefaultOnAMiss() {
+        var map = new TwoWayDictionary<string, int> { { "a", 1 } };
+
+        map.TryGet("a", out int value).Should().BeTrue();
+        value.Should().Be(1);
+        map.TryGet(1, out string key).Should().BeTrue();
+        key.Should().Be("a");
+        map.TryGet("z", out value).Should().BeFalse();
+        value.Should().Be(0);
+        map.TryGet(9, out key).Should().BeFalse();
+        key.Should().BeNull();
+    }
 }

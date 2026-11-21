@@ -36,8 +36,10 @@ public class TwoWayDictionary<TKey, TValue> : ITwoWayDictionary<TKey, TValue>
     public bool Contains(TKey key) => _dictionary.ContainsKey(key);
     public bool Contains(TValue value) => _reverseDictionary.ContainsKey(value);
 
-    public bool TryGet(TKey key, out TValue value) => _dictionary.TryGetValue(key, out value);
-    public bool TryGet(TValue value, out TKey key) => _reverseDictionary.TryGetValue(value, out key);
+    // A miss leaves default in the out parameter, as Dictionary's TryGetValue does; the signature says it
+    // isn't null, as the interface does.
+    public bool TryGet(TKey key, out TValue value) => _dictionary.TryGetValue(key, out value!);
+    public bool TryGet(TValue value, out TKey key) => _reverseDictionary.TryGetValue(value, out key!);
 
     public TValue this[TKey key] {
         get => _dictionary[key];
@@ -94,7 +96,13 @@ public class TwoWayDictionary<TKey, TValue> : ITwoWayDictionary<TKey, TValue>
         _reverseDictionary.Clear();
     }
 
-    public IEnumerator<KeyValuePair<TKey, TValue>> GetEnumerator() => _dictionary.GetEnumerator();
+    /// <summary>
+    /// The enumerator is the dictionary's own struct, so a <c>foreach</c> over this doesn't allocate. Going
+    /// through <see cref="IEnumerable{T}"/> boxes it, as it does for any collection.
+    /// </summary>
+    public Dictionary<TKey, TValue>.Enumerator GetEnumerator() => _dictionary.GetEnumerator();
+
+    IEnumerator<KeyValuePair<TKey, TValue>> IEnumerable<KeyValuePair<TKey, TValue>>.GetEnumerator() => GetEnumerator();
 
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 }
