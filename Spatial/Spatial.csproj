@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <RootNamespace>Yewnyx.Spatial</RootNamespace>
+        <!-- Unity compiles the same source files and takes C# 9. -->
+        <LangVersion>9.0</LangVersion>
+        <PackageId>Yewnyx.Spatial</PackageId>
+        <Description>Queries over many boxes: which are near a point, and which are nearest. No allocation, and usable from Unity jobs.</Description>
+        <PackageTags>spatial;boxes;nearest;bvh;unity</PackageTags>
+        <RepositoryType>git</RepositoryType>
+        <RepositoryUrl>https://github.com/yewnyx/Algorithms</RepositoryUrl>
+        <TargetFrameworks>net8.0;netstandard2.1</TargetFrameworks>
+        <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    </PropertyGroup>
+    <ItemGroup>
+        <!-- One copy of the source, kept where Unity can compile it too. -->
+        <Compile Include="..\Spatial.Unity\Core\**\*.cs" />
+    </ItemGroup>
+</Project>
