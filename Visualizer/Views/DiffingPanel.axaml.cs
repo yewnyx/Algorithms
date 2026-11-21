@@ -91,7 +91,7 @@ public partial class DiffingPanel : UserControl {
     ];
 
     // What a diff wrote, for the captions and the headline.
-    private readonly record struct Result(Hunk[] Script, int Removed, int Added, int Moves, double Microseconds);
+    private readonly record struct Result(Hunk[] Script, int Removed, int Added, int Moves, double Microseconds, bool CutShort);
 
     private Hunk[]? _hunks;
     private int[]? _workspace;
@@ -99,10 +99,15 @@ public partial class DiffingPanel : UserControl {
     private int _moveCount;
     private bool _loading;
 
+    // The edits each search may look for, from the Budget box: blank is no limit.
+    private int _budget = int.MaxValue;
+    private bool _cutShort; // Whether any diff of this update ran out of budget.
+
     public DiffingPanel() {
         InitializeComponent();
         SampleBox.SelectionChanged += (_, _) => LoadSample();
         ViewBox.SelectionChanged += (_, _) => Update();
+        BudgetBox.ValueChanged += (_, _) => Update();
         OriginalBox.TextChanged += (_, _) => Update();
         RevisedBox.TextChanged += (_, _) => Update();
         LoadSample();
@@ -125,6 +130,8 @@ public partial class DiffingPanel : UserControl {
         var original = Normalize(OriginalBox.Text);
         var revised = Normalize(RevisedBox.Text);
         var view = Math.Max(0, ViewBox.SelectedIndex);
+        _budget = BudgetBox.Value is { } budget ? (int)Math.Clamp(budget, 0m, int.MaxValue) : int.MaxValue;
+        _cutShort = false;
         if (view is 1 or 3 && original.Length + revised.Length > MaxCharacters) {
             HeadlineText.Text = $"Too long to compare by characters here (over {MaxCharacters:N0}); compare by lines instead.";
             LeftText.Inlines?.Clear();
@@ -176,16 +183,27 @@ public partial class DiffingPanel : UserControl {
                 break;
             }
         }
+        if (_cutShort) {
+            HeadlineText.Text += $" The budget of {_budget:N0} cut a search short, so a script marked \"cut short\" may have more edits than the fewest possible; blank the box for exact diffs.";
+        }
+        if (_budget != int.MaxValue && view is 0 or 1 or 3) {
+            HeadlineText.Text += " Histogram has no budget, so it always runs to the end.";
+        }
     }
 
     private static string Plural(int count, string word) => count == 1 ? word : word + "s";
 
     private static string Caption(string name, Result result, string unit) =>
         $"{name}: {result.Script.Length:N0} {Plural(result.Script.Length, "hunk")}, " +
-        $"-{result.Removed:N0} +{result.Added:N0} {unit}, {result.Microseconds:N1} µs";
+        $"-{result.Removed:N0} +{result.Added:N0} {unit}, {result.Microseconds:N1} µs" +
+        (result.CutShort ? ", cut short" : "");
 
     private static string Compare(Result myers, Result histogram, string unit) {
         var (myersChanged, histogramChanged) = (myers.Removed + myers.Added, histogram.Removed + histogram.Added);
+        if (myers.CutShort) {
+            // Myers is only the fewest possible when it ran to the end.
+            return $"Myers changes {myersChanged:N0} {unit}; Histogram changes {histogramChanged:N0}.";
+        }
         if (myers.Script.AsSpan().SequenceEqual(histogram.Script)) {
             return $"Both find the same edits: {myers.Removed:N0} {unit} removed and {myers.Added:N0} added.";
         }
@@ -209,29 +227,35 @@ public partial class DiffingPanel : UserControl {
         return best * 1e6 / Stopwatch.Frequency;
     }
 
-    private static Result Summarize(Hunk[] script, int moves, double microseconds) =>
-        new(script, script.Sum(h => h.Original.Size), script.Sum(h => h.Revised.Size), moves, microseconds);
+    private Result Summarize(Hunk[] script, int moves, double microseconds, bool cutShort) {
+        _cutShort |= cutShort;
+        return new Result(script, script.Sum(h => h.Original.Size), script.Sum(h => h.Revised.Size), moves, microseconds, cutShort);
+    }
 
     private Result LineDiff(string[] a, string[] b, bool histogram, SelectableTextBlock target) {
+        var cut = false;
+        // Histogram has no budget: it always runs to the end, so it's never cut short.
         var time = Time(() => histogram
             ? HistogramDiff.Diff<string>(a, b, ref _hunks, ref _workspace)
-            : MyersDiff.Diff<string>(a, b, ref _hunks, ref _workspace), out var count);
+            : MyersDiff.Diff<string>(a, b, ref _hunks, ref _workspace, _budget, out cut), out var count);
         var script = _hunks![..count];
         RenderLines(a, b, script, null, null, Clear(target));
-        return Summarize(script, 0, time);
+        return Summarize(script, 0, time, cut);
     }
 
     private Result CharacterDiff(string a, string b, bool histogram, SelectableTextBlock target) {
+        var cut = false;
         var time = Time(() => histogram
             ? HistogramDiff.Diff(a.AsSpan(), b.AsSpan(), ref _hunks, ref _workspace)
-            : MyersDiff.Diff(a.AsSpan(), b.AsSpan(), ref _hunks, ref _workspace), out var count);
+            : MyersDiff.Diff(a.AsSpan(), b.AsSpan(), ref _hunks, ref _workspace, _budget, out cut), out var count);
         var script = _hunks![..count];
         RenderCharacters(a, b, script, Clear(target));
-        return Summarize(script, 0, time);
+        return Summarize(script, 0, time, cut);
     }
 
     private Result MoveDiff(string[] a, string[] b, SelectableTextBlock target) {
-        var time = Time(() => HeckelDiff.Diff<string>(a, b, ref _hunks, ref _moves, ref _workspace, out _moveCount), out var count);
+        var cut = false;
+        var time = Time(() => HeckelDiff.Diff<string>(a, b, ref _hunks, ref _moves, ref _workspace, _budget, out _moveCount, out cut), out var count);
         var script = _hunks![..count];
 
         // Where each moved line went, and where each line moved here came from.
@@ -245,7 +269,7 @@ public partial class DiffingPanel : UserControl {
             }
         }
         RenderLines(a, b, script, movedTo, movedFrom, Clear(target));
-        return Summarize(script, _moveCount, time);
+        return Summarize(script, _moveCount, time, cut);
     }
 
     private Result RefinedDiff(string a, string b, SelectableTextBlock target) {
@@ -256,14 +280,16 @@ public partial class DiffingPanel : UserControl {
         var hunks = new Hunk[GroupedDiff.MaxHunks(a.Length, b.Length)];
         var workspace = new int[GroupedDiff.WorkspaceLength(a.Length, b.Length)];
         var lineCount = 0;
+        var pairsCut = false; // Only the pairs of lines are budgeted; the diff over the lines is Histogram's.
         var time = Time(() => {
             GroupClasses.Assign(a.AsSpan(), linesA, b.AsSpan(), linesB, classesA, classesB, classWorkspace);
             lineCount = HistogramDiff.Diff<int>(classesA, classesB, ref lineHunks, ref _workspace);
-            return GroupedDiff.Refine(a.AsSpan(), linesA, b.AsSpan(), linesB, lineHunks.AsSpan(0, lineCount), hunks, workspace);
+            return GroupedDiff.Refine(a.AsSpan(), linesA, b.AsSpan(), linesB, lineHunks.AsSpan(0, lineCount), hunks, workspace,
+                _budget, out pairsCut);
         }, out var count);
         var script = hunks[..count];
         RenderRefined(a, b, linesA, linesB, lineHunks![..lineCount], script, Clear(target));
-        return Summarize(script, 0, time);
+        return Summarize(script, 0, time, pairsCut);
     }
 
     private static InlineCollection Clear(SelectableTextBlock target) {
