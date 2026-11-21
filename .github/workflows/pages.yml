@@ -30,6 +30,14 @@ jobs:
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '10'
+    - name: Pin the SDK to .NET 10
+      # The runner image also carries a newer SDK (.NET 11), which a plain `dotnet` prefers. Its WebAssembly
+      # toolchain builds an app that dies at start-up (SkiaSharp.SKImageInfo), so say which SDK to use and
+      # fail here, not in the browser, if it isn't 10. The file only exists for this job.
+      run: |
+        echo '{ "sdk": { "version": "10.0.100", "rollForward": "latestFeature", "allowPrerelease": false } }' > global.json
+        dotnet --version
+        dotnet --version | grep -q '^10\.'
     - name: Install WebAssembly workload
       run: dotnet workload install wasm-tools
     - name: Publish
