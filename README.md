@@ -1,10 +1,11 @@
-Small .NET libraries for graph algorithms, diffing and saving object graphs. They are written to avoid allocating: results go into buffers you provide, and the `ref` overloads size the buffers for you.
+Small .NET libraries for graph algorithms, diffing, saving object graphs and querying boxes in space. They are written to avoid allocating: results go into buffers you provide, and in `Algorithms` the `ref` overloads size the buffers for you.
 
 - **Graphs** (`Algorithms`): strongly connected components with `Graph.Tarjan` (also from chosen roots), `Graph.ConnectedComponents`, and all-pairs shortest paths with `FloydWarshall`.
 - **Diffing** (`Algorithms`): `MyersDiff`, `HistogramDiff`, `HeckelDiff` (moved blocks), diffs of items in groups (lines, then the characters in them), `Patch`, and an optional edit budget for all but `HistogramDiff`.
 - **Packables** (`Packables`, `Packables.Newtonsoft`): versioned saving and loading of object graphs, with JSON text.
 - **Collections**: `TwoWayDictionary`, a dictionary with one-to-one pairs that looks up in both directions.
-- **Visualizer**: a desktop and browser app that shows the graph algorithms on random graphs, opens Packables documents and diffs two texts you edit, with moved lines and the characters changed inside lines. [Try it in the browser](https://yewnyx.github.io/Algorithms/).
+- **Spatial** (`Spatial`, experimental): the boxes within a radius of a point, and the nearest boxes, by scan or tree. Includes a Unity package.
+- **Visualizer**: a desktop and browser app that shows the graph algorithms on random graphs, opens Packables documents, diffs two texts you edit (with moved lines and the characters changed inside lines), and finds boxes near a sphere that follows the pointer in 3D, or a circle in a plane, by scan and by tree. [Try it in the browser](https://yewnyx.github.io/Algorithms/).
 
 ## Graphs
 
@@ -227,3 +228,57 @@ if (Format1Converter.TryConvert(oldJson, document, "application/packable+json", 
     var outcome = Unpacker.Unpack(document, new Crew(), registry);
 }
 ```
+
+## Spatial
+
+> Experimental: a work in progress that may change, or be removed if it doesn't work out.
+
+`Spatial` finds the boxes within a radius of a point, and the nearest boxes. It's suitable for queries against boxes in which most are still and some move. Non-throwing and zero allocation.
+
+- `BoxScan` is an optimized scan - it's not indexed, but arranges the data in a way that is convenient/optimized to loop over.
+- `BoxTree` is an index: it sorts the boxes along a Morton curve into a tree, and a query only checks the branches near the point.
+
+Both find the same boxes, and `Nearest` gives identical results, ties included (the lower index comes first).
+
+```csharp
+using Yewnyx.Spatial;
+
+// A row of unit cubes at x = 0, 2, 4, 6, 8.
+var boxes = new Box[5];
+for (int i = 0; i < boxes.Length; i++) { boxes[i] = new Box(2 * i, 0, 0, 2 * i + 1, 1, 1); }
+
+// Scan: pack the boxes into six columns, then query.
+var minX = new float[5]; var minY = new float[5]; var minZ = new float[5];
+var maxX = new float[5]; var maxY = new float[5]; var maxZ = new float[5];
+BoxScan.Pack(boxes, minX, minY, minZ, maxX, maxY, maxZ);
+var columns = new BoxColumns(minX, minY, minZ, maxX, maxY, maxZ);
+
+var hits = new int[3];
+int found = BoxScan.InSphere(columns, 4.5f, 0.5f, 0.5f, 1.6f, hits, out int total);
+// found 3, total 3, hits [1, 2, 3]
+
+var nearest = new int[3];
+var distances = new float[3];
+int count = BoxScan.Nearest(columns, 4.5f, 0.5f, 0.5f, 100f, nearest, distances);   // 100f: the limit, as a squared distance
+// count 3, nearest [2, 1, 3], distances [0, 2.25, 2.25]   (squared distances, nearest first)
+
+// Tree: build over the region the boxes lie in, then query.
+var nodes = new BoxNode[BoxTree.NodesLength(boxes.Length)];
+var order = new int[boxes.Length];
+var workspace = new int[BoxTree.WorkspaceLength(boxes.Length)];
+bool built = BoxTree.Build(boxes, new Box(0, 0, 0, 10, 1, 1), nodes, order, workspace, out int nodeCount);
+// built true
+
+var tree = nodes.AsSpan(0, nodeCount);
+found = BoxTree.InSphere(tree, order, boxes, 4.5f, 0.5f, 0.5f, 1.6f, hits, out total);
+// found 3, total 3: boxes 1, 2 and 3 (in tree order)
+count = BoxTree.Nearest(tree, order, boxes, 4.5f, 0.5f, 0.5f, 100f, nearest, distances);
+// count 3, nearest [2, 1, 3], distances [0, 2.25, 2.25]   (the scan's results)
+```
+
+- A query returns how many results it wrote (at most the buffer's length). `total` is how many matched.
+- A query returns -1 if it can tell its spans don't belong together (columns of different lengths, `order` and `boxes` of different lengths, or nodes that don't fit them). Then read nothing from its outputs. `Build` returns false, writing nothing, if a buffer is too short.
+- Cut the columns and `order` to the number of boxes, and `nodes` to `nodeCount`. A box outside the `extent` given to `Build` is still found, but queries may be slower.
+- A box that touches the sphere matches. A NaN coordinate leaves that side of the box open (unlimited). A negative or NaN radius, or a NaN point, matches nothing.
+
+`Spatial.Unity/` is a Unity package (`xyz.yewnyx.spatial`) around the same source: a `BoxSet` that recomputes only the boxes that moved, Burst jobs that rebuild the tree and answer batches of queries, a gizmo and a sample scene. See [Spatial.Unity/README.md](Spatial.Unity/README.md).
