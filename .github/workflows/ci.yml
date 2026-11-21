@@ -15,7 +15,18 @@ jobs:
     - name: Setup dotnet
       uses: actions/setup-dotnet@v4
       with:
-        dotnet-version: '8'
+        # 8 for the runtime the tests run on, 10 for the SDK that builds them.
+        dotnet-version: |
+          8.0.x
+          10.0.x
+    - name: Pin the SDK to .NET 10
+      # The runner image carries several SDKs and a plain `dotnet` prefers the newest, so which one built a run
+      # depended on the image (the v0.1.x BUILD.txt says 10.0.403 although this job asked for 8; the image has since
+      # gained .NET 11). Say which SDK to use and fail here if it isn't 10. The file only exists for this job.
+      run: |
+        echo '{ "sdk": { "version": "10.0.100", "rollForward": "latestFeature", "allowPrerelease": false } }' > global.json
+        dotnet --version
+        dotnet --version | grep -q '^10\.'
     - name: Build
       run: dotnet build --configuration Release
     - name: Test
