@@ -172,7 +172,7 @@ public static class GroupedDiff {
     /// A run whose group counts differ gets no refinement, such as one line edited next to one line
     /// added; and a pair of unrelated groups gives scattered small matches. A view can tell both apart by
     /// how little matched. Each pair costs what Myers' diff costs on it, so two long, unrelated groups
-    /// (one long changed line) are quadratic in their length.
+    /// (one long changed line) are quadratic in their length, unless a budget limits it.
     /// </para>
     /// <para>
     /// The group hunks must come from a diff of the groups' classes: they're checked to lie in order, and
@@ -185,7 +185,21 @@ public static class GroupedDiff {
     /// </remarks>
     public static int Refine<T>(ReadOnlySpan<T> original, ReadOnlySpan<Segment> originalGroups, ReadOnlySpan<T> revised,
         ReadOnlySpan<Segment> revisedGroups, ReadOnlySpan<Hunk> groupHunks, Span<Hunk> hunks, Span<int> workspace)
-        where T : IEquatable<T> {
+        where T : IEquatable<T> =>
+        Refine(original, originalGroups, revised, revisedGroups, groupHunks, hunks, workspace, int.MaxValue, out _);
+
+    /// <summary>
+    /// As <see cref="Refine{T}(ReadOnlySpan{T}, ReadOnlySpan{Segment}, ReadOnlySpan{T}, ReadOnlySpan{Segment}, ReadOnlySpan{Hunk}, Span{Hunk}, Span{int})"/>,
+    /// with a budget for the diff of each pair of groups; see
+    /// <see cref="MyersDiff.Diff{T}(ReadOnlySpan{T}, ReadOnlySpan{T}, Span{Hunk}, Span{int}, int, out bool)"/>.
+    /// The budget is per pair, so it bounds a long changed line however many lines there are.
+    /// </summary>
+    /// <param name="budget">How many edits one Myers search looks for, as for <see cref="MyersDiff"/>.</param>
+    /// <param name="cutShort">Whether a pair's diff was cut short, so its hunks may be more than needed.</param>
+    public static int Refine<T>(ReadOnlySpan<T> original, ReadOnlySpan<Segment> originalGroups, ReadOnlySpan<T> revised,
+        ReadOnlySpan<Segment> revisedGroups, ReadOnlySpan<Hunk> groupHunks, Span<Hunk> hunks, Span<int> workspace,
+        int budget, out bool cutShort) where T : IEquatable<T> {
+        var steps = MyersDiff.Steps(budget);
         int n = original.Length, m = revised.Length;
         _requireTiling(originalGroups, n, nameof(originalGroups));
         _requireTiling(revisedGroups, m, nameof(revisedGroups));
@@ -201,6 +215,7 @@ public static class GroupedDiff {
         var myers = workspace[..MyersDiff.WorkspaceLength(n, m)];
         var pairHunks = MemoryMarshal.Cast<int, Hunk>(workspace.Slice(myers.Length, 4 * maxHunks));
         var count = 0;
+        cutShort = false;
         foreach (var (groupsA, groupsB) in groupHunks) {
             if (groupsA.Size != groupsB.Size) {
                 int aStart = _start(originalGroups, groupsA.Offset, n), aEnd = _start(originalGroups, groupsA.Offset + groupsA.Size, n);
@@ -215,7 +230,7 @@ public static class GroupedDiff {
                 var a = original.Slice(aOffset, aSize);
                 var b = revised.Slice(bOffset, bSize);
                 var pairCount = 0;
-                MyersDiff.Compare(a, b, 0, aSize, 0, bSize, pairHunks, ref pairCount, myers);
+                MyersDiff.Compare(a, b, 0, aSize, 0, bSize, pairHunks, ref pairCount, steps, ref cutShort, myers);
                 pairCount = Hunks.SlideLate(a, b, pairHunks, pairCount);
                 for (var h = 0; h < pairCount; h++) {
                     var (o, r) = pairHunks[h];

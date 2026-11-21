@@ -12,6 +12,10 @@ namespace Yewnyx.Algorithms.Diffing;
 /// log d deep.
 /// Speed depends on the items' <c>GetHashCode</c> varying in its low bits: hashes that share them, such
 /// as ints that are all multiples of 256, slow it down sharply (results don't change).
+/// There is no budget, unlike <see cref="MyersDiff"/>: the Myers fallback is reached only by regions whose
+/// shared items are all common, and the cost lies in finding anchors, which is quadratic when each split
+/// takes off only a few items, such as when every item is unique and every second one changed. For a
+/// bounded cost on such input use <see cref="MyersDiff"/> with a budget.
 /// </summary>
 public static class HistogramDiff {
     /// <summary>Items seen more often than this in the original side of a region are not used as anchors.</summary>
@@ -53,6 +57,7 @@ public static class HistogramDiff {
         _push(stack, ref depth, 0, original.Length, 0, revised.Length);
 
         var count = 0;
+        var uncut = false; // Searches here have no budget, so none runs out.
         while (depth > 0) {
             depth -= 4;
             int aLo = stack[depth], aHi = stack[depth + 1], bLo = stack[depth + 2], bHi = stack[depth + 3];
@@ -75,7 +80,7 @@ public static class HistogramDiff {
                     Hunks.Emit(hunks, ref count, aLo, aHi - aLo, bLo, bHi - bLo);
                     break;
                 case Anchor.OnlyCommonItems:
-                    MyersDiff.Compare(original, revised, aLo, aHi, bLo, bHi, hunks, ref count, scratch);
+                    MyersDiff.Compare(original, revised, aLo, aHi, bLo, bHi, hunks, ref count, int.MaxValue, ref uncut, scratch);
                     break;
                 default:
                     _push(stack, ref depth, aStart + length, aHi, bStart + length, bHi);
