@@ -36,6 +36,10 @@
                     <ComboBoxItem Content="Lines, then the characters in them"
                                   ToolTip.Tip="Lines are diffed first; then each changed line is diffed against the line it replaced, character by character." />
                 </ComboBox>
+                <TextBlock Classes="section" Text="BUDGET" Width="56" Margin="20,0,4,0" />
+                <NumericUpDown x:Name="BudgetBox" Minimum="0" Maximum="1000000" Increment="10" Value="{x:Null}" FormatString="N0" Width="96"
+                               Watermark="No limit"
+                               ToolTip.Tip="The most edits each search looks for before settling for a script that may be longer than the shortest. Blank means no limit, which is exact but can be quadratic on long, very different inputs. A search costs about the input length times the budget. It limits Myers, Heckel and each pair of lines the refined view compares, and a caption says when one was cut short. Histogram has no budget and always runs to the end: its cost is in finding anchors, which gets quadratic when each split takes off only a few items (every item unique and every second one changed), and a budget doesn't limit that." />
                 <TextBlock Classes="label" Text="Edit either side: both diffs update as you type." Margin="16,0,0,0" />
             </WrapPanel>
         </Border>

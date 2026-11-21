@@ -89,7 +89,20 @@ public static class HeckelDiff {
     /// </para>
     /// </remarks>
     public static int Diff<T>(ReadOnlySpan<T> original, ReadOnlySpan<T> revised, Span<Hunk> hunks, Span<BlockMove> moves,
-        Span<int> workspace, out int moveCount) where T : IEquatable<T> {
+        Span<int> workspace, out int moveCount) where T : IEquatable<T> =>
+        Diff(original, revised, hunks, moves, workspace, int.MaxValue, out moveCount, out _);
+
+    /// <summary>
+    /// As <see cref="Diff{T}(ReadOnlySpan{T}, ReadOnlySpan{T}, Span{Hunk}, Span{BlockMove}, Span{int}, out int)"/>,
+    /// with a budget for the Myers diffs between the blocks that stay; see
+    /// <see cref="MyersDiff.Diff{T}(ReadOnlySpan{T}, ReadOnlySpan{T}, Span{Hunk}, Span{int}, int, out bool)"/>.
+    /// Finding the blocks is not limited by it.
+    /// </summary>
+    /// <param name="budget">How many edits one Myers search looks for, as for <see cref="MyersDiff"/>.</param>
+    /// <param name="cutShort">Whether a Myers search was cut short, so the script may be longer than needed.</param>
+    public static int Diff<T>(ReadOnlySpan<T> original, ReadOnlySpan<T> revised, Span<Hunk> hunks, Span<BlockMove> moves,
+        Span<int> workspace, int budget, out int moveCount, out bool cutShort) where T : IEquatable<T> {
+        var steps = MyersDiff.Steps(budget);
         int n = original.Length, m = revised.Length, t = n + m, k = Math.Min(n, m);
         var maxHunks = MaxHunks(n, m);
         if (hunks.Length < maxHunks) { throw new ArgumentException($"Needs at least {maxHunks} elements.", nameof(hunks)); }
@@ -125,7 +138,7 @@ public static class HeckelDiff {
             linkB.Slice(to, length).Fill(Moved);
         }
 
-        var count = _hunks(classA, classB, linkA, linkB, blocks, k, blockCount, hunks, scratch);
+        var count = _hunks(classA, classB, linkA, linkB, blocks, k, blockCount, hunks, scratch, steps, out cutShort);
 
         // A moved item now equals nothing, so sliding can't take one out of its hunk.
         for (var o = 0; o < n; o++) {
@@ -140,14 +153,22 @@ public static class HeckelDiff {
     /// <inheritdoc cref="Diff{T}(ReadOnlySpan{T}, ReadOnlySpan{T}, Span{Hunk}, Span{BlockMove}, Span{int}, out int)"/>
     /// <remarks>Null or undersized arrays are replaced.</remarks>
     public static int Diff<T>(ReadOnlySpan<T> original, ReadOnlySpan<T> revised, [NotNull] ref Hunk[]? hunks,
-        [NotNull] ref BlockMove[]? moves, [NotNull] ref int[]? workspace, out int moveCount) where T : IEquatable<T> {
+        [NotNull] ref BlockMove[]? moves, [NotNull] ref int[]? workspace, out int moveCount) where T : IEquatable<T> =>
+        Diff(original, revised, ref hunks, ref moves, ref workspace, int.MaxValue, out moveCount, out _);
+
+    /// <inheritdoc cref="Diff{T}(ReadOnlySpan{T}, ReadOnlySpan{T}, Span{Hunk}, Span{BlockMove}, Span{int}, int, out int, out bool)"/>
+    /// <remarks>Null or undersized arrays are replaced.</remarks>
+    public static int Diff<T>(ReadOnlySpan<T> original, ReadOnlySpan<T> revised, [NotNull] ref Hunk[]? hunks,
+        [NotNull] ref BlockMove[]? moves, [NotNull] ref int[]? workspace, int budget, out int moveCount, out bool cutShort)
+        where T : IEquatable<T> {
+        MyersDiff.Steps(budget);
         var maxHunks = MaxHunks(original.Length, revised.Length);
         if (hunks is null || hunks.Length < maxHunks) { hunks = new Hunk[maxHunks]; }
         var maxMoves = MaxMoves(original.Length, revised.Length);
         if (moves is null || moves.Length < maxMoves) { moves = new BlockMove[maxMoves]; }
         var workspaceLength = WorkspaceLength(original.Length, revised.Length);
         if (workspace is null || workspace.Length < workspaceLength) { workspace = new int[workspaceLength]; }
-        return Diff(original, revised, hunks.AsSpan(), moves.AsSpan(), workspace.AsSpan(), out moveCount);
+        return Diff(original, revised, hunks.AsSpan(), moves.AsSpan(), workspace.AsSpan(), budget, out moveCount, out cutShort);
     }
 
     private static int _bucketCount(int n) {
@@ -268,13 +289,15 @@ public static class HeckelDiff {
     // out of that diff, since they can't match: so a reordered list, or one replaced wholesale, never
     // reaches it.
     private static int _hunks(ReadOnlySpan<int> classA, ReadOnlySpan<int> classB, ReadOnlySpan<int> linkA,
-        ReadOnlySpan<int> linkB, ReadOnlySpan<int> blocks, int k, int blockCount, Span<Hunk> hunks, Span<int> scratch) {
+        ReadOnlySpan<int> linkB, ReadOnlySpan<int> blocks, int k, int blockCount, Span<Hunk> hunks, Span<int> scratch,
+        int steps, out bool cutShort) {
         int n = classA.Length, m = classB.Length, t = n + m;
         var gap = new Gap {
             ClassA = scratch[..n], ClassB = scratch.Slice(n, m),
             AtA = scratch.Slice(t, n), AtB = scratch.Slice(t + n, m),
             Workspace = scratch.Slice(2 * t, MyersDiff.WorkspaceLength(n, m)),
             Found = MemoryMarshal.Cast<int, Hunk>(scratch.Slice(2 * t + MyersDiff.WorkspaceLength(n, m), 4 * (k + 1))),
+            Steps = steps,
         };
 
         var emitter = new Emitter();
@@ -289,6 +312,7 @@ public static class HeckelDiff {
         if (emitter.LastA < n || emitter.LastB < m) {
             Hunks.Emit(hunks, ref emitter.Count, emitter.LastA, n - emitter.LastA, emitter.LastB, m - emitter.LastB);
         }
+        cutShort = gap.Cut;
         return emitter.Count;
     }
 
@@ -305,6 +329,8 @@ public static class HeckelDiff {
     private ref struct Gap {
         public Span<int> ClassA, ClassB, AtA, AtB, Workspace;
         public Span<Hunk> Found; // Myers' hunks over the items left in.
+        public int Steps;        // Rounds each Myers search is allowed.
+        public bool Cut;         // Whether one ran out.
 
         // Matches a[aLo..aHi) against b[bLo..bHi) with Myers' diff, leaving out the items that can't match.
         public void Match(ReadOnlySpan<int> classA, ReadOnlySpan<int> classB, ReadOnlySpan<int> linkA, ReadOnlySpan<int> linkB,
@@ -319,7 +345,7 @@ public static class HeckelDiff {
             if (na == 0 || nb == 0) { return; }
 
             var count = 0;
-            MyersDiff.Compare<int>(ClassA[..na], ClassB[..nb], 0, na, 0, nb, Found, ref count, Workspace);
+            MyersDiff.Compare<int>(ClassA[..na], ClassB[..nb], 0, na, 0, nb, Found, ref count, Steps, ref Cut, Workspace);
             int i = 0, j = 0;
             for (var h = 0; h < count; h++) {
                 var (original, revised) = Found[h];
