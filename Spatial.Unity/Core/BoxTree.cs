@@ -63,9 +63,9 @@ namespace Yewnyx.Spatial {
             float scaleX = _scale(extent.MinX, extent.MaxX), scaleY = _scale(extent.MinY, extent.MaxY), scaleZ = _scale(extent.MinZ, extent.MaxZ);
             for (var i = 0; i < n; i++) {
                 var box = boxes[i];
-                var cellX = _cell(((box.MinX + box.MaxX) * 0.5f - extent.MinX) * scaleX);
-                var cellY = _cell(((box.MinY + box.MaxY) * 0.5f - extent.MinY) * scaleY);
-                var cellZ = _cell(((box.MinZ + box.MaxZ) * 0.5f - extent.MinZ) * scaleZ);
+                var cellX = _cell(_scaled(box.MinX, box.MaxX, extent.MinX, scaleX));
+                var cellY = _cell(_scaled(box.MinY, box.MaxY, extent.MinY, scaleY));
+                var cellZ = _cell(_scaled(box.MinZ, box.MaxZ, extent.MinZ, scaleZ));
                 keys[i] = _spread(cellX) | (_spread(cellY) << 1) | (_spread(cellZ) << 2);
                 sorted[i] = i;
             }
@@ -252,7 +252,13 @@ namespace Yewnyx.Spatial {
 
         private static float _upper(float bound, float value) => float.IsNaN(value) ? float.PositiveInfinity : value > bound ? value : bound;
 
-        private static float _scale(float min, float max) => max > min ? 1024f / (max - min) : 0f;
+        // Each step is rounded to single, as in BoxDistance, so a runtime that carries wider values
+        // between steps sorts the boxes into the same order, and so builds the same tree.
+        private static float _scale(float min, float max) => max > min ? (float)(1024f / (float)(max - min)) : 0f;
+
+        // Where a box's middle lies across the extent, from 0 to 1024.
+        private static float _scaled(float min, float max, float extentMin, float scale) =>
+            (float)((float)((float)((float)(min + max) * 0.5f) - extentMin) * scale);
 
         // Which of 1024 cells a scaled coordinate falls in. Anything out of range, or not a number, is put at an end.
         private static int _cell(float scaled) => scaled >= 0f ? (scaled < 1024f ? (int)scaled : 1023) : 0;
