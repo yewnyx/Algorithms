@@ -98,7 +98,9 @@ JobHandle upToDate = set.Schedule(movedIds, positions, rotations, posesReady);
 - **`TryDistance` answers the same either way.**
 - **Building the tree takes seconds** for a part of some hundreds of metres. Build it where the part is baked and store what `TryWriteTree` gives.
 - **`SetTree` takes a stored tree back** in place of a marking. Give the grid its shapes first: a tree built from other shapes is refused.
-- **Costs, size classes, regions, fields and routes need a count for every cell.** On a tree `AddSizeClass` gives -1 and `FillCost` false.
+- **Size classes, regions and routes work on a tree as on counts.** `ScheduleRegions` gives the regions of the counts put down as the tree keeps them.
+- **Costs and travel fields need a count for every cell.** On a tree `FillCost` gives false, `ScheduleField` a field that is not built, and `RegionsOf` is empty.
+- **`TryNearestOpen` with `like:` gives false on a tree.**
 
 ## WallGrid: body sizes and regions
 
@@ -150,6 +152,7 @@ Read `Status` first.
 | `Unreachable` | There is no way for a body of that size. |
 | `Refused` | The size class has no regions (flood first), or a point is not a number. |
 | `BufferTooShort` | The route has more points than it was made to hold. `Count` says how many. |
+| `SearchFull` | On a tree only: the search filled its arrays before it ended. |
 
 `Ends` says what a found route does not promise.
 
@@ -189,6 +192,8 @@ The way is searched by the cells' costs, then pulled straight. A straight leg re
 
 - **Keep one `WallGridRoute` for each search that runs at once, not one for each agent.**
 - **It holds 16 bytes for each cell of the largest grid it has searched,** and serves grids of any size.
+- **On a tree a route object holds a fixed 896 KB,** whatever the grid's size: room for 24,576 places. A search that needs more ends `SearchFull`.
+- **On a tree the leeway is at least 0.25,** whatever `Leeway` says.
 - **Copy the points out when a search is done,** and a few route objects serve any number of agents.
 - **A search scheduled while its last is still running** runs after it and replaces its answer.
 

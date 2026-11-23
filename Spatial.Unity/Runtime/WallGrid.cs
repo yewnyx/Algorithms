@@ -62,10 +62,12 @@ namespace Yewnyx.Spatial {
         private NativeArray<BoxNode> _nodes;
 
         // One size of body: its class, a region number per cell, and what the last flood came to
-        // (done or not, cells reached, seeds with no open cell).
+        // (done or not, cells reached, seeds with no open cell). In a grid that keeps a tree the
+        // regions are a byte a brick and a byte an open cube, and the array a cell is empty.
         private sealed class Sized {
             public SizeClass Size;
             public NativeArray<byte> Region;
+            public NativeList<byte> TreeRegion;
             public NativeArray<int> Result;
             public JobHandle Flood;
             // Goes up each time the regions are forgotten or flooded again, so that a field built
@@ -126,14 +128,15 @@ namespace Yewnyx.Spatial {
 
         /// <summary>
         /// The bytes the grid's arrays take, for a caller that keeps grids within a budget: one a
-        /// cell for the wall distance or the tree's nodes and bricks, one a cell for each size class,
+        /// cell for the wall distance or the tree's nodes and bricks, one a cell for each size class
+        /// (over a tree, a byte a brick and a byte an open cube once its regions are flooded),
         /// one a cell for the costs once a cost has been written, and the shapes, heightfields among them. Not counted: while a flood of regions runs it
         /// also holds a queue of 4 bytes a cell, which is freed when the flood is done.
         /// </summary>
         /// <remarks>
-        /// On a grid that keeps a tree this waits for a build that is running, which can be
-        /// seconds: what the tree comes to is not known before. A grid that keeps a count for
-        /// every cell answers at once.
+        /// On a grid that keeps a tree this waits for a build and for floods that are running,
+        /// which can be seconds: what they come to is not known before. A grid that keeps a
+        /// count for every cell answers at once.
         /// </remarks>
         public long ByteCount {
             get {
@@ -142,7 +145,7 @@ namespace Yewnyx.Spatial {
                 return (long)_wall.Length + (long)_treeNodes.Length * 24 + _treeBricks.Length + _cost.Length + _filled.Length + (long)_solids.Length * 64 + (long)_corners.Length * 4 +
                        (long)_triangles.Length * 4 + (long)_heightFields.Length * 92 + (long)_heightBlocks.Length * 4 + (long)_heights.Length * 2 +
                        (long)_order.Length * 4 + (long)_boxes.Length * 24 + (long)_nodes.Length * 32 +
-                       (long)_sizes.Count * (_wall.Length + 16);
+                       (long)_sizes.Count * (_wall.Length + 16) + _treeRegionBytes();
             }
         }
 
@@ -428,16 +431,18 @@ namespace Yewnyx.Spatial {
         /// Adds a size of body: a radius, in metres, that regions can then be flooded for. Returns the
         /// number to name the class by, counted from 0, or -1 if the class is refused: the radius is
         /// not above half a cell, or it needs more than the grid's cap can say (see
-        /// <see cref="SizeClass.TryMake(float, in WallMap, out SizeClass)"/>), or the grid keeps its wall distance as a tree (see <see cref="IsTree"/>).
+        /// <see cref="SizeClass.TryMake(float, in WallMap, out SizeClass)"/>).
         /// </summary>
         public int AddSizeClass(float radius) {
             _requireAlive();
-            // Regions are a byte for every cell, which a grid that keeps a tree does not have room for.
-            if (IsTree) { return -1; }
-            if (!SizeClass.TryMake(radius, new WallMap(Shape, Unit, Cap, default), out var size)) { return -1; }
+            SizeClass size;
+            if (!(IsTree ? SizeClass.TryMake(radius, new WallTree(Shape, Unit, Cap, default, default), out size)
+                    : SizeClass.TryMake(radius, new WallMap(Shape, Unit, Cap, default), out size))) { return -1; }
+            // A grid that keeps a tree has no room for a byte a cell: its regions are sized by the flood.
             _sizes.Add(new Sized {
                 Size = size,
-                Region = new NativeArray<byte>(Shape.CellCount, _allocator),
+                Region = new NativeArray<byte>(IsTree ? 0 : Shape.CellCount, _allocator),
+                TreeRegion = new NativeList<byte>(1, _allocator),
                 Result = new NativeArray<int>(4, _allocator),
             });
             return _sizes.Count - 1;
@@ -460,16 +465,25 @@ namespace Yewnyx.Spatial {
         /// nothing and is counted in <see cref="EmptySeeds"/>; it is not moved to look for one.
         /// The flood is refused, leaving the class without regions, unless the wall distance is that
         /// of the shapes held (see <see cref="IsMarked"/>) when it runs: mark first, then flood.
+        /// A grid that keeps a tree floods brick by brick and cube by cube, and keeps a byte for
+        /// each of those: a cell gets the region it would over a count for every cell, with the
+        /// counts put down as the tree keeps them (see <see cref="TreeRegions"/>).
         /// </remarks>
         public JobHandle ScheduleRegions(int sizeClass, ReadOnlySpan<Solid> seeds, JobHandle dependsOn = default) {
             var sized = _sized(sizeClass);
             var copy = new NativeArray<Solid>(seeds.Length, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
             seeds.CopyTo(copy.AsSpan());
-            sized.Flood = new FloodJob {
-                Shape = Shape, Unit = Unit, Cap = Cap, Size = sized.Size, Wall = _wall, Cost = _cost, Filled = _filled, Seeds = copy,
-                Queue = new NativeArray<int>(Regions.QueueLength(Shape), Allocator.Persistent, NativeArrayOptions.UninitializedMemory),
-                Region = sized.Region, Result = sized.Result,
-            }.Schedule(JobHandle.CombineDependencies(JobHandle.CombineDependencies(dependsOn, _mark), sized.Flood, _readers));
+            var after = JobHandle.CombineDependencies(JobHandle.CombineDependencies(dependsOn, _mark), sized.Flood, _readers);
+            sized.Flood = IsTree
+                ? new TreeFloodJob {
+                    Shape = Shape, Unit = Unit, Cap = Cap, Size = sized.Size, Nodes = _treeNodes, Bricks = _treeBricks, Filled = _filled, Seeds = copy,
+                    Region = sized.TreeRegion, Result = sized.Result,
+                }.Schedule(after)
+                : new FloodJob {
+                    Shape = Shape, Unit = Unit, Cap = Cap, Size = sized.Size, Wall = _wall, Cost = _cost, Filled = _filled, Seeds = copy,
+                    Queue = new NativeArray<int>(Regions.QueueLength(Shape), Allocator.Persistent, NativeArrayOptions.UninitializedMemory),
+                    Region = sized.Region, Result = sized.Result,
+                }.Schedule(after);
             // It reads the wall distance and the costs, so the next marking and the next change of cost wait for it.
             _read(sized.Flood);
             sized.Stamp++;
@@ -492,10 +506,14 @@ namespace Yewnyx.Spatial {
         /// again it stops answering, and a new one must be built. A field outlives the grid: after
         /// <see cref="Dispose"/> it answers as it was built, and the caller must drop it if the
         /// way changes (see <see cref="WallGridField"/>).
+        /// A field is a number for every cell, so a grid that keeps a tree has none. It is
+        /// refused as a field over a class with no regions is: what comes back is a field that
+        /// is not built, reaches nothing and holds no array, and nothing is scheduled.
         /// </remarks>
         public WallGridField ScheduleField(int sizeClass, ReadOnlySpan<TravelSeed> seeds, float unit = 0.01f, JobHandle dependsOn = default) {
             var sized = _sized(sizeClass);
             if (!(unit > 0f) || !(unit <= Shape.CellSize * 0.25f)) { throw new ArgumentOutOfRangeException(nameof(unit), unit, "Must be above 0 and no more than a quarter of a cell."); }
+            if (IsTree) { return new WallGridField(this, sizeClass, sized.Stamp, unit, new NativeArray<ushort>(0, _allocator), new NativeArray<int>(3, _allocator), default); }
             var heapLength = Travel.HeapLength(Shape);
             if (heapLength == 0) { throw new InvalidOperationException("The grid has too many cells for a travel field."); }
             var copy = new NativeArray<TravelSeed>(seeds.Length, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
@@ -528,6 +546,19 @@ namespace Yewnyx.Spatial {
             return search;
         }
 
+        // The same over a tree, with the arrays a WallGridRoute keeps for such searches.
+        internal JobHandle ScheduleTreeRoute(int sizeClass, float3 from, float3 to, bool straighten, float leeway,
+            NativeArray<float> sums, NativeArray<int> links, NativeArray<float3> points, NativeArray<RouteResult> result, JobHandle dependsOn) {
+            var sized = _sized(sizeClass);
+            var search = new TreeRouteJob {
+                Shape = Shape, Unit = Unit, Cap = Cap, Size = sized.Size, Shapes = _shapes(), Straighten = straighten, Leeway = leeway,
+                Nodes = _treeNodes, Bricks = _treeBricks, Region = sized.TreeRegion, Flooded = sized.Result, From = from, To = to,
+                Sums = sums, Links = links, Points = points, Result = result,
+            }.Schedule(JobHandle.CombineDependencies(dependsOn, sized.Flood, _mark));
+            _read(search);
+            return search;
+        }
+
         // What a size class's regions are stamped with: it changes whenever they do.
         internal int RegionStamp(int sizeClass) => _sizes[sizeClass].Stamp;
 
@@ -554,8 +585,12 @@ namespace Yewnyx.Spatial {
         /// can be most of a cell from there, so nearer a shape than the radius. To ask whether a body
         /// fits at the point itself, compare <see cref="TryRoom"/> or <see cref="TryDistance"/> with its radius.
         /// </remarks>
-        public bool IsOpen(int sizeClass, float3 point) =>
-            Regions.IsOpen(Shape, _flooded(sizeClass).Region.AsReadOnlySpan(), point.x, point.y, point.z);
+        public bool IsOpen(int sizeClass, float3 point) {
+            var sized = _flooded(sizeClass);
+            return IsTree
+                ? TreeRegions.IsOpen(_tree(), sized.TreeRegion.AsArray().AsReadOnlySpan(), point.x, point.y, point.z)
+                : Regions.IsOpen(Shape, sized.Region.AsReadOnlySpan(), point.x, point.y, point.z);
+        }
 
         /// <summary>
         /// The centre of the nearest cell that is open for a size class, no farther than
@@ -566,7 +601,11 @@ namespace Yewnyx.Spatial {
         /// a thin wall or under a floor.
         /// </remarks>
         public bool TryNearestOpen(int sizeClass, float3 point, float reach, out float3 open) {
-            var found = Regions.NearestOpen(Shape, _flooded(sizeClass).Region.AsReadOnlySpan(), point.x, point.y, point.z, reach, out var x, out var y, out var z);
+            var sized = _flooded(sizeClass);
+            float x, y, z;
+            var found = IsTree
+                ? TreeRegions.NearestOpen(_tree(), sized.TreeRegion.AsArray().AsReadOnlySpan(), point.x, point.y, point.z, reach, out x, out y, out z)
+                : Regions.NearestOpen(Shape, sized.Region.AsReadOnlySpan(), point.x, point.y, point.z, reach, out x, out y, out z);
             open = new float3(x, y, z);
             return found;
         }
@@ -579,6 +618,8 @@ namespace Yewnyx.Spatial {
         /// <remarks>
         /// Still by straight line: where both sides of a thin wall are joined some other way, the
         /// cell can be on the far side.
+        /// A grid that keeps a tree does not answer this one: it returns false. Ask it for the
+        /// nearest open cell without <paramref name="like"/>, or for a route.
         /// </remarks>
         public bool TryNearestOpen(int sizeClass, float3 point, float reach, float3 like, out float3 open) {
             var found = Regions.NearestOpen(Shape, _flooded(sizeClass).Region.AsReadOnlySpan(), point.x, point.y, point.z, reach,
@@ -591,6 +632,8 @@ namespace Yewnyx.Spatial {
         /// A size class's region per cell, in the same order as <see cref="Wall"/>, once its flood is
         /// done: 0 for a cell that is not open or was not reached. The numbers themselves mean
         /// nothing outside the grid. A job of the caller's that reads it must be handed to <see cref="AddReader"/>.
+        /// Empty in a grid that keeps a tree, which has no byte a cell: ask such a grid with
+        /// <see cref="IsOpen"/> and <see cref="TryNearestOpen(int, float3, float, out float3)"/>.
         /// </summary>
         public NativeArray<byte>.ReadOnly RegionsOf(int sizeClass) => _flooded(sizeClass).Region.AsReadOnly();
 
@@ -679,7 +722,19 @@ namespace Yewnyx.Spatial {
             Complete();
             _wall.Dispose(); _cost.Dispose(); _filled.Dispose(); _treeNodes.Dispose(); _treeBricks.Dispose();
             _disposeShapes();
-            foreach (var sized in _sizes) { sized.Region.Dispose(); sized.Result.Dispose(); }
+            foreach (var sized in _sizes) { sized.Region.Dispose(); sized.TreeRegion.Dispose(); sized.Result.Dispose(); }
+        }
+
+        // What the regions over a tree take, once their floods are done.
+        private long _treeRegionBytes() {
+            var bytes = 0L;
+            if (IsTree) {
+                foreach (var sized in _sizes) {
+                    sized.Flood.Complete();
+                    bytes += sized.TreeRegion.Length;
+                }
+            }
+            return bytes;
         }
 
         // The tree as it is now. Only after the marking is done: its job writes these.
@@ -723,6 +778,7 @@ namespace Yewnyx.Spatial {
         private void _forgetRegions() {
             foreach (var sized in _sizes) {
                 sized.Region.AsSpan().Clear();
+                sized.TreeRegion.Clear();
                 sized.Result.AsSpan().Clear();
                 sized.Stamp++;
             }

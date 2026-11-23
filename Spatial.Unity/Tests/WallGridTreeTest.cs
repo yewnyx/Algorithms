@@ -204,17 +204,213 @@ namespace Yewnyx.Spatial.Tests {
             Assert.That(dense.TryWriteTree(out _), Is.False);
         }
 
+        // A point above the floor in the open.
+        private static readonly Solid[] Seeds = { Solid.Sphere(2, 2, 3, 0.5f) };
+
         [Test]
-        public void ATreeKeepsNoCostsAndNoSizeClasses() {
+        public void ATreeKeepsNoCostsAndNoFields() {
             using var tree = Marked(true);
-            Assert.That(tree.AddSizeClass(0.51f), Is.EqualTo(-1));
-            Assert.That(tree.SizeClassCount, Is.EqualTo(0));
             Assert.That(tree.FillCost(Solid.Box(new Box(0, 0, 0, 2, 2, 2)), 32), Is.False);
             Assert.That(tree.TryCost(new float3(1, 1, 1), out var cost), Is.True);
             Assert.That(cost, Is.EqualTo(0));
+            Assert.That(tree.AddSizeClass(0.51f), Is.EqualTo(0));
+            // A field is refused as one over a class with no regions is: not built, and with no array a cell.
+            tree.ScheduleRegions(0, Seeds);
+            using var field = tree.ScheduleField(0, new[] { TravelSeed.FromPoint(Solid.Sphere(2, 2, 3, 0.5f), 2, 2, 3) });
+            Assert.That(field.IsBuilt, Is.False);
+            Assert.That(field.Reached, Is.EqualTo(0));
+            Assert.That(field.ByteCount, Is.LessThan(100));
+            Assert.That(field.TrySample(new float3(2, 2, 3), out _, out _), Is.False);
+            Assert.That(() => tree.ScheduleField(0, Array.Empty<TravelSeed>(), unit: 0f), Throws.InstanceOf<ArgumentOutOfRangeException>());
             using var dense = Marked(false);
-            Assert.That(dense.AddSizeClass(0.51f), Is.EqualTo(0));
             Assert.That(dense.FillCost(Solid.Box(new Box(0, 0, 0, 2, 2, 2)), 32), Is.True);
+        }
+
+        [Test]
+        public void RegionsOverATreeAreThoseOverCountsPutDownAsTheTreeKeepsThem() {
+            using var tree = Marked(true);
+            using var dense = Marked(false);
+            var kept = PutDown(dense);
+            Assert.That(tree.AddSizeClass(0.25f), Is.EqualTo(-1), "half a cell or less");
+            Assert.That(tree.AddSizeClass(0.51f), Is.EqualTo(0));
+            Assert.That(dense.AddSizeClass(0.51f), Is.EqualTo(0));
+            Assert.That(tree.SizeOf(0), Is.EqualTo(dense.SizeOf(0)));
+            Assert.That(tree.HasRegions(0), Is.False);
+            Assert.That(tree.IsOpen(0, new float3(2, 2, 3)), Is.False, "not flooded yet");
+            var bare = tree.ByteCount;
+
+            tree.ScheduleRegions(0, Seeds);
+            dense.ScheduleRegions(0, Seeds);
+            // The dense flood over the counts as the tree keeps them.
+            var region = new byte[Grid.CellCount];
+            Assert.That(Regions.FromSeeds(new WallMap(Grid, dense.Unit, dense.Cap, kept), dense.SizeOf(0), default, Seeds, region, new int[Regions.QueueLength(Grid)], out var reached, out _), Is.True);
+            Assert.That(tree.HasRegions(0), Is.True);
+            Assert.That(tree.Reached(0), Is.EqualTo(reached));
+            Assert.That(tree.Reached(0), Is.GreaterThan(3000));
+            Assert.That(tree.Reached(0), Is.LessThanOrEqualTo(dense.Reached(0)), "never more than over the counts as marked");
+            Assert.That(tree.EmptySeeds(0), Is.EqualTo(0));
+            int open = 0, near = 0;
+            foreach (var point in Points()) {
+                var isOpen = Regions.IsOpen(Grid, region, point.x, point.y, point.z);
+                Assert.That(tree.IsOpen(0, point), Is.EqualTo(isOpen));
+                if (isOpen) { open++; }
+                var found = Regions.NearestOpen(Grid, region, point.x, point.y, point.z, 1.2f, out var cx, out var cy, out var cz);
+                Assert.That(tree.TryNearestOpen(0, point, 1.2f, out var same), Is.EqualTo(found));
+                Assert.That(same, Is.EqualTo(new float3(cx, cy, cz)));
+                if (found && !isOpen) { near++; }
+            }
+            Assert.That(open, Is.GreaterThan(5000));
+            Assert.That(near, Is.GreaterThan(1000));
+
+            // What it keeps: a byte a brick and a byte an open cube, and a few bricks in full; no byte a cell.
+            Assert.That(tree.ByteCount - bare, Is.InRange(100, Grid.CellCount / 4));
+            Assert.That(tree.RegionsOf(0).Length, Is.EqualTo(0));
+            Assert.That(dense.RegionsOf(0).Length, Is.EqualTo(Grid.CellCount));
+            Assert.That(tree.TryNearestOpen(0, new float3(2, 2, 3), 2f, new float3(3, 3, 3), out _), Is.False, "not asked of a tree");
+
+            // A seed with no open cell, and one in the same region as the first.
+            tree.ScheduleRegions(0, new[] { Seeds[0], Solid.Sphere(8.5f, 2.5f, 4f, 0.5f), Solid.Sphere(3, 3, 5, 0.5f) });
+            Assert.That(tree.Reached(0), Is.EqualTo(reached));
+            Assert.That(tree.EmptySeeds(0), Is.EqualTo(1));
+
+            // New shapes: the regions say nothing of them.
+            Assert.That(tree.SetShapes(Solids, Corners, Triangles), Is.True);
+            Assert.That(tree.HasRegions(0), Is.False);
+            Assert.That(tree.IsOpen(0, new float3(2, 2, 3)), Is.False);
+            Assert.That(tree.ByteCount, Is.LessThan(bare), "neither tree nor regions");
+            // Marked again and not yet flooded: the tree is back, and nothing of the old regions with it.
+            tree.ScheduleMark();
+            Assert.That(tree.IsMarked, Is.True);
+            Assert.That(tree.HasRegions(0), Is.False);
+            Assert.That(tree.IsOpen(0, new float3(2, 2, 3)), Is.False);
+            Assert.That(tree.TryNearestOpen(0, new float3(2, 2, 3), 2f, out _), Is.False);
+            Assert.That(tree.ByteCount, Is.EqualTo(bare));
+            tree.ScheduleRegions(0, Seeds);
+            Assert.That(tree.Reached(0), Is.EqualTo(reached));
+            // A flood before the marking that new shapes need is refused.
+            Assert.That(tree.SetShapes(Solids, Corners, Triangles), Is.True);
+            tree.ScheduleRegions(0, Seeds);
+            Assert.That(tree.HasRegions(0), Is.False);
+            Assert.That(tree.Reached(0), Is.EqualTo(0));
+            tree.ScheduleMark();
+            tree.ScheduleRegions(0, Seeds);
+            Assert.That(tree.Reached(0), Is.EqualTo(reached));
+        }
+
+        private static float Length(float3 from, NativeArray<float3>.ReadOnly points) {
+            var length = 0f;
+            foreach (var point in points) {
+                length += math.distance(from, point);
+                from = point;
+            }
+            return length;
+        }
+
+        [Test]
+        public void ARouteOverATreeIsFoundAsOverCounts() {
+            using var tree = Marked(true);
+            using var dense = Marked(false);
+            tree.AddSizeClass(0.51f);
+            dense.AddSizeClass(0.51f);
+            tree.ScheduleRegions(0, Seeds);
+            dense.ScheduleRegions(0, Seeds);
+            using var route = new WallGridRoute(64);
+            using var other = new WallGridRoute(64);
+            var bare = route.ByteCount;
+
+            // Ends in the open, behind the box and the ball, by the pillar, on the floor and inside the ball.
+            float3[] ends = {
+                new float3(1.2f, 1.3f, 2.1f), new float3(8.9f, 8.7f, 6.2f), new float3(3.1f, 8.4f, 1.6f), new float3(8.6f, 0.9f, 2.2f),
+                new float3(5.6f, 5.4f, 6.9f), new float3(0.4f, 9.2f, 7.3f), new float3(6.1f, 2.2f, 0.45f), new float3(8.5f, 2.5f, 4f),
+            };
+            int found = 0, searched = 0;
+            foreach (var from in ends) {
+                foreach (var to in ends) {
+                    if (from.Equals(to)) { continue; }
+                    route.Schedule(tree, 0, from, to);
+                    other.Schedule(dense, 0, from, to);
+                    Assert.That(route.Status, Is.EqualTo(other.Status), $"from {from} to {to}");
+                    Assert.That(route.Ends, Is.EqualTo(other.Ends));
+                    if (route.Status != RouteStatus.Found) { continue; }
+                    found++;
+                    if (route.Expanded > 0) { searched++; }
+                    Assert.That(route.Expanded == 0, Is.EqualTo(other.Expanded == 0), "one straight leg over the tree where it is one over counts");
+                    Assert.That(route.Points[route.Count - 1], Is.EqualTo(other.Points[other.Count - 1]));
+                    Assert.That(Length(from, route.Points), Is.LessThan(Length(from, other.Points) * 1.3f + 0.01f));
+                    // Every leg but an unproven first one keeps the class's guarantee, by the shapes themselves.
+                    var at = from;
+                    for (var i = 0; i < route.Count; i++) {
+                        var point = route.Points[i];
+                        if (i > 0 || (route.Ends & RouteEnds.FirstLegUnproven) == 0) {
+                            var steps = math.max(1, (int)math.ceil(math.distance(at, point) / 0.02f));
+                            for (var k = 0; k <= steps; k++) {
+                                Assert.That(tree.TryDistance(math.lerp(at, point, (float)k / steps), 2f, out var distance), Is.True);
+                                Assert.That(distance, Is.GreaterThanOrEqualTo(tree.SizeOf(0).Guarantee - 1e-3f), $"on leg {i} from {from} to {to}");
+                            }
+                        }
+                        at = point;
+                    }
+                }
+            }
+            Assert.That(found, Is.GreaterThan(30));
+            Assert.That(searched, Is.GreaterThan(8));
+            route.Schedule(tree, 0, ends[0], ends[7]);
+            Assert.That(route.Status, Is.EqualTo(RouteStatus.Unreachable), "the middle of the ball");
+            Assert.That(route.IsCurrent, Is.True);
+            Assert.That(route.ByteCount - bare, Is.EqualTo(4L * (TreeRoutes.LinksLength(WallGridRoute.DefaultTreePlaces) + TreeRoutes.SumsLength(WallGridRoute.DefaultTreePlaces))));
+            Assert.That(route.ByteCount - bare, Is.EqualTo(28L * 32768), "sized to the search and not to the grid: under a megabyte");
+
+            // A search scheduled while the last has not been read runs after it, with the same arrays.
+            other.Schedule(tree, 0, ends[2], ends[5]);
+            var alone = (other.Status, other.Count, other.Expanded, other.Cost);
+            route.Schedule(tree, 0, ends[0], ends[1]);
+            route.Schedule(tree, 0, ends[2], ends[5]);
+            Assert.That((route.Status, route.Count, route.Expanded, route.Cost), Is.EqualTo(alone));
+            Assert.That(route.Points.ToArray(), Is.EqualTo(other.Points.ToArray()));
+
+            // With room for a dozen places a search that needs more says so, and with room again it finds the way.
+            route.Schedule(tree, 0, ends[0], ends[1]);
+            Assert.That(route.Status, Is.EqualTo(RouteStatus.Found));
+            Assert.That(route.Expanded, Is.GreaterThan(12));
+            // Over a tree the leeway is a quarter at the least: as it starts, a tenth, the search is the one a quarter gives.
+            var asItStarts = route.Expanded;
+            route.Leeway = 0f;
+            route.Schedule(tree, 0, ends[0], ends[1]);
+            Assert.That(route.Expanded, Is.EqualTo(asItStarts));
+            route.Leeway = WallGridRoute.TreeLeeway;
+            route.Schedule(tree, 0, ends[0], ends[1]);
+            Assert.That(route.Expanded, Is.EqualTo(asItStarts));
+            route.Leeway = 3f;
+            route.Schedule(tree, 0, ends[0], ends[1]);
+            Assert.That(route.Status, Is.EqualTo(RouteStatus.Found));
+            Assert.That(route.Expanded, Is.LessThan(asItStarts), "with more leeway it takes up fewer places");
+            route.Leeway = WallGridRoute.DefaultLeeway;
+            route.TreePlaces = 12;
+            route.Schedule(tree, 0, ends[0], ends[1]);
+            Assert.That(route.Status, Is.EqualTo(RouteStatus.SearchFull));
+            Assert.That(route.Points.Length, Is.EqualTo(0));
+            route.TreePlaces = WallGridRoute.DefaultTreePlaces;
+            route.Schedule(tree, 0, ends[0], ends[1], straighten: false);
+            Assert.That(route.Status, Is.EqualTo(RouteStatus.Found));
+            Assert.That(route.Points[0], Is.EqualTo(new float3(1.25f, 1.25f, 2.25f)), "left as cells, the way begins at the centre of the start's cell");
+            Assert.That(() => route.TreePlaces = 0, Throws.InstanceOf<ArgumentOutOfRangeException>());
+            Assert.That(() => route.TreePlaces = int.MaxValue, Throws.InstanceOf<ArgumentOutOfRangeException>());
+
+            // The same object goes on serving a grid of counts, whose search needs its own arrays as it left them.
+            for (var round = 0; round < 2; round++) {
+                route.Schedule(dense, 0, ends[0], ends[1]);
+                other.Schedule(dense, 0, ends[0], ends[1]);
+                Assert.That(route.Status, Is.EqualTo(RouteStatus.Found));
+                Assert.That(route.Points.ToArray(), Is.EqualTo(other.Points.ToArray()));
+                route.Schedule(tree, 0, ends[0], ends[1]);
+                Assert.That(route.Status, Is.EqualTo(RouteStatus.Found));
+            }
+
+            // Before any flood, and once the shapes are taken again, a search is refused.
+            Assert.That(tree.SetShapes(Solids, Corners, Triangles), Is.True);
+            Assert.That(route.IsCurrent, Is.False);
+            route.Schedule(tree, 0, ends[0], ends[1]);
+            Assert.That(route.Status, Is.EqualTo(RouteStatus.Refused));
         }
 
         [Test]
