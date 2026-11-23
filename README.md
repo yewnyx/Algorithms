@@ -288,7 +288,7 @@ For callers that ask "how much room is there here?" of geometry that doesn't mov
 | Layer | It answers | Calls | Memory |
 |---|---|---|---|
 | Room | How far is the nearest shape from this point? | `Shapes.Distance` (exact), `WallDistance.RoomAt` (from the grid), `WallTrees.RoomAt` (from a tree) | 1 byte a cell, or with a tree only near surfaces |
-| Fit | Can a body of this radius be here? Which cells can it reach? | `SizeClass.TryMake`, `Regions.FromSeeds`, `Regions.IsOpen`, `Regions.NearestOpen` | 1 byte a cell for each body size |
+| Fit | Can a body of this radius be here? Which cells can it reach? | `SizeClass.TryMake`, `Regions.FromSeeds`, `Regions.IsOpen`, `Regions.NearestOpen`; over a tree `TreeRegions` | 1 byte a cell for each body size; over a tree a byte a brick and a byte an open cube |
 | Travel field | How far is each cell from a goal, going round what is in the way, and which way is down? | `Travel.Build`, `Travel.Sample` | 2 bytes a cell, for each field |
 | Route | A few straight legs from here to there | `Routes.Find` | 16 bytes a cell, for the search's arrays |
 

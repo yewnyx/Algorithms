@@ -62,6 +62,13 @@ Every rule and limit of the `Yewnyx.Spatial` library, grouped by the type it bel
 - **`NearestOpen` is by straight line,** whatever lies between: the cell can be on the other side of a thin wall.
 - **`NearestOpen` can also be asked for the nearest open cell in the same region as another point.** That cell can still be across a wall when both sides are joined some other way.
 
+### Regions over a tree
+
+- **`SizeClass.TryMake` takes a tree as well as a grid.**
+- **`TreeRegions.FromSeeds` gives the same cells the same region numbers** as `Regions.FromSeeds` over the grid's counts put down as the tree keeps them.
+- **It keeps a byte a brick and a byte an open cube.** A brick whose open cells are not all in one region is kept in full, 68 bytes more.
+- **`TreeRegions.IsOpen` and `TreeRegions.NearestOpen` answer as `Regions`' do.** `NearestOpen` over a tree has no form for the same region.
+
 ## Travel fields
 
 - **A field spreads from its seeds** through the cells of a region array, by steps between cells that share a face.

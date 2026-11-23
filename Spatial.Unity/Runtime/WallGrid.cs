@@ -428,7 +428,7 @@ namespace Yewnyx.Spatial {
         /// Adds a size of body: a radius, in metres, that regions can then be flooded for. Returns the
         /// number to name the class by, counted from 0, or -1 if the class is refused: the radius is
         /// not above half a cell, or it needs more than the grid's cap can say (see
-        /// <see cref="SizeClass.TryMake"/>), or the grid keeps its wall distance as a tree (see <see cref="IsTree"/>).
+        /// <see cref="SizeClass.TryMake(float, in WallMap, out SizeClass)"/>), or the grid keeps its wall distance as a tree (see <see cref="IsTree"/>).
         /// </summary>
         public int AddSizeClass(float radius) {
             _requireAlive();

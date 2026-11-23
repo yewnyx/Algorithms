@@ -276,6 +276,45 @@ namespace Yewnyx.Spatial {
             return _from(tree, 0, tree.Levels - 1, x, y, z);
         }
 
+        // How many open cubes a tree has: the last node's are the last of them.
+        internal static int OpenCubes(in WallTree tree) {
+            if (tree.Nodes.Length == 0) { return 0; }
+            var last = tree.Nodes[tree.Nodes.Length - 1];
+            var cubes = (long)last.FirstLeaf + _count(last.Open);
+            return last.FirstLeaf >= 0 && cubes <= int.MaxValue ? (int)cubes : 0;
+        }
+
+        // The leaf that holds a cell of the grid, and how many cells it has along a side: a
+        // brick's number, or the number of bricks plus an open cube's number. -1 for a cell in a
+        // cube of zeros, a cell that is not in the grid, and where the tree is not whole. The
+        // tree must be one that can be used.
+        internal static int LeafOf(in WallTree tree, int x, int y, int z, out int side) {
+            side = 0;
+            var shape = tree.Shape;
+            if ((uint)x >= (uint)shape.CountX || (uint)y >= (uint)shape.CountY || (uint)z >= (uint)shape.CountZ) { return -1; }
+            ReadOnlySpan<WallNode> nodes = tree.Nodes;
+            var node = 0;
+            for (var level = tree.Levels - 1; ; level--) {
+                var shift = 2 * (level + 1);
+                var child = ((x >> shift) & 3) | (((y >> shift) & 3) << 2) | (((z >> shift) & 3) << 4);
+                var bit = 1UL << child;
+                var here = nodes[node];
+                if ((here.Mixed & bit) == 0UL) {
+                    if ((here.Open & bit) == 0UL) { return -1; }
+                    side = 1 << shift;
+                    var cube = (long)tree.Bricks.Length / BrickBytes + here.FirstLeaf + _count(here.Open & (bit - 1UL));
+                    return here.FirstLeaf >= 0 && cube <= int.MaxValue ? (int)cube : -1;
+                }
+                var at = here.First + _count(here.Mixed & (bit - 1UL));
+                if (level == 0) {
+                    side = 4;
+                    return at >= 0 && ((long)at + 1) * BrickBytes <= tree.Bricks.Length ? at : -1;
+                }
+                if ((uint)at >= (uint)nodes.Length || at <= node) { return -1; }
+                node = at;
+            }
+        }
+
         // RoomAt's arithmetic over the tree. When asking, known says where the answer to "at least
         // the radius?" is sure without the room being worked out: 1 for yes, -1 for no.
         private static bool _room(in WallTree tree, float x, float y, float z, bool asking, float radius, out float room, out int known) {
@@ -370,6 +409,9 @@ namespace Yewnyx.Spatial {
                 node = at;
             }
         }
+
+        // The count a brick of a tree gives back for one of its cells.
+        internal static byte CountIn(in WallTree tree, int brick, int cell) => _kept(tree.Bricks.Slice(brick * BrickBytes, BrickBytes), cell, tree.Cap);
 
         // The count a brick gives back for one of its cells: the least count that is kept as the
         // cell's four bits. The cap is kept as itself, and so is 0.
