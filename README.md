@@ -291,6 +291,7 @@ For callers that ask "how much room is there here?" of geometry that doesn't mov
 - `WallDistance.MarkLayer` fills a grid with each cell's distance to the nearest shape, one byte a cell.
 - `WallDistance.RoomAt` answers from the grid alone, in constant time: a distance the nearest shape is proven to be at least.
 - `CellCost` is one more byte a cell that the caller writes: 0 is normal, 255 is closed.
+- `SizeClass` is what a body of one radius needs of the grid, and `Regions` floods where it can be: which cells are open for it, and which of them join.
 
 ```csharp
 using Yewnyx.Spatial;
@@ -324,6 +325,18 @@ var cost = new byte[grid.CellCount];
 CellCost.Fill(grid, Solid.Box(new Box(0, 0, 0, 2, 2, 4)), 32, cost);
 CellCost.At(grid, cost, 1f, 1f, 1f, out byte value);
 // value 32
+
+// Where a body of radius 0.6 can be, flooded from a seed in the room.
+SizeClass.TryMake(0.6f, wall, out SizeClass size);
+var region = new byte[grid.CellCount];
+Solid[] seeds = { Solid.Sphere(2, 2, 2, 0.5f) };
+Regions.FromSeeds(wall, size, cost, seeds, region, new int[Regions.QueueLength(grid)], out int reached, out int empty);
+// reached 1586 cells; empty 0: the seed held an open cell
+
+bool open = Regions.IsOpen(grid, region, 2f, 4f, 2f);          // true
+bool low = Regions.IsOpen(grid, region, 2f, 4f, 0.3f);         // false: too near the floor
+Regions.NearestOpen(grid, region, 2f, 4f, 0.1f, reach: 2f, out float x, out float y, out float z);
+// 1.75, 3.75, 0.75: the centre of the nearest open cell, up off the floor
 ```
 
 - Queries take and return points, never cell numbers. `GridShape.TryCentre` gives the centre of the cell that holds a point. To walk an array you own, `IndexOf` and `CentreOf` give a cell's place and centre.
@@ -333,6 +346,11 @@ CellCost.At(grid, cost, 1f, 1f, 1f, out byte value);
 - A triangle has no inside, so the middle of a closed shell of triangles reads as room. A solid's inside reads 0.
 - The same shapes give the same block on every runtime. A block of another `Shapes.Version` is refused: make it again.
 - A damaged block reads nothing out of bounds, but it can give wrong answers. A solid of an unknown kind, or one that holds a number that isn't finite, never reads as farther than it is.
-- Every call returns false if it is refused (a point outside the grid, spans that don't belong together, a shape that may not be stored). Then read nothing from its outputs.
+- "Open" is said of cells: `IsOpen` at a point says its cell is open, so a body at the cell's centre fits. The point itself can be most of a cell from there. To ask whether a body fits at a point, compare `RoomAt` or `Shapes.Distance` with its radius.
+- A cell is open for a size class when its centre is at least the radius from every shape and its cost isn't closed. Between two open cells that share a face, every point is at least `SizeClass.Guarantee` from every shape.
+- A region is the open cells joined by steps between cells that share a face, never across a diagonal: so a sheet with no thickness is never crossed. A radius of half a cell or less has no guarantee and is refused.
+- A seed reaches from the open cells whose centres are inside it. One with none reaches nothing and is counted, not moved.
+- `NearestOpen` is by straight line, whatever lies between: the cell can be on the other side of a thin wall. It can also be asked for the nearest open cell in the same region as another point, which can still be across a wall when both sides are joined some other way.
+- Every call returns false if it is refused (a point outside the grid, spans that don't belong together, a shape that may not be stored). Then read nothing from its outputs. A refused `MarkLayer` or `FromSeeds` leaves its array at 0, which claims no room and no open cell.
 
 `Spatial.Unity/` is a Unity package (`xyz.yewnyx.spatial`) around the same source: a `BoxSet` that recomputes only the boxes that moved, Burst jobs that rebuild the tree and answer batches of queries, a gizmo and a sample scene. See [Spatial.Unity/README.md](Spatial.Unity/README.md).

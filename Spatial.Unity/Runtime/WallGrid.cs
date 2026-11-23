@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
@@ -14,9 +15,17 @@ namespace Yewnyx.Spatial {
     /// The shapes are copied into arrays the grid owns, so nothing it reads can be unloaded under a
     /// job. <see cref="ScheduleMark"/> fills the wall distance in jobs; a member that reads the
     /// wall distance waits for those jobs first, and for nothing else. Only what writes or frees
-    /// the grid's arrays waits for a caller's own readers (see <see cref="AddReader"/>). The wall distance only ever claims room that the shapes it holds allow:
-    /// it is 0 everywhere until a marking is done, 0 again from the moment new shapes are taken,
-    /// and 0 in any layer whose marking was refused.
+    /// the grid's arrays waits for a caller's own readers (see <see cref="AddReader"/>).
+    /// The wall distance only ever claims room that the shapes it holds allow: it is 0 everywhere
+    /// until a marking is done, 0 again from the moment new shapes are taken, and 0 in any layer
+    /// whose marking was refused.
+    /// <para>
+    /// For each size of body added with <see cref="AddSizeClass"/> the grid also holds regions:
+    /// which cells a body of that size can be in, and which of them join.
+    /// <see cref="ScheduleRegions"/> floods them from seeds. They follow the wall distance and the
+    /// closed cells, so they too say nothing until they are flooded, and nothing again from the
+    /// moment new shapes are taken or a cost is changed.
+    /// </para>
     /// <para>
     /// After <see cref="Dispose"/>, every member that reads or changes the grid throws
     /// <see cref="ObjectDisposedException"/>. <see cref="Complete"/> and the plain values
@@ -36,6 +45,17 @@ namespace Yewnyx.Spatial {
         private NativeArray<int> _triangles, _order;
         private NativeArray<Box> _boxes;
         private NativeArray<BoxNode> _nodes;
+
+        // One size of body: its class, a region number per cell, and what the last flood came to
+        // (done or not, cells reached, seeds with no open cell).
+        private sealed class Sized {
+            public SizeClass Size;
+            public NativeArray<byte> Region;
+            public NativeArray<int> Result;
+            public JobHandle Flood;
+        }
+
+        private readonly List<Sized> _sizes = new List<Sized>();
 
         /// <param name="shape">Where the grid sits in its own frame.</param>
         /// <param name="unit">Metres per count of wall distance.</param>
@@ -71,14 +91,16 @@ namespace Yewnyx.Spatial {
 
         /// <summary>
         /// The bytes the grid's arrays take, for a caller that keeps grids within a budget: one a
-        /// cell for the wall distance, one a cell for the costs once a cost has been written, and
-        /// the shapes.
+        /// cell for the wall distance, one a cell for each size class, one a cell for the costs once
+        /// a cost has been written, and the shapes. Not counted: while a flood of regions runs it
+        /// also holds a queue of 4 bytes a cell, which is freed when the flood is done.
         /// </summary>
         public long ByteCount {
             get {
                 _requireAlive();
                 return (long)_wall.Length + _cost.Length + _filled.Length + (long)_solids.Length * 64 + (long)_corners.Length * 4 +
-                       (long)_triangles.Length * 4 + (long)_order.Length * 4 + (long)_boxes.Length * 24 + (long)_nodes.Length * 32;
+                       (long)_triangles.Length * 4 + (long)_order.Length * 4 + (long)_boxes.Length * 24 + (long)_nodes.Length * 32 +
+                       (long)_sizes.Count * (_wall.Length + 12);
             }
         }
 
@@ -213,6 +235,8 @@ namespace Yewnyx.Spatial {
         /// step into it by 1 + value / 16. Returns false if the solid may not be stored.
         /// </summary>
         /// <remarks>
+        /// Regions follow the closed cells, so a change of cost leaves every size class without
+        /// regions until <see cref="ScheduleRegions"/> floods them again.
         /// The grid holds a byte of cost a cell from the first time a cost other than 0 is written
         /// into a cell, until <see cref="ClearCost"/>. A solid that holds no cell's centre writes none.
         /// </remarks>
@@ -230,16 +254,21 @@ namespace Yewnyx.Spatial {
                 _cost = new NativeArray<byte>(0, _allocator);
             }
             if (!filled) { return false; }
+            _forgetRegions();
             return true;
         }
 
-        /// <summary>Makes every cell's cost normal again, and lets the bytes of cost go.</summary>
+        /// <summary>
+        /// Makes every cell's cost normal again, and lets the bytes of cost go. As with
+        /// <see cref="FillCost"/>, regions must be flooded again.
+        /// </summary>
         public void ClearCost() {
             _settle();
             if (_cost.Length != 0) {
                 _cost.Dispose();
                 _cost = new NativeArray<byte>(0, _allocator);
             }
+            _forgetRegions();
         }
 
         /// <summary>The cost of the cell that holds a point. Returns false if the point is outside the grid.</summary>
@@ -248,6 +277,118 @@ namespace Yewnyx.Spatial {
             _requireAlive();
             return CellCost.At(Shape, _cost.AsReadOnlySpan(), point.x, point.y, point.z, out cost);
         }
+
+        /// <summary>
+        /// Adds a size of body: a radius, in metres, that regions can then be flooded for. Returns the
+        /// number to name the class by, counted from 0, or -1 if the class is refused: the radius is
+        /// not above half a cell, or it needs more than the grid's cap can say (see
+        /// <see cref="SizeClass.TryMake"/>).
+        /// </summary>
+        public int AddSizeClass(float radius) {
+            _requireAlive();
+            if (!SizeClass.TryMake(radius, new WallMap(Shape, Unit, Cap, default), out var size)) { return -1; }
+            _sizes.Add(new Sized {
+                Size = size,
+                Region = new NativeArray<byte>(Shape.CellCount, _allocator),
+                Result = new NativeArray<int>(3, _allocator),
+            });
+            return _sizes.Count - 1;
+        }
+
+        /// <summary>How many size classes have been added.</summary>
+        public int SizeClassCount => _sizes.Count;
+
+        /// <summary>What a size class needs of the grid and is promised by it.</summary>
+        public SizeClass SizeOf(int sizeClass) => _sized(sizeClass).Size;
+
+        /// <summary>
+        /// Schedules the job that floods a size class's regions from seeds: every cell open for the
+        /// class that can be reached from an open cell inside a seed, by steps between cells that
+        /// share a face. Returns its handle.
+        /// </summary>
+        /// <remarks>
+        /// It runs after the marking, and after the jobs scheduled so far that read the grid. The
+        /// seeds are copied, so the caller's need not be kept. A seed with no open cell inside reaches
+        /// nothing and is counted in <see cref="EmptySeeds"/>; it is not moved to look for one.
+        /// The flood is refused, leaving the class without regions, unless the wall distance is that
+        /// of the shapes held (see <see cref="IsMarked"/>) when it runs: mark first, then flood.
+        /// </remarks>
+        public JobHandle ScheduleRegions(int sizeClass, ReadOnlySpan<Solid> seeds, JobHandle dependsOn = default) {
+            var sized = _sized(sizeClass);
+            var copy = new NativeArray<Solid>(seeds.Length, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            seeds.CopyTo(copy.AsSpan());
+            sized.Flood = new FloodJob {
+                Shape = Shape, Unit = Unit, Cap = Cap, Size = sized.Size, Wall = _wall, Cost = _cost, Filled = _filled, Seeds = copy,
+                Queue = new NativeArray<int>(Regions.QueueLength(Shape), Allocator.Persistent, NativeArrayOptions.UninitializedMemory),
+                Region = sized.Region, Result = sized.Result,
+            }.Schedule(JobHandle.CombineDependencies(JobHandle.CombineDependencies(dependsOn, _mark), sized.Flood, _readers));
+            // It reads the wall distance and the costs, so the next marking and the next change of cost wait for it.
+            _read(sized.Flood);
+            return sized.Flood;
+        }
+
+        /// <summary>
+        /// Whether a size class's regions are those of the shapes and costs held: its last flood,
+        /// once done, was not refused, the wall distance it read was marked from the shapes held, and
+        /// no shapes were taken and no cost changed since.
+        /// </summary>
+        public bool HasRegions(int sizeClass) => _flooded(sizeClass).Result[0] != 0;
+
+        /// <summary>How many cells the last flood of a size class reached; 0 if it has no regions.</summary>
+        public int Reached(int sizeClass) => _flooded(sizeClass).Result[1];
+
+        /// <summary>How many seeds of the last flood of a size class held no open cell; 0 if it has no regions.</summary>
+        public int EmptySeeds(int sizeClass) => _flooded(sizeClass).Result[2];
+
+        /// <summary>
+        /// Whether the cell that holds a point is open for a size class: its centre is far enough
+        /// from every shape, it is not closed, and a seed reached it. False outside the grid, and
+        /// while the class has no regions.
+        /// </summary>
+        /// <remarks>
+        /// It is the cell that is open, not the point: a body at the cell's centre fits, and the point
+        /// can be most of a cell from there, so nearer a shape than the radius. To ask whether a body
+        /// fits at the point itself, compare <see cref="TryRoom"/> or <see cref="TryDistance"/> with its radius.
+        /// </remarks>
+        public bool IsOpen(int sizeClass, float3 point) =>
+            Regions.IsOpen(Shape, _flooded(sizeClass).Region.AsReadOnlySpan(), point.x, point.y, point.z);
+
+        /// <summary>
+        /// The centre of the nearest cell that is open for a size class, no farther than
+        /// <paramref name="reach"/> from the point in a straight line. Returns false if there is none.
+        /// </summary>
+        /// <remarks>
+        /// Nearest is by straight line, whatever lies between: the cell can be on the other side of
+        /// a thin wall or under a floor.
+        /// </remarks>
+        public bool TryNearestOpen(int sizeClass, float3 point, float reach, out float3 open) {
+            var found = Regions.NearestOpen(Shape, _flooded(sizeClass).Region.AsReadOnlySpan(), point.x, point.y, point.z, reach, out var x, out var y, out var z);
+            open = new float3(x, y, z);
+            return found;
+        }
+
+        /// <summary>
+        /// As <see cref="TryNearestOpen(int, float3, float, out float3)"/>, but only among cells that
+        /// can be reached from <paramref name="like"/>: the nearest place a body there could get to.
+        /// Also returns false if <paramref name="like"/> is not itself open.
+        /// </summary>
+        /// <remarks>
+        /// Still by straight line: where both sides of a thin wall are joined some other way, the
+        /// cell can be on the far side.
+        /// </remarks>
+        public bool TryNearestOpen(int sizeClass, float3 point, float reach, float3 like, out float3 open) {
+            var found = Regions.NearestOpen(Shape, _flooded(sizeClass).Region.AsReadOnlySpan(), point.x, point.y, point.z, reach,
+                like.x, like.y, like.z, out var x, out var y, out var z);
+            open = new float3(x, y, z);
+            return found;
+        }
+
+        /// <summary>
+        /// A size class's region per cell, in the same order as <see cref="Wall"/>, once its flood is
+        /// done: 0 for a cell that is not open or was not reached. The numbers themselves mean
+        /// nothing outside the grid. A job of the caller's that reads it must be handed to <see cref="AddReader"/>.
+        /// </summary>
+        public NativeArray<byte>.ReadOnly RegionsOf(int sizeClass) => _flooded(sizeClass).Region.AsReadOnly();
 
         /// <summary>
         /// The wall distance, one count per cell along x, then y, then z, once the marking is done.
@@ -281,6 +422,11 @@ namespace Yewnyx.Spatial {
         /// </remarks>
         public void AddReader(JobHandle reader) {
             _requireAlive();
+            _read(reader);
+        }
+
+        // Keeps the handle of a job that reads the grid's arrays, for what next writes them to run after.
+        private void _read(JobHandle reader) {
             // Readers that are done are let go, so a grid that is never marked again does not gather handles without end.
             if (_readers.IsCompleted) {
                 _readers.Complete();
@@ -303,6 +449,9 @@ namespace Yewnyx.Spatial {
         public void Complete() {
             _mark.Complete();
             _readers.Complete();
+            // Every flood is also among the readers, or among what the marking waited for, so the two
+            // lines above have already waited for it. This says so outright, and costs nothing.
+            foreach (var sized in _sizes) { sized.Flood.Complete(); }
         }
 
         public void Dispose() {
@@ -311,6 +460,7 @@ namespace Yewnyx.Spatial {
             Complete();
             _wall.Dispose(); _cost.Dispose(); _filled.Dispose();
             _disposeShapes();
+            foreach (var sized in _sizes) { sized.Region.Dispose(); sized.Result.Dispose(); }
         }
 
         private ShapeArrays _shapes() => new ShapeArrays {
@@ -331,10 +481,33 @@ namespace Yewnyx.Spatial {
             _solids.Dispose(); _corners.Dispose(); _triangles.Dispose(); _boxes.Dispose(); _nodes.Dispose(); _order.Dispose();
         }
 
-        // The wall distance was worked out from other shapes: it proves nothing of these.
+        // The wall distance was worked out from other shapes: it proves nothing of these, and
+        // neither do the regions that were flooded from it.
         private void _forget() {
             _wall.AsSpan().Clear();
             _filled.AsSpan().Clear();
+            _forgetRegions();
+        }
+
+        // The regions were flooded from another wall distance or other closed cells. Every job is done by now.
+        private void _forgetRegions() {
+            foreach (var sized in _sizes) {
+                sized.Region.AsSpan().Clear();
+                sized.Result.AsSpan().Clear();
+            }
+        }
+
+        private Sized _sized(int sizeClass) {
+            _requireAlive();
+            if ((uint)sizeClass >= (uint)_sizes.Count) { throw new ArgumentOutOfRangeException(nameof(sizeClass), sizeClass, "No such size class: see AddSizeClass."); }
+            return _sizes[sizeClass];
+        }
+
+        // Before reading a size class's regions: its flood is done.
+        private Sized _flooded(int sizeClass) {
+            var sized = _sized(sizeClass);
+            sized.Flood.Complete();
+            return sized;
         }
 
         // Before writing or freeing the grid's arrays: every job that reads or writes them is done.

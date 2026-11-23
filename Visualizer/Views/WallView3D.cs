@@ -87,6 +87,9 @@ public sealed class WallView3D : Control {
 
     public WallWorld? World { get; set; }
 
+    /// <summary>What the planes' cells are coloured by; the probe's two spheres are the wall-distance ones and show only in that colouring.</summary>
+    public SliceColour Colour { get; set; }
+
     /// <summary>The probe, in metres, and what the grid and the shapes say about it (room, exact); either is NaN if unknown.</summary>
     public float ProbeX { get; set; }
     public float ProbeY { get; set; }
@@ -207,7 +210,7 @@ public sealed class WallView3D : Control {
         float z = WallWorld.Clamp(ProbeZ, WallWorld.Depth), y = WallWorld.Clamp(ProbeY, WallWorld.Height);
         cam.Project(WallWorld.Width / 2, WallWorld.Height / 2, z, out var topDepth);
         cam.Project(WallWorld.Width / 2, y, WallWorld.Depth / 2, out var sideDepth);
-        var brushes = SliceColours.Brushes(world);
+        var brushes = SliceColours.Brushes(world, Colour);
         var labels = new (string, Point, Color)[2];
         if (topDepth <= sideDepth) {
             labels[0] = DrawPlane(context, cam, world, true, z, brushes, TopAccent);
@@ -221,8 +224,10 @@ public sealed class WallView3D : Control {
 
         // The probe: a point, and the two spheres round it.
         var at = cam.Project(ProbeX, ProbeY, ProbeZ);
-        if (!float.IsNaN(Exact) && Exact < 100) { DrawBall(context, cam, Exact, at, null, ExactEdge, ExactRing); }
-        if (!float.IsNaN(Room)) { DrawBall(context, cam, Room, at, RoomFill, RoomEdge, RoomRing); }
+        if (Colour == SliceColour.WallDistance) {
+            if (!float.IsNaN(Exact) && Exact < 100) { DrawBall(context, cam, Exact, at, null, ExactEdge, ExactRing); }
+            if (!float.IsNaN(Room)) { DrawBall(context, cam, Room, at, RoomFill, RoomEdge, RoomRing); }
+        }
         context.DrawEllipse(ProbeDot, null, at, 3.5, 3.5);
 
         // The planes are named last, on a dark ground so the name reads over whatever lies behind it.
@@ -254,9 +259,9 @@ public sealed class WallView3D : Control {
         for (var r = 0; r < rows; r++) {
             var c = 0;
             while (c < columns) {
-                var key = top ? SliceColours.KeyAt(world, c, r, fixedCell) : SliceColours.KeyAt(world, c, fixedCell, r);
+                var key = top ? SliceColours.KeyAt(world, Colour, c, r, fixedCell) : SliceColours.KeyAt(world, Colour, c, fixedCell, r);
                 var end = c + 1;
-                while (end < columns && (top ? SliceColours.KeyAt(world, end, r, fixedCell) : SliceColours.KeyAt(world, end, fixedCell, r)) == key) { end++; }
+                while (end < columns && (top ? SliceColours.KeyAt(world, Colour, end, r, fixedCell) : SliceColours.KeyAt(world, Colour, end, fixedCell, r)) == key) { end++; }
                 var g = contexts[key];
                 if (g is null) {
                     geometries[key] = new StreamGeometry();
@@ -306,29 +311,33 @@ public sealed class WallView3D : Control {
         var geometries = new StreamGeometry[3];
         var contexts = new StreamGeometryContext[3];
         for (var s = 0; s < 3; s++) { geometries[s] = new StreamGeometry(); contexts[s] = geometries[s].Open(); }
-        Span<Point> corners = stackalloc Point[8];
         foreach (var solid in world.Solids) {
             cam.Project(solid.X, solid.Y, solid.Z, out var depth);
             var t = Math.Clamp((depth + cam.Reach) / (2 * cam.Reach), 0, 1);
-            var g = contexts[Math.Clamp(2 - (int)(t * 3), 0, 2)];
-            switch (solid.Kind) {
-                case SolidKind.Box:
-                    for (var i = 0; i < 8; i++) {
-                        double a = (i & 1) == 0 ? -solid.HalfU : solid.HalfU, b = (i & 2) == 0 ? -solid.HalfV : solid.HalfV, c = (i & 4) == 0 ? -solid.HalfW : solid.HalfW;
-                        corners[i] = cam.Project(solid.X + a * solid.UX + b * solid.VX + c * solid.WX, solid.Y + a * solid.UY + b * solid.VY + c * solid.WY, solid.Z + a * solid.UZ + b * solid.VZ + c * solid.WZ);
-                    }
-                    for (var e = 0; e < Edges.Length; e += 2) { Line(g, corners[Edges[e]], corners[Edges[e + 1]]); }
-                    break;
-                case SolidKind.Sphere:
-                    AddBall(g, cam, solid.X, solid.Y, solid.Z, solid.HalfU);
-                    break;
-                case SolidKind.Capsule:
-                    AddCapsule(g, cam, solid);
-                    break;
-            }
+            AddSolid(contexts[Math.Clamp(2 - (int)(t * 3), 0, 2)], cam, solid);
         }
         for (var s = 0; s < 3; s++) { contexts[s].Dispose(); }
         for (var s = 2; s >= 0; s--) { context.DrawGeometry(null, Solids[s], geometries[s]); }
+    }
+
+    /// <summary>A solid as a wireframe: a box's edges, a sphere's outline and rings, a capsule's circles, outline and rings.</summary>
+    internal static void AddSolid(StreamGeometryContext g, in Projection cam, in Solid solid) {
+        switch (solid.Kind) {
+            case SolidKind.Box:
+                Span<Point> corners = stackalloc Point[8];
+                for (var i = 0; i < 8; i++) {
+                    double a = (i & 1) == 0 ? -solid.HalfU : solid.HalfU, b = (i & 2) == 0 ? -solid.HalfV : solid.HalfV, c = (i & 4) == 0 ? -solid.HalfW : solid.HalfW;
+                    corners[i] = cam.Project(solid.X + a * solid.UX + b * solid.VX + c * solid.WX, solid.Y + a * solid.UY + b * solid.VY + c * solid.WY, solid.Z + a * solid.UZ + b * solid.VZ + c * solid.WZ);
+                }
+                for (var e = 0; e < Edges.Length; e += 2) { Line(g, corners[Edges[e]], corners[Edges[e + 1]]); }
+                break;
+            case SolidKind.Sphere:
+                AddBall(g, cam, solid.X, solid.Y, solid.Z, solid.HalfU);
+                break;
+            case SolidKind.Capsule:
+                AddCapsule(g, cam, solid);
+                break;
+        }
     }
 
     // A sphere: its outline, a true circle under a parallel projection, and three rings round the axes to give it a shape.
@@ -394,7 +403,7 @@ public sealed class WallView3D : Control {
     }
 
     // A translucent ball about a point of the picture: its outline and three rings.
-    private static void DrawBall(DrawingContext context, in Projection cam, double r, Point middle, IBrush? fill, IPen edge, IPen rings) {
+    internal static void DrawBall(DrawingContext context, in Projection cam, double r, Point middle, IBrush? fill, IPen edge, IPen rings) {
         context.DrawEllipse(fill, edge, middle, r * cam.Scale, r * cam.Scale);
         var ball = new StreamGeometry();
         using (var g = ball.Open()) {
@@ -418,10 +427,8 @@ public sealed class WallView3D : Control {
         var origin = new Point(44, Bounds.Height - 56);
         foreach (var (name, dx, dy, dz, color) in new[] { ("x", 1.0, 0.0, 0.0, 0xEF5350), ("y", 0.0, 1.0, 0.0, 0x66BB6A), ("z", 0.0, 0.0, 1.0, 0x42A5F5) }) {
             var v = cam.Direction(dx, dy, dz);
-            var length = Math.Sqrt(v.X * v.X + v.Y * v.Y);
             // One metre on the screen is a few pixels, so give every axis the same reach and keep its foreshortening.
             var shown = new Vector(v.X / cam.Scale * 30, v.Y / cam.Scale * 30);
-            _ = length;
             var brush = new SolidColorBrush(Color.FromRgb((byte)(color >> 16), (byte)(color >> 8), (byte)color));
             var tip = new Point(origin.X + shown.X, origin.Y + shown.Y);
             context.DrawLine(new Pen(brush, 2), origin, tip);

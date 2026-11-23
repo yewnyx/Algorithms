@@ -20,7 +20,22 @@
                     <TextBlock Classes="section" Text="PROBE" Width="56" Margin="16,0,0,0" />
                     <StackPanel Classes="field"><TextBlock Classes="label" Text="x (m)" /><NumericUpDown x:Name="XBox" Minimum="0" Maximum="32" Increment="0.25" Value="16" FormatString="0.00" Width="80" /></StackPanel>
                     <StackPanel Classes="field"><TextBlock Classes="label" Text="y (m)" ToolTip.Tip="Where the side slice cuts. The wheel over the side slice moves it." /><NumericUpDown x:Name="YBox" Minimum="0" Maximum="20" Increment="0.25" Value="10" FormatString="0.00" Width="80" /></StackPanel>
-                    <StackPanel Classes="field"><TextBlock Classes="label" Text="z (m)" ToolTip.Tip="Where the top-down slice cuts. The wheel over the top-down slice moves it." /><NumericUpDown x:Name="ZBox" Minimum="0" Maximum="12" Increment="0.25" Value="6" FormatString="0.00" Width="80" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="z (m)" ToolTip.Tip="Where the top-down slice cuts. The wheel over the top-down slice moves it." /><NumericUpDown x:Name="ZBox" Minimum="0" Maximum="12" Increment="0.25" Value="2" FormatString="0.00" Width="80" /></StackPanel>
+                </WrapPanel>
+                <WrapPanel Orientation="Horizontal">
+                    <TextBlock Classes="section" Text="REGIONS" Width="56" />
+                    <StackPanel Classes="field">
+                        <TextBlock Classes="label" Text="Colour by" ToolTip.Tip="Wall distance: what the grid stored. Regions: where a body of one radius can be, and which of those places join." />
+                        <ComboBox x:Name="ColourBox" SelectedIndex="1" VerticalAlignment="Center" Width="140">
+                            <ComboBoxItem Content="Wall distance" />
+                            <ComboBoxItem Content="Regions" />
+                        </ComboBox>
+                    </StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Body radius (m)" ToolTip.Tip="The size class: a cell is open when its centre is at least this far from every shape." /><NumericUpDown x:Name="RadiusBox" Minimum="0.05" Maximum="4" Increment="0.05" Value="0.9" FormatString="0.00" Width="90" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Seeds" ToolTip.Tip="The yellow boxes the flood starts from, placed where there is room. A cell no seed reaches belongs to no region, open or not." /><NumericUpDown x:Name="SeedCountBox" Minimum="0" Maximum="8" Increment="1" Value="3" FormatString="0" Width="56" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Reach (m)" ToolTip.Tip="How far the nearest-open query looks from the probe." /><NumericUpDown x:Name="ReachBox" Minimum="0" Maximum="20" Increment="0.5" Value="3" FormatString="0.0" Width="76" /></StackPanel>
+                    <CheckBox x:Name="LikeBox" Content="Nearest in the anchor's region" IsChecked="False" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#C8D0DC"
+                              ToolTip.Tip="Hold the nearest-open query to the region of the cell holding the pink diamond, the anchor: the nearest place that can be reached from there. Shift or the right button puts the anchor." />
                 </WrapPanel>
             </StackPanel>
         </Border>
