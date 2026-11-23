@@ -58,7 +58,7 @@ namespace Yewnyx.Spatial {
                     for (var cellX = fromX; cellX <= toX; cellX++) {
                         var held = layer[row + cellX];
                         if (held == 0) { continue; }
-                        if (!Shapes.TrySquared(shapes, item, shape.Centre(shape.OriginX, cellX), centreY, centreZ, out var squared)) {
+                        if (!Shapes.TrySquared(shapes, item, shape.Centre(shape.OriginX, cellX), centreY, centreZ, reachSquared, out var squared)) {
                             // The layer was filled with the cap to start from, and must not be left saying so.
                             layer.Clear();
                             return false;

@@ -407,7 +407,7 @@ namespace Yewnyx.Spatial.Tests {
             // are whole, so it is taken; the damage is met when the triangle is first measured.
             var block = new byte[Shapes.BlockLength(Solids.Length, Corners.Length / 3, Triangles.Length / 3)];
             Assert.That(Shapes.Write(Solids, Corners, Triangles, new int[Shapes.WorkspaceLength(7)], block, out var length), Is.True);
-            var triangles = 32 + Solids.Length * 64 + Corners.Length * 4;
+            var triangles = 40 + Solids.Length * 64 + Corners.Length * 4;
             block[triangles + 4] = 99;
 
             using var grid = new WallGrid(Grid);

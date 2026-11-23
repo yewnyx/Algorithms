@@ -285,7 +285,8 @@ count = BoxTree.Nearest(tree, order, boxes, 4.5f, 0.5f, 0.5f, 100f, nearest, dis
 
 For callers that ask "how much room is there here?" of geometry that doesn't move, many times a frame.
 
-- `Shapes` holds what nothing may pass through: boxes at any angle, spheres, capsules and triangles, with a `BoxTree` over them.
+- `Shapes` holds what nothing may pass through: boxes at any angle, spheres, capsules, triangles and heightfields, with a `BoxTree` over them.
+- `HeightFields.Pack` makes a heightfield from a grid of heights: ground that is solid from its surface down. It keeps every 8th, 4th or 2nd height where that stays within a bound of the ground, and every height where it does not.
 - `Shapes.Distance` is the exact distance from a point to the nearest shape.
 - `Shapes.Write` stores the shapes as one block of bytes, and `Shapes.TryRead` views a block as shapes again. A tool can read meshes once and ship the block.
 - `WallDistance.MarkLayer` fills a grid with each cell's distance to the nearest shape, one byte a cell.
@@ -361,8 +362,9 @@ RouteResult route = Routes.Find(wall, size, shapes, region, cost, 2f, 2f, 2f, 6f
 - Queries take and return points, never cell numbers. `GridShape.TryCentre` gives the centre of the cell that holds a point. To walk an array you own, `IndexOf` and `CentreOf` give a cell's place and centre.
 - A solid's fields can be read back, to draw it for instance. What each holds depends on its `Kind`.
 - A cell's count times the `unit` is never more than the true distance from its centre. A cell at the `cap` is that far or more.
-- A distance is within `Shapes.Slack` (a quarter of a millimetre) of the true one, for shapes within `Shapes.Reach` (1,024 m) of the origin.
+- A distance is within `Shapes.Slack` (a quarter of a millimetre) of the true one, for shapes within `Shapes.Reach` (1,024 m) of the origin, and for a box or a heightfield whose axes are as exact as single precision gives.
 - A triangle has no inside, so the middle of a closed shell of triangles reads as room. A solid's inside reads 0.
+- A heightfield's surface is never below the ground it was made from, and never more than its `Gap` above it. So room is proven from the ground itself, and what is given up is reach: a body cannot come quite as near the ground as it truly could. An end of a route that rests on the ground may look out from under the surface.
 - The same shapes give the same block on every runtime. A block of another `Shapes.Version` is refused: make it again.
 - A damaged block reads nothing out of bounds, but it can give wrong answers. A solid of an unknown kind, or one that holds a number that isn't finite, never reads as farther than it is.
 - "Open" is said of cells: `IsOpen` at a point says its cell is open, so a body at the cell's centre fits. The point itself can be most of a cell from there. To ask whether a body fits at a point, compare `RoomAt` or `Shapes.Distance` with its radius.

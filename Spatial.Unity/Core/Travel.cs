@@ -50,7 +50,7 @@ namespace Yewnyx.Spatial {
         /// Returns false if the shape cannot be used, the unit is not above zero or is more than a
         /// quarter of a cell (a coarser one could give two neighbours the same count), a buffer is
         /// too short, the cost array is neither empty nor one byte per cell, or a seed may not be
-        /// used: its solid may not be stored (see <see cref="Shapes.Build"/>), or its point or its
+        /// used: its solid may not be stored (see <see cref="Shapes.Build(ReadOnlySpan{Solid}, ReadOnlySpan{float}, ReadOnlySpan{int}, Span{Box}, Span{BoxNode}, Span{int}, Span{int}, out int)"/>), or its point or its
         /// plane's normal is not finite, or the normal has no length. The grid's cells in
         /// <paramref name="distance"/> are then all <see cref="Unreached"/>.
         /// </remarks>

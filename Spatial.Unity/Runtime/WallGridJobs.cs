@@ -9,11 +9,15 @@ namespace Yewnyx.Spatial {
         [ReadOnly] public NativeArray<Solid> Solids;
         [ReadOnly] public NativeArray<float> Corners;
         [ReadOnly] public NativeArray<int> Triangles;
+        [ReadOnly] public NativeArray<HeightField> HeightFields;
+        [ReadOnly] public NativeArray<uint> HeightBlocks;
+        [ReadOnly] public NativeArray<ushort> Heights;
         [ReadOnly] public NativeArray<Box> Boxes;
         [ReadOnly] public NativeArray<BoxNode> Nodes;
         [ReadOnly] public NativeArray<int> Order;
 
         public ShapeSet Set => new ShapeSet(Solids.AsReadOnlySpan(), Corners.AsReadOnlySpan(), Triangles.AsReadOnlySpan(),
+            HeightFields.AsReadOnlySpan(), HeightBlocks.AsReadOnlySpan(), Heights.AsReadOnlySpan(),
             Boxes.AsReadOnlySpan(), Nodes.AsReadOnlySpan(), Order.AsReadOnlySpan());
     }
 
