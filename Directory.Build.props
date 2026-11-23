@@ -19,6 +19,8 @@
         <PublishRepositoryUrl>true</PublishRepositoryUrl>
         <EmbedUntrackedSources>true</EmbedUntrackedSources>
         <Deterministic>true</Deterministic>
+        <!-- The XML documentation ships in the package, so editors show it. Members without a comment warn (CS1591). -->
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
     </PropertyGroup>
 
     <ItemGroup Condition="'$(IsLibrary)' == 'true'">
