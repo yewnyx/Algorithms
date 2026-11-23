@@ -3,12 +3,29 @@ using System.Collections.Generic;
 
 namespace Yewnyx.Packables;
 
-public enum UnpackOutcome { Clean, WithProblems, Failed }
+/// <summary>How a load ended.</summary>
+public enum UnpackOutcome {
+    /// <summary>Everything was read, and no problem was met.</summary>
+    Clean,
+    /// <summary>Problems were met and recorded, and everything else was read.</summary>
+    WithProblems,
+    /// <summary>
+    /// The load was refused or ended early. Refused, with nothing read: there is no root; the root's stated type isn't its
+    /// object's; the root's type is unknown or newer; the root instance isn't of its registered type; or the load is
+    /// strict and some type the root reaches is unknown or newer. Ended early, with objects part-filled: a problem
+    /// ended a <see cref="UnpackOptions.FailFast"/> load. A problem met before any object is read, such as an unknown
+    /// type, leaves them untouched.
+    /// </summary>
+    Failed,
+}
 
+/// <summary>What went wrong with one read, or with the document.</summary>
 public enum UnpackProblemKind {
     /// <summary>A value is there but of another kind.</summary>
     WrongKind,
-    /// <summary>A number doesn't fit the type it's read as.</summary>
+    /// <summary>
+    /// A number doesn't fit the type it's read as, or an array holds more elements than the destination.
+    /// </summary>
     OutOfRange,
     /// <summary>A ref names an object the document doesn't have.</summary>
     MissingObject,
@@ -31,20 +48,33 @@ public enum UnpackProblemKind {
 /// and the object's id in the text it was read from, if it was.
 /// </summary>
 public readonly struct UnpackProblem(UnpackProblemKind kind, int @object, string? type, string? key, string? id = null) {
+    /// <summary>What went wrong.</summary>
     public readonly UnpackProblemKind Kind = kind;
+    /// <summary>The index of the object being read, or -1 when the problem is with the document.</summary>
     public readonly int Object = @object;
+    /// <summary>
+    /// The object's type: "Name#Version" in a packed document, and whatever the text said in one that was read. Null
+    /// when the problem is with the document.
+    /// </summary>
     public readonly string? Type = type;
+    /// <summary>The key being read, or null if it was not a read of a key (such as the type of a whole object).</summary>
     public readonly string? Key = key;
 
     /// <summary>The object's id in the text, which can differ from <see cref="Object"/>; see <see cref="PackedDocument.ObjectId"/>.</summary>
     public readonly string? Id = id;
 
+    /// <summary>A line for a log, such as <c>WrongKind in object o:3 (Crew#0) at "name"</c>.</summary>
     public override string ToString() =>
         $"{Kind} in object {Id ?? Object.ToString()} ({Type}){(Key is null ? "" : $" at \"{Key}\"")}";
 }
 
+/// <summary>How strictly a load treats the document.</summary>
 [Flags]
 public enum UnpackOptions {
+    /// <summary>
+    /// Strict: an unknown or newer type anywhere the root reaches fails the load before anything is read, and
+    /// every other problem is recorded while the load goes on.
+    /// </summary>
     None = 0,
     /// <summary>The first problem ends the load, so nothing more is read only to be thrown away.</summary>
     FailFast = 1,
@@ -60,7 +90,9 @@ public enum UnpackOptions {
 public readonly struct PackedRef {
     internal readonly int Target;
 
-    /// <summary>The target's type, as "Name#Version".</summary>
+    /// <summary>
+    /// The target's type: "Name#Version" in a packed document, and whatever the text said in one that was read.
+    /// </summary>
     public readonly string? TypeName;
 
     /// <summary>The registered type for <see cref="TypeName"/>, if the registry has it.</summary>
@@ -69,6 +101,7 @@ public readonly struct PackedRef {
     /// <summary>The instance bound to the target already, so shared refs give the same object.</summary>
     public readonly IPackable? Instance;
 
+    /// <summary>Whether the ref is null: it has no target, type or instance.</summary>
     public bool IsNull => TypeName is null;
 
     internal PackedRef(int target, string typeName, Type? type, IPackable? instance) {
@@ -93,14 +126,46 @@ public readonly ref struct Unpacker {
     /// <summary>The version of this object's type that wrote it.</summary>
     public int Version => _session.Versions[_object];
 
+    /// <summary>The object's own fields.</summary>
     public KeyedReader Fields => new(_session, _object, _session.Document.ObjectFields(_object));
 
+    /// <summary>
+    /// Reads a boolean under the key. Returns false if the key is absent, recording nothing, or if it holds another
+    /// kind, recording it.
+    /// </summary>
     public bool TryReadBoolean(string key, out bool value) => Fields.TryReadBoolean(key, out value);
+    /// <summary>
+    /// Reads an integer under the key. Returns false if the key is absent, recording nothing, or if it holds another
+    /// kind or a number that doesn't fit, recording it.
+    /// </summary>
     public bool TryReadInt32(string key, out int value) => Fields.TryReadInt32(key, out value);
+    /// <summary>
+    /// Reads an integer under the key. Returns false if the key is absent, recording nothing, or if it holds another
+    /// kind, recording it.
+    /// </summary>
     public bool TryReadInt64(string key, out long value) => Fields.TryReadInt64(key, out value);
+    /// <summary>
+    /// Reads a number under the key. Returns false if the key is absent, recording nothing, or if it holds another
+    /// kind or a number too large, recording it. A stored integer is accepted too, and the strings "NaN", "Infinity"
+    /// and "-Infinity".
+    /// </summary>
     public bool TryReadSingle(string key, out float value) => Fields.TryReadSingle(key, out value);
+    /// <summary>
+    /// Reads a number under the key. Returns false if the key is absent, recording nothing, or if it holds another
+    /// kind, recording it. A stored integer is accepted too, and the strings "NaN", "Infinity" and "-Infinity".
+    /// </summary>
     public bool TryReadDouble(string key, out double value) => Fields.TryReadDouble(key, out value);
+    /// <summary>
+    /// Reads a string under the key. Returns false if the key is absent, recording nothing, or if it holds another
+    /// kind, recording it. A stored null reads as a null string, and returns true.
+    /// </summary>
     public bool TryReadString(string key, out string? value) => Fields.TryReadString(key, out value);
+    /// <summary>
+    /// Reads a ref under the key. A stored null gives a null ref, and returns true. Returns false, recording nothing,
+    /// if the key is absent, or if the object's type is unknown or newer in a <see cref="UnpackOptions.Permissive"/>
+    /// load (that was recorded before anything was read). Returns false, recording it, for a value of another kind,
+    /// a ref to a missing object, or one whose stated type isn't its target's.
+    /// </summary>
     public bool TryReadRef(string key, out PackedRef value) => Fields.TryReadRef(key, out value);
     /// <inheritdoc cref="ValueReader.TryReadRef{T}(Func{T}, out T)"/>
     public bool TryReadRef<T>(string key, Func<T> create, out T? value) where T : class, IPackable =>
@@ -108,7 +173,15 @@ public readonly ref struct Unpacker {
     /// <inheritdoc cref="ValueReader.TryReadRef{T, TState}(TState, Func{TState, T}, out T)"/>
     public bool TryReadRef<T, TState>(string key, TState state, Func<TState, T> create, out T? value) where T : class, IPackable =>
         Fields.TryReadRef(key, state, create, out value);
+    /// <summary>
+    /// Reads a map under the key. Returns false if the key is absent, recording nothing, or if it holds another kind,
+    /// recording it.
+    /// </summary>
     public bool TryReadMap(string key, out KeyedReader map) => Fields.TryReadMap(key, out map);
+    /// <summary>
+    /// Reads an array under the key. Returns false if the key is absent, recording nothing, or if it holds another
+    /// kind, recording it.
+    /// </summary>
     public bool TryReadArray(string key, out ArrayReader array) => Fields.TryReadArray(key, out array);
 
     /// <summary>
@@ -147,14 +220,46 @@ public readonly ref struct KeyedReader {
         (_session, _object, _container) = (session, @object, container);
     }
 
+    /// <summary>The number of entries.</summary>
     public int Count => _session.Document.Entries(_container).Length;
 
+    /// <summary>
+    /// Reads a boolean under the key. Returns false if the key is absent, recording nothing, or if it holds another
+    /// kind, recording it.
+    /// </summary>
     public bool TryReadBoolean(string key, out bool value) => Value(key).TryReadBoolean(out value);
+    /// <summary>
+    /// Reads an integer under the key. Returns false if the key is absent, recording nothing, or if it holds another
+    /// kind or a number that doesn't fit, recording it.
+    /// </summary>
     public bool TryReadInt32(string key, out int value) => Value(key).TryReadInt32(out value);
+    /// <summary>
+    /// Reads an integer under the key. Returns false if the key is absent, recording nothing, or if it holds another
+    /// kind, recording it.
+    /// </summary>
     public bool TryReadInt64(string key, out long value) => Value(key).TryReadInt64(out value);
+    /// <summary>
+    /// Reads a number under the key. Returns false if the key is absent, recording nothing, or if it holds another
+    /// kind or a number too large, recording it. A stored integer is accepted too, and the strings "NaN", "Infinity"
+    /// and "-Infinity".
+    /// </summary>
     public bool TryReadSingle(string key, out float value) => Value(key).TryReadSingle(out value);
+    /// <summary>
+    /// Reads a number under the key. Returns false if the key is absent, recording nothing, or if it holds another
+    /// kind, recording it. A stored integer is accepted too, and the strings "NaN", "Infinity" and "-Infinity".
+    /// </summary>
     public bool TryReadDouble(string key, out double value) => Value(key).TryReadDouble(out value);
+    /// <summary>
+    /// Reads a string under the key. Returns false if the key is absent, recording nothing, or if it holds another
+    /// kind, recording it. A stored null reads as a null string, and returns true.
+    /// </summary>
     public bool TryReadString(string key, out string? value) => Value(key).TryReadString(out value);
+    /// <summary>
+    /// Reads a ref under the key. A stored null gives a null ref, and returns true. Returns false, recording nothing,
+    /// if the key is absent, or if the object's type is unknown or newer in a <see cref="UnpackOptions.Permissive"/>
+    /// load (that was recorded before anything was read). Returns false, recording it, for a value of another kind,
+    /// a ref to a missing object, or one whose stated type isn't its target's.
+    /// </summary>
     public bool TryReadRef(string key, out PackedRef value) => Value(key).TryReadRef(out value);
     /// <inheritdoc cref="ValueReader.TryReadRef{T}(Func{T}, out T)"/>
     public bool TryReadRef<T>(string key, Func<T> create, out T? value) where T : class, IPackable =>
@@ -162,7 +267,15 @@ public readonly ref struct KeyedReader {
     /// <inheritdoc cref="ValueReader.TryReadRef{T, TState}(TState, Func{TState, T}, out T)"/>
     public bool TryReadRef<T, TState>(string key, TState state, Func<TState, T> create, out T? value) where T : class, IPackable =>
         Value(key).TryReadRef(state, create, out value);
+    /// <summary>
+    /// Reads a map under the key. Returns false if the key is absent, recording nothing, or if it holds another kind,
+    /// recording it.
+    /// </summary>
     public bool TryReadMap(string key, out KeyedReader map) => Value(key).TryReadMap(out map);
+    /// <summary>
+    /// Reads an array under the key. Returns false if the key is absent, recording nothing, or if it holds another
+    /// kind, recording it.
+    /// </summary>
     public bool TryReadArray(string key, out ArrayReader array) => Value(key).TryReadArray(out array);
 
     /// <summary>The value under <paramref name="key"/>; an absent key gives a reader whose reads all return false.</summary>
@@ -178,6 +291,7 @@ public readonly ref struct KeyedReader {
         return new ValueReader(_session, _object, key, PackedValue.Null, false);
     }
 
+    /// <summary>Walks the entries in key order.</summary>
     public Enumerator GetEnumerator() => new(this);
 
     /// <summary>Walks the entries in key order. It holds its position; the entries it yields are read-only.</summary>
@@ -190,8 +304,10 @@ public readonly ref struct KeyedReader {
             _index = -1;
         }
 
+        /// <summary>Moves to the next entry. False when there is none.</summary>
         public bool MoveNext() => ++_index < _reader.Count;
 
+        /// <summary>The entry the enumerator is on.</summary>
         public KeyedEntry Current {
             get {
                 var entry = _reader._session.Document.Entries(_reader._container)[_index];
@@ -201,8 +317,11 @@ public readonly ref struct KeyedReader {
     }
 }
 
+/// <summary>One entry of a map or of an object's fields: its key, and a reader for its value.</summary>
 public readonly ref struct KeyedEntry {
+    /// <summary>The entry's key.</summary>
     public readonly string Key;
+    /// <summary>A reader for the entry's value, which is always present.</summary>
     public readonly ValueReader Value;
 
     internal KeyedEntry(string key, ValueReader value) {
@@ -222,8 +341,10 @@ public readonly ref struct ArrayReader {
         (_session, _object, _container, _key) = (session, @object, container, key);
     }
 
+    /// <summary>The number of elements.</summary>
     public int Count => _session.Document.Entries(_container).Length;
 
+    /// <summary>A reader for the element. <paramref name="index"/> must be below <see cref="Count"/>.</summary>
     public ValueReader this[int index] =>
         new(_session, _object, _key, _session.Document.Entries(_container)[index].Value, true);
 
@@ -273,8 +394,10 @@ public readonly ref struct ArrayReader {
 
     private bool _fits(int length) => Count <= length || _session.Record(UnpackProblemKind.OutOfRange, _object, _key);
 
+    /// <summary>Walks the elements in order.</summary>
     public Enumerator GetEnumerator() => new(this);
 
+    /// <summary>Walks the elements in order. It holds its position.</summary>
     public ref struct Enumerator {
         private readonly ArrayReader _reader;
         private int _index;
@@ -284,7 +407,9 @@ public readonly ref struct ArrayReader {
             _index = -1;
         }
 
+        /// <summary>Moves to the next element. False when there is none.</summary>
         public bool MoveNext() => ++_index < _reader.Count;
+        /// <summary>The element the enumerator is on.</summary>
         public ValueReader Current => _reader[_index];
     }
 }
@@ -301,9 +426,14 @@ public readonly ref struct ValueReader {
         (_session, _object, _key, _value, _present) = (session, @object, key, value, present);
     }
 
+    /// <summary>Whether the key was there. Every read of an absent key returns false and records nothing.</summary>
     public bool IsPresent => _present;
+    /// <summary>The kind of value stored. <see cref="PackedKind.Null"/> for an absent key.</summary>
     public PackedKind Kind => _value.Kind;
 
+    /// <summary>
+    /// Reads a boolean. Returns false if the value is absent, recording nothing, or of another kind, recording it.
+    /// </summary>
     public bool TryReadBoolean(out bool value) {
         value = false;
         if (!_accept(PackedKind.Bool)) { return false; }
@@ -311,6 +441,9 @@ public readonly ref struct ValueReader {
         return true;
     }
 
+    /// <summary>
+    /// Reads an integer. Returns false if the value is absent, recording nothing, or of another kind, recording it.
+    /// </summary>
     public bool TryReadInt64(out long value) {
         value = 0;
         if (!_accept(PackedKind.Integer)) { return false; }
@@ -318,6 +451,10 @@ public readonly ref struct ValueReader {
         return true;
     }
 
+    /// <summary>
+    /// Reads an integer. Returns false if the value is absent, recording nothing, or of another kind or out of range,
+    /// recording it.
+    /// </summary>
     public bool TryReadInt32(out int value) {
         value = 0;
         if (!TryReadInt64(out var wide)) { return false; }
@@ -348,6 +485,10 @@ public readonly ref struct ValueReader {
         }
     }
 
+    /// <summary>
+    /// Reads a number as <see cref="TryReadDouble"/> does. A finite value too large for a float returns false and is
+    /// recorded.
+    /// </summary>
     public bool TryReadSingle(out float value) {
         value = 0;
         if (!TryReadDouble(out var wide)) { return false; }
@@ -412,6 +553,9 @@ public readonly ref struct ValueReader {
         return value is not null || _session.Record(UnpackProblemKind.WrongInstance, _object, _key);
     }
 
+    /// <summary>
+    /// Reads a map. Returns false if the value is absent, recording nothing, or of another kind, recording it.
+    /// </summary>
     public bool TryReadMap(out KeyedReader map) {
         map = default;
         if (!_accept(PackedKind.Map)) { return false; }
@@ -419,6 +563,9 @@ public readonly ref struct ValueReader {
         return true;
     }
 
+    /// <summary>
+    /// Reads an array. Returns false if the value is absent, recording nothing, or of another kind, recording it.
+    /// </summary>
     public bool TryReadArray(out ArrayReader array) {
         array = default;
         if (!_accept(PackedKind.Array)) { return false; }

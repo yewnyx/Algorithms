@@ -7,8 +7,14 @@ namespace Yewnyx.Packables;
 
 /// <summary>One registered type: the name documents use for it, and the version of its layout.</summary>
 public sealed class PackableRegistration {
+    /// <summary>The registered class. Objects are matched to it by their exact type.</summary>
     public Type Type { get; }
+    /// <summary>The name documents use for the type, without its version.</summary>
     public string Name { get; }
+    /// <summary>
+    /// The version of the layout the type writes now. A document written at a newer version is reported as
+    /// <see cref="UnpackProblemKind.NewerVersion"/>.
+    /// </summary>
     public int Version { get; }
 
     /// <summary>
@@ -37,6 +43,7 @@ public sealed class PackableRegistry {
     private readonly Dictionary<Type, PackableRegistration> _byType;
     private readonly Dictionary<string, PackableRegistration> _byName;
 
+    /// <summary>A registry with no types.</summary>
     public static PackableRegistry Empty { get; } = new Builder().Build();
 
     /// <summary>In the order they were added.</summary>
@@ -52,9 +59,14 @@ public sealed class PackableRegistry {
         }
     }
 
+    /// <summary>Looks up a type by its exact type: a derived class isn't found by its base class.</summary>
     public bool TryGet(Type type, [NotNullWhen(true)] out PackableRegistration? registration) =>
         _byType.TryGetValue(type, out registration);
 
+    /// <summary>
+    /// Looks up <typeparamref name="T"/> by its exact type, as <see cref="TryGet(Type, out PackableRegistration?)"/>
+    /// does.
+    /// </summary>
     public bool TryGet<T>([NotNullWhen(true)] out PackableRegistration? registration) where T : class, IPackable =>
         _byType.TryGetValue(typeof(T), out registration);
 
@@ -62,6 +74,7 @@ public sealed class PackableRegistry {
     public bool TryGet(string name, [NotNullWhen(true)] out PackableRegistration? registration) =>
         _byName.TryGetValue(name, out registration);
 
+    /// <summary>Collects the types for a registry. Add them, then <see cref="Build"/>.</summary>
     public sealed class Builder {
         private readonly List<PackableRegistration> _registrations = new();
 
@@ -135,6 +148,7 @@ public sealed class PackableRegistry {
 /// with its version as "Name#Version", the version being a whole number from 0 without leading zeros.
 /// </summary>
 public static class PackableNames {
+    /// <summary>Whether the name is made only of the ASCII letters, digits, '.', '-' and '_', and isn't empty.</summary>
     public static bool IsValidName(string? name) {
         if (string.IsNullOrEmpty(name)) { return false; }
         foreach (var c in name!) {
@@ -145,6 +159,7 @@ public static class PackableNames {
         return true;
     }
 
+    /// <summary>Joins a name and a version as "Name#Version". It doesn't check either.</summary>
     public static string Format(string name, int version) => $"{name}#{version}";
 
     /// <summary>Splits "Name#Version" at its last '#'. False if either part breaks the rules.</summary>

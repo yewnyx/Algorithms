@@ -2,7 +2,25 @@ using System;
 
 namespace Yewnyx.Packables;
 
-public enum PackedKind : byte { Null, Bool, Integer, Double, String, Ref, Map, Array }
+/// <summary>What a <see cref="PackedValue"/> holds.</summary>
+public enum PackedKind : byte {
+    /// <summary>Nothing: a null, a null string or a null ref.</summary>
+    Null,
+    /// <summary>A boolean.</summary>
+    Bool,
+    /// <summary>A 64-bit integer.</summary>
+    Integer,
+    /// <summary>A double.</summary>
+    Double,
+    /// <summary>A string.</summary>
+    String,
+    /// <summary>A ref to an object, with the type it says the object has.</summary>
+    Ref,
+    /// <summary>Entries by key; also an object's fields.</summary>
+    Map,
+    /// <summary>Elements in order.</summary>
+    Array,
+}
 
 /// <summary>
 /// One value in a packed document. Doubles are normalised when made (-0.0 becomes 0.0, and every NaN
@@ -12,6 +30,7 @@ public readonly struct PackedValue : IEquatable<PackedValue> {
     private readonly long _bits; // Bool, Integer, Double bits, a ref's target, or a container.
     private readonly string? _text; // A String's text, or the type a ref says its target has.
 
+    /// <summary>What the value holds.</summary>
     public PackedKind Kind { get; }
 
     private PackedValue(PackedKind kind, long bits, string? text) {
@@ -20,10 +39,14 @@ public readonly struct PackedValue : IEquatable<PackedValue> {
         _text = text;
     }
 
+    /// <summary>The null value, which is also what a null string and a null ref are stored as.</summary>
     public static PackedValue Null => default;
+    /// <summary>A boolean.</summary>
     public static PackedValue Bool(bool value) => new(PackedKind.Bool, value ? 1 : 0, null);
+    /// <summary>A 64-bit integer.</summary>
     public static PackedValue Integer(long value) => new(PackedKind.Integer, value, null);
 
+    /// <summary>A double, with negative zero stored as zero and every NaN as the same NaN.</summary>
     public static PackedValue Double(double value) {
         if (double.IsNaN(value)) { value = double.NaN; } else if (value == 0) { value = 0.0; }
         return new PackedValue(PackedKind.Double, BitConverter.DoubleToInt64Bits(value), null);
@@ -38,27 +61,55 @@ public readonly struct PackedValue : IEquatable<PackedValue> {
     /// </summary>
     public static PackedValue Ref(int target, string type) => new(PackedKind.Ref, target, type);
 
+    /// <summary>A map: container number <paramref name="container"/> of the document that holds it.</summary>
     public static PackedValue Map(int container) => new(PackedKind.Map, container, null);
+    /// <summary>An array: container number <paramref name="container"/> of the document that holds it.</summary>
     public static PackedValue Array(int container) => new(PackedKind.Array, container, null);
 
+    /// <summary>The boolean. Throws <see cref="InvalidOperationException"/> if the value is of another kind.</summary>
     public bool AsBool => _require(PackedKind.Bool)._bits != 0;
+    /// <summary>The integer. Throws <see cref="InvalidOperationException"/> if the value is of another kind.</summary>
     public long AsInteger => _require(PackedKind.Integer)._bits;
+    /// <summary>The double. Throws <see cref="InvalidOperationException"/> if the value is of another kind.</summary>
     public double AsDouble => BitConverter.Int64BitsToDouble(_require(PackedKind.Double)._bits);
+    /// <summary>The text. Throws <see cref="InvalidOperationException"/> if the value is of another kind.</summary>
     public string AsString => _require(PackedKind.String)._text!;
+    /// <summary>
+    /// The index of the object a ref refers to; -1 if there is none. Throws <see cref="InvalidOperationException"/>
+    /// unless the value is a ref.
+    /// </summary>
     public int Target => (int)_require(PackedKind.Ref)._bits;
+    /// <summary>
+    /// The type the ref says its target has: "Name#Version" in a packed document, and whatever the text said in one
+    /// that was read. Throws <see cref="InvalidOperationException"/> unless the value is a ref.
+    /// </summary>
     public string RefType => _require(PackedKind.Ref)._text!;
+    /// <summary>
+    /// The container number of a map or array. Throws <see cref="InvalidOperationException"/> for any other kind.
+    /// </summary>
     public int Container => Kind is PackedKind.Map or PackedKind.Array ? (int)_bits : throw _wrongKind("Map or Array");
 
     private PackedValue _require(PackedKind kind) => Kind == kind ? this : throw _wrongKind(kind.ToString());
     private InvalidOperationException _wrongKind(string expected) => new($"A {Kind} value, not {expected}.");
 
     // Containers compare by index, so this is identity for them, not content.
+    /// <summary>
+    /// Whether kind and content are equal. Maps and arrays are equal when they are the same container, not when their
+    /// contents match.
+    /// </summary>
     public bool Equals(PackedValue other) => Kind == other.Kind && _bits == other._bits && string.Equals(_text, other._text);
+    /// <inheritdoc/>
     public override bool Equals(object? obj) => obj is PackedValue other && Equals(other);
+    /// <summary>Whether the values are equal, as <see cref="Equals(PackedValue)"/> says.</summary>
     public static bool operator ==(PackedValue left, PackedValue right) => left.Equals(right);
+    /// <summary>Whether the values differ, as <see cref="Equals(PackedValue)"/> says.</summary>
     public static bool operator !=(PackedValue left, PackedValue right) => !left.Equals(right);
+    /// <inheritdoc/>
     public override int GetHashCode() => HashCode.Combine(Kind, _bits, _text);
 
+    /// <summary>
+    /// A short text for debugging, such as <c>null</c>, <c>12</c> or <c>"text"</c>. Not an encoding of the document.
+    /// </summary>
     public override string ToString() => Kind switch {
         PackedKind.Null => "null",
         PackedKind.Bool => AsBool ? "true" : "false",
@@ -72,7 +123,9 @@ public readonly struct PackedValue : IEquatable<PackedValue> {
 
 /// <summary>An entry in a container. <see cref="Key"/> is null in arrays.</summary>
 public readonly struct PackedEntry(string? key, PackedValue value) {
+    /// <summary>The entry's key; null in an array.</summary>
     public readonly string? Key = key;
+    /// <summary>The entry's value.</summary>
     public readonly PackedValue Value = value;
 }
 
@@ -109,14 +162,23 @@ public sealed class PackedDocument {
     private ObjectRecord[] _reordered = [];
     private int _objectCount, _containerCount, _buildingCount, _definedCount;
 
+    /// <summary>
+    /// Whether the document is sealed: its entries can be read and nothing can be added. A document that was packed
+    /// or read is sealed. That doesn't make it valid: a pack that threw for a key written twice leaves a sealed
+    /// document that holds the duplicate.
+    /// </summary>
     public bool IsSealed { get; private set; }
 
     /// <summary>A ref to the root object, or <see cref="PackedValue.Null"/>.</summary>
     public PackedValue Root { get; private set; }
 
+    /// <summary>The number of objects.</summary>
     public int ObjectCount => _objectCount;
 
-    /// <summary>The object's type, as "Name#Version" or whatever the document said.</summary>
+    /// <summary>
+    /// The object's type, as "Name#Version" or whatever the document said. Throws
+    /// <see cref="ArgumentOutOfRangeException"/> for an index that isn't an object.
+    /// </summary>
     public string ObjectType(int index) => _object(index).Type!;
 
     /// <summary>
@@ -128,9 +190,13 @@ public sealed class PackedDocument {
     /// <summary>The map holding the object's fields.</summary>
     public int ObjectFields(int index) => _object(index).Fields;
 
+    /// <summary>Whether the container is a map, as an object's fields are, and not an array.</summary>
     public bool IsMap(int container) => _container(container).Keyed;
 
-    /// <summary>A sealed container's entries: maps and fields in key order, arrays in order.</summary>
+    /// <summary>
+    /// A sealed container's entries: maps and fields in key order (ordinal, by UTF-16 code unit), arrays in order.
+    /// Throws <see cref="InvalidOperationException"/> until the document is sealed.
+    /// </summary>
     public ReadOnlySpan<PackedEntry> Entries(int container) {
         _requireSealed(true);
         var c = _container(container);

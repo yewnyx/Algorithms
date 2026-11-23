@@ -471,4 +471,38 @@ public class PackerTest {
         var thrown = act.Should().Throw<FormatException>().Which;
         (thrown.Data["Packables.Object"], thrown.Data["Packables.Type"]).Should().Be((0, "Test.Throws#0"));
     }
+
+    private sealed class Reorders(bool reverse) : IPackable {
+        public Reorders? Child;
+
+        public void PackInto(Packer packer) {
+            string[] keys = ["a", "b", "c"];
+            if (reverse) { System.Array.Reverse(keys); }
+            foreach (var key in keys) { packer.WriteString(key, key + key); }
+            var map = packer.Map("map");
+            foreach (var key in keys) { map.WriteInt32(key, (int)key[0]); }
+            var array = packer.Array("array");
+            foreach (var number in new[] { 3, 1, 2 }) { array.WriteInt32(number); } // Elements keep their order.
+            packer.WriteRef("child", Child);
+        }
+
+        public void UnpackFrom(Unpacker unpacker) { }
+    }
+
+    [Fact]
+    public void TheSameGraphPacksToTheSameTextWhateverOrderTheKeysAreWrittenIn() {
+        var registry = new PackableRegistry.Builder().Add(typeof(Reorders), "Test.Reorders", 0).Build();
+        string TextFor(bool reverse) {
+            var root = new Reorders(reverse) { Child = new Reorders(reverse) };
+            root.Child.Child = root; // A loop.
+            var document = new PackedDocument();
+            Packer.TryPack(root, registry, document, out _).Should().BeTrue();
+            return PackedJson.Write(document, "test");
+        }
+
+        var forward = TextFor(false);
+
+        TextFor(true).Should().Be(forward);
+        forward.Should().MatchRegex(@"\$array""\s*:\s*\[\s*3,\s*1,\s*2\s*\]");
+    }
 }
