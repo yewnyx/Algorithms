@@ -2,9 +2,11 @@ on:
   push:
     branches:
     - main
+    - spatial
   pull_request:
     branches:
     - main
+    - spatial
 jobs:
   build:
     runs-on: ubuntu-latest

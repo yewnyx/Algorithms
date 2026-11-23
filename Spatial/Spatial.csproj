@@ -10,6 +10,8 @@
         <RepositoryUrl>https://github.com/yewnyx/Algorithms</RepositoryUrl>
         <TargetFrameworks>net8.0;netstandard2.1</TargetFrameworks>
         <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+        <!-- Experimental: the public members are commented as the API settles. The comments there are packed; those missing don't warn yet. -->
+        <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
     </PropertyGroup>
     <ItemGroup>
         <!-- One copy of the source, kept where Unity can compile it too. -->
