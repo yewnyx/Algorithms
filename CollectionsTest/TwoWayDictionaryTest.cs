@@ -90,4 +90,16 @@ public class TwoWayDictionaryTest {
         map.TryGet(9, out key).Should().BeFalse();
         key.Should().BeNull();
     }
+
+    [Fact]
+    public void TheConstructorThrowsForAKeyOrAValueThatComesTwice() {
+        KeyValuePair<string, int>[] sameKey = [new("a", 1), new("a", 2)];
+        KeyValuePair<string, int>[] sameValue = [new("a", 1), new("b", 1)];
+
+        var byKey = () => new TwoWayDictionary<string, int>(sameKey);
+        var byValue = () => new TwoWayDictionary<string, int>(sameValue);
+
+        byKey.Should().Throw<ArgumentException>();
+        byValue.Should().Throw<ArgumentException>();
+    }
 }
