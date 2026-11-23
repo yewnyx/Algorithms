@@ -151,6 +151,18 @@ namespace Yewnyx.Spatial {
         public bool SetShapes(ReadOnlySpan<Solid> solids, ReadOnlySpan<float> corners, ReadOnlySpan<int> triangles) =>
             _setShapes(solids, corners, triangles, default, default, default);
 
+        /// <summary>
+        /// Takes the shapes as <see cref="ColliderShapes.Collect(IReadOnlyList{UnityEngine.Collider}, UnityEngine.Matrix4x4, in Box, CollectedShapes)"/>
+        /// collected them, heightfields among them, and copies them. Returns false, keeping the
+        /// shapes it had, if a shape may not be stored.
+        /// </summary>
+        /// <remarks>As with the other overloads, the wall distance says nothing until the next marking is done.</remarks>
+        public bool SetShapes(CollectedShapes shapes) {
+            if (shapes == null) { throw new ArgumentNullException(nameof(shapes)); }
+            return _setShapes(shapes.Solids.ToArray(), shapes.Corners.ToArray(), shapes.Triangles.ToArray(),
+                shapes.HeightFields.ToArray(), shapes.HeightBlocks.ToArray(), shapes.Heights.ToArray());
+        }
+
         private bool _setShapes(ReadOnlySpan<Solid> solids, ReadOnlySpan<float> corners, ReadOnlySpan<int> triangles,
             ReadOnlySpan<HeightField> heightFields, ReadOnlySpan<uint> heightBlocks, ReadOnlySpan<ushort> heights) {
             _settle();
@@ -234,6 +246,12 @@ namespace Yewnyx.Spatial {
         /// <paramref name="limit"/> if nothing is nearer. The point need not be inside the grid.
         /// Returns false if the point is not a number, the limit is negative, or the shapes are found damaged.
         /// </summary>
+        /// <remarks>
+        /// It is the distance to the shapes held. Shapes that were collected within a box hold
+        /// nothing of what lies beyond it, so with those the answer is the true one only for a
+        /// point inside the grid and a limit no more than the box was grown by (see
+        /// <see cref="ColliderShapes.Within"/>: the cap times the unit, a unit and a cell).
+        /// </remarks>
         public bool TryDistance(float3 point, float limit, out float distance) {
             // The shapes are written only by SetShapes, on this thread: there is nothing to wait for.
             _requireAlive();
