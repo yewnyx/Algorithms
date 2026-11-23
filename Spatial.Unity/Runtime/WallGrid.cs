@@ -53,6 +53,9 @@ namespace Yewnyx.Spatial {
             public NativeArray<byte> Region;
             public NativeArray<int> Result;
             public JobHandle Flood;
+            // Goes up each time the regions are forgotten or flooded again, so that a field built
+            // from them can tell whether they are still the ones it was built from.
+            public int Stamp;
         }
 
         private readonly List<Sized> _sizes = new List<Sized>();
@@ -324,8 +327,50 @@ namespace Yewnyx.Spatial {
             }.Schedule(JobHandle.CombineDependencies(JobHandle.CombineDependencies(dependsOn, _mark), sized.Flood, _readers));
             // It reads the wall distance and the costs, so the next marking and the next change of cost wait for it.
             _read(sized.Flood);
+            sized.Stamp++;
             return sized.Flood;
         }
+
+        /// <summary>
+        /// Schedules the job that builds a travel field for a size class: how far each cell of its
+        /// regions is from where the seeds start, as a count of <paramref name="unit"/> metres.
+        /// Returns the field at once; its <see cref="WallGridField.IsBuilt"/> says whether it can be
+        /// followed. The caller owns the field and disposes it.
+        /// </summary>
+        /// <remarks>
+        /// The build runs after the size class's flood. It only reads the grid, so builds do not wait
+        /// for one another: several scheduled together run side by side. The seeds are copied. It is refused, leaving a field that reaches nothing, if
+        /// the size class has no regions when it runs (see <see cref="HasRegions"/>) or a seed may
+        /// not be used (see <see cref="Travel.Build"/>). A step pays for the cell it enters, at the
+        /// grid's costs as they are when the build runs.
+        /// The field is of the regions as they are now: when they are next forgotten or flooded
+        /// again it stops answering, and a new one must be built. A field outlives the grid: after
+        /// <see cref="Dispose"/> it answers as it was built, and the caller must drop it if the
+        /// way changes (see <see cref="WallGridField"/>).
+        /// </remarks>
+        public WallGridField ScheduleField(int sizeClass, ReadOnlySpan<TravelSeed> seeds, float unit = 0.01f, JobHandle dependsOn = default) {
+            var sized = _sized(sizeClass);
+            if (!(unit > 0f) || !(unit <= Shape.CellSize * 0.25f)) { throw new ArgumentOutOfRangeException(nameof(unit), unit, "Must be above 0 and no more than a quarter of a cell."); }
+            var heapLength = Travel.HeapLength(Shape);
+            if (heapLength == 0) { throw new InvalidOperationException("The grid has too many cells for a travel field."); }
+            var copy = new NativeArray<TravelSeed>(seeds.Length, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            seeds.CopyTo(copy.AsSpan());
+            var distance = new NativeArray<ushort>(Shape.CellCount, _allocator, NativeArrayOptions.UninitializedMemory);
+            var result = new NativeArray<int>(3, _allocator);
+            var build = new FieldJob {
+                Shape = Shape, Unit = unit, Region = sized.Region, Cost = _cost, Flooded = sized.Result, Seeds = copy,
+                Times = new NativeArray<float>(Travel.TimesLength(Shape), Allocator.Persistent, NativeArrayOptions.UninitializedMemory),
+                Heap = new NativeArray<int>(heapLength, Allocator.Persistent, NativeArrayOptions.UninitializedMemory),
+                Distance = distance, Result = result,
+            }.Schedule(JobHandle.CombineDependencies(dependsOn, sized.Flood));
+            // It reads the regions and the costs, so what next writes them waits for it. It does not
+            // wait for the grid's other readers itself: it writes nothing they read.
+            _read(build);
+            return new WallGridField(this, sizeClass, sized.Stamp, unit, distance, result, build);
+        }
+
+        // What a size class's regions are stamped with: it changes whenever they do.
+        internal int RegionStamp(int sizeClass) => _sizes[sizeClass].Stamp;
 
         /// <summary>
         /// Whether a size class's regions are those of the shapes and costs held: its last flood,
@@ -454,6 +499,10 @@ namespace Yewnyx.Spatial {
             foreach (var sized in _sizes) { sized.Flood.Complete(); }
         }
 
+        /// <summary>
+        /// Frees the grid's arrays, after waiting for every job that uses them. Fields built from
+        /// the grid are the caller's and are not freed: one that was good goes on answering.
+        /// </summary>
         public void Dispose() {
             if (_disposed) { return; }
             _disposed = true;
@@ -494,6 +543,7 @@ namespace Yewnyx.Spatial {
             foreach (var sized in _sizes) {
                 sized.Region.AsSpan().Clear();
                 sized.Result.AsSpan().Clear();
+                sized.Stamp++;
             }
         }
 
