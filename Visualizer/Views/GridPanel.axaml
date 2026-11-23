@@ -1,0 +1,43 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:views="using:Yewnyx.Algorithms.Visualizer.Views"
+             x:Class="Yewnyx.Algorithms.Visualizer.Views.GridPanel">
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="#181B21" Padding="8,6" BorderBrush="#262B33" BorderThickness="0,0,0,1">
+            <StackPanel Spacing="6">
+                <WrapPanel Orientation="Horizontal">
+                    <TextBlock Classes="section" Text="SHAPES" Width="56" />
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Seed" ToolTip.Tip="Which boxes, spheres and capsules." /><NumericUpDown x:Name="SeedBox" Minimum="0" Maximum="2147483647" Increment="1" Value="1" FormatString="0" Width="64" /></StackPanel>
+                    <Button x:Name="NewButton" Content="New shapes" Margin="8,0,0,0" VerticalAlignment="Center" />
+                    <CheckBox x:Name="SolidsBox" Content="Show the solids" IsChecked="True" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#C8D0DC"
+                              ToolTip.Tip="The pale shapes are the solids as the exact test sees them. The cell colours are only what the grid stored." />
+                    <Button x:Name="ResetViewButton" Content="Reset 3D view" Margin="12,0,0,0" VerticalAlignment="Center" ToolTip.Tip="Back to the isometric angle. Drag the 3D view to orbit and use the wheel over it to zoom." />
+                </WrapPanel>
+                <WrapPanel Orientation="Horizontal">
+                    <TextBlock Classes="section" Text="GRID" Width="56" />
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Unit (m)" ToolTip.Tip="What one count of wall distance is worth. A cell's distance is stored rounded down to a whole number of these." /><NumericUpDown x:Name="UnitBox" Minimum="0.03125" Maximum="0.5" Increment="0.03125" Value="0.125" FormatString="0.#####" Width="90" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Cap (counts)" ToolTip.Tip="The largest count stored: a cell this far or more from every shape holds it, and no more is said about it." /><NumericUpDown x:Name="CapBox" Minimum="1" Maximum="255" Increment="1" Value="8" FormatString="0" Width="64" /></StackPanel>
+                    <TextBlock Classes="section" Text="PROBE" Width="56" Margin="16,0,0,0" />
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="x (m)" /><NumericUpDown x:Name="XBox" Minimum="0" Maximum="32" Increment="0.25" Value="16" FormatString="0.00" Width="80" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="y (m)" ToolTip.Tip="Where the side slice cuts. The wheel over the side slice moves it." /><NumericUpDown x:Name="YBox" Minimum="0" Maximum="20" Increment="0.25" Value="10" FormatString="0.00" Width="80" /></StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="z (m)" ToolTip.Tip="Where the top-down slice cuts. The wheel over the top-down slice moves it." /><NumericUpDown x:Name="ZBox" Minimum="0" Maximum="12" Increment="0.25" Value="6" FormatString="0.00" Width="80" /></StackPanel>
+                </WrapPanel>
+            </StackPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Top" Background="#14171D" Padding="12,8" MinHeight="110" BorderBrush="#262B33" BorderThickness="0,0,0,1">
+            <StackPanel Spacing="3">
+                <TextBlock x:Name="HeadlineText" Foreground="#E8EDF4" FontSize="14" TextWrapping="Wrap" />
+                <TextBlock x:Name="CountsText" Foreground="#C8D0DC" FontSize="12" TextWrapping="Wrap" />
+                <TextBlock x:Name="NoteText" Foreground="#7F8896" FontSize="11" TextWrapping="Wrap" />
+                <TextBlock x:Name="HintText" Foreground="#7F8896" FontSize="11" TextWrapping="Wrap" />
+            </StackPanel>
+        </Border>
+
+        <Grid ColumnDefinitions="1.35*,2,*,2,*">
+            <views:WallView3D x:Name="CubeView" Grid.Column="0" />
+            <views:WallSliceView x:Name="TopView" Grid.Column="2" />
+            <views:WallSliceView x:Name="SideView" Grid.Column="4" />
+        </Grid>
+    </DockPanel>
+</UserControl>
