@@ -19,6 +19,9 @@ public sealed class WallWorld {
     public static float Height => CountY * CellSize;
     public static float Depth => CountZ * CellSize;
 
+    // Where the partitions stand (their lower x) and how high the doors are.
+    private const float PartitionA = 10f, PartitionB = 21f, DoorHeight = 3.5f;
+
     private readonly Box[] _boxes;
     private readonly BoxNode[] _nodes;
     private readonly int[] _order, _workspace;
@@ -40,6 +43,14 @@ public sealed class WallWorld {
     public WallWorld(int seed, float unit, byte cap) {
         var random = new Random(seed);
         var solids = new List<Solid>();
+        // Two partitions, 0.5 m thick, make three rooms. Each door has a lintel above it: the first is 2.5 m wide, the
+        // second 1.5 m, so a body of radius 0.9 m gets through the first and not the second, and a smaller one through both.
+        solids.Add(Solid.Box(new Box(PartitionA, 0, 0, PartitionA + 0.5f, 8, Depth)));
+        solids.Add(Solid.Box(new Box(PartitionA, 10.5f, 0, PartitionA + 0.5f, Height, Depth)));
+        solids.Add(Solid.Box(new Box(PartitionA, 8, DoorHeight, PartitionA + 0.5f, 10.5f, Depth)));
+        solids.Add(Solid.Box(new Box(PartitionB, 0, 0, PartitionB + 0.5f, 4.5f, Depth)));
+        solids.Add(Solid.Box(new Box(PartitionB, 6, 0, PartitionB + 0.5f, Height, Depth)));
+        solids.Add(Solid.Box(new Box(PartitionB, 4.5f, DoorHeight, PartitionB + 0.5f, 6, Depth)));
         // Big enough to read at a glance and few enough to leave room between them.
         for (var i = 0; i < 5; i++) { AddBox(random, i < 2, solids); }
         for (var i = 0; i < 4; i++) { AddSphere(random, solids); }
@@ -100,11 +111,114 @@ public sealed class WallWorld {
         return outlines;
     }
 
+    // ---- Regions: where a body of one radius can be, flooded from seeds. ----
+
+    private readonly byte[] _region = new byte[CountX * CountY * CountZ];
+    private readonly int[] _queue = new int[CountX * CountY * CountZ];
+
+    /// <summary>One byte per cell: 0 for a cell that is not open or that no seed reached, else its region's number.</summary>
+    public byte[] Region => _region;
+
+    /// <summary>The seeds the flood started from: small boxes in open space, which the view draws.</summary>
+    public Solid[] Seeds { get; private set; } = [];
+
+    /// <summary>What the size class needs of the map, when <see cref="Problem"/> is null.</summary>
+    public SizeClass Size { get; private set; }
+
+    /// <summary>Why there are no regions, or null if the flood ran: the radius is too small, or needs more than the cap can say.</summary>
+    public string? Problem { get; private set; }
+
+    public int RegionCount { get; private set; }
+    public int Reached { get; private set; }
+    public int EmptySeeds { get; private set; }
+    public double FloodMilliseconds { get; private set; }
+
+
+    /// <summary>
+    /// Makes the size class of a radius and floods from <paramref name="seedCount"/> seeds placed where the shapes leave
+    /// room. Call again after the map is marked again, since the class is made for one unit and cap.
+    /// </summary>
+    public void Flood(float radius, int seedCount, int seedKey) {
+        Array.Clear(_region);
+        Seeds = [];
+        (RegionCount, Reached, EmptySeeds, FloodMilliseconds) = (0, 0, 0, 0);
+        Size = default;
+        var clock = Stopwatch.StartNew();
+        var shape = Shape;
+        var map = new WallMap(shape, Unit, Cap, Counts);
+        if (!SizeClass.TryMake(radius, map, out var size)) {
+            Problem = radius > 0.5f * CellSize
+                ? $"a body of radius {radius:0.##} m needs more than a cap of {Cap} counts of {Unit:0.#####} m can say: raise the cap, or the unit"
+                : $"a radius of half a cell ({0.5f * CellSize:0.##} m) or less has no guarantee";
+            return;
+        }
+        Size = size;
+
+        // Seeds sit where an exact test says there is room, so that each one starts a flood: a small box in the open.
+        var random = new Random(seedKey);
+        var seeds = new List<Solid>();
+        for (var tries = 0; tries < 400 && seeds.Count < seedCount; tries++) {
+            // One in each room in turn, so the seeds show which rooms a body of this size can pass between.
+            var which = seeds.Count % 3;
+            float lowX = which == 0 ? 0 : which == 1 ? PartitionA + 0.5f : PartitionB + 0.5f, highX = which == 0 ? PartitionA : which == 1 ? PartitionB : Width;
+            float x = Range(random, lowX + 1.5f, highX - 1.5f), y = Range(random, 2, Height - 2), z = Range(random, 1.5f, Depth - 1.5f);
+            if (Exact(x, y, z, out var room) && room >= radius + 0.6f) { seeds.Add(Solid.Box(new Box(x - 0.3f, y - 0.3f, z - 0.3f, x + 0.3f, y + 0.3f, z + 0.3f))); }
+        }
+        Seeds = seeds.ToArray();
+
+        if (!Regions.FromSeeds(map, size, ReadOnlySpan<byte>.Empty, Seeds, _region, _queue, out var reached, out var empty)) {
+            Problem = "the flood was refused: more regions than a byte holds, or a seed that may not be stored";
+            return;
+        }
+        Problem = null;
+        (Reached, EmptySeeds) = (reached, empty);
+        foreach (var number in _region) { RegionCount = Math.Max(RegionCount, number); }
+        FloodMilliseconds = clock.Elapsed.TotalMilliseconds;
+    }
+
+    /// <summary>The number of the region a cell is in, 0 if it is in none.</summary>
+    public byte RegionAt(int cellX, int cellY, int cellZ) => _region[Shape.IndexOf(cellX, cellY, cellZ)];
+
+    /// <summary>
+    /// What a cell shows in region colour: its region (1 to 254), 255 for a cell open for the class that no seed reached,
+    /// 256 for a cell too near a shape for it.
+    /// </summary>
+    public int RegionKey(int cellX, int cellY, int cellZ) {
+        var region = RegionAt(cellX, cellY, cellZ);
+        if (region != 0) { return region; }
+        return Problem is null && Size.Cell > 0 && CountAt(cellX, cellY, cellZ) >= Size.Cell ? 255 : 256;
+    }
+
+    public bool IsOpen(float x, float y, float z) => Regions.IsOpen(Shape, _region, x, y, z);
+
+    /// <summary>The centre of the nearest open cell within a reach, in any region, or in the region of the cell holding a second point.</summary>
+    public bool NearestOpen(float x, float y, float z, float reach, (float x, float y, float z)? like, out float openX, out float openY, out float openZ) =>
+        like is { } l
+            ? Regions.NearestOpen(Shape, _region, x, y, z, reach, l.x, l.y, l.z, out openX, out openY, out openZ)
+            : Regions.NearestOpen(Shape, _region, x, y, z, reach, out openX, out openY, out openZ);
+
+    /// <summary>Where the plane cuts each seed, as <see cref="Sections"/> does for the solids.</summary>
+    public List<(double U, double V)[]> SeedSections(SlicePlane plane, float fixedAt) {
+        var outlines = new List<(double U, double V)[]>();
+        foreach (var seed in Seeds) {
+            if (SolidSection.Cut(seed, plane, fixedAt) is { } outline) { outlines.Add(outline); }
+        }
+        return outlines;
+    }
+
     private static float Range(Random random, float low, float high) => low + (float)random.NextDouble() * (high - low);
 
+    // The x range, in a room chosen at random, that a shape reaching this far from its centre may centre in without touching a partition.
+    private static (float lo, float hi) RoomRange(Random random, float reach) {
+        var room = random.Next(3);
+        float lo = room == 0 ? 0 : room == 1 ? PartitionA + 0.5f : PartitionB + 0.5f, hi = room == 0 ? PartitionA : room == 1 ? PartitionB : Width;
+        return (lo + reach, hi - reach);
+    }
+
     private static void AddBox(Random random, bool turned, List<Solid> solids) {
-        float hx = Range(random, 0.8f, 2.6f), hy = Range(random, 0.8f, 2.6f), hz = Range(random, 0.8f, 2.4f);
-        float cx = Range(random, 3, Width - 3), cy = Range(random, 3, Height - 3), cz = Range(random, 2.5f, Depth - 2.5f);
+        float hx = Range(random, 0.8f, 1.8f), hy = Range(random, 0.8f, 1.8f), hz = Range(random, 0.8f, 2.4f);
+        var (low, high) = RoomRange(random, hx + hy);
+        float cx = Range(random, low, high), cy = Range(random, 3, Height - 3), cz = Range(random, 2.5f, Depth - 2.5f);
         // Axes from two turns, worked in double so they are of length 1 and square to each other to within a float's rounding.
         double yaw = turned ? random.NextDouble() * Math.PI : 0, tilt = turned ? (random.NextDouble() - 0.5) * 0.9 : 0;
         double cy1 = Math.Cos(yaw), sy1 = Math.Sin(yaw), ct = Math.Cos(tilt), st = Math.Sin(tilt);
@@ -117,18 +231,20 @@ public sealed class WallWorld {
 
     private static void AddSphere(Random random, List<Solid> solids) {
         var radius = Range(random, 0.8f, 2.2f);
-        float cx = Range(random, 3, Width - 3), cy = Range(random, 3, Height - 3), cz = Range(random, 2.5f, Depth - 2.5f);
+        var (low, high) = RoomRange(random, radius + 0.3f);
+        float cx = Range(random, low, high), cy = Range(random, 3, Height - 3), cz = Range(random, 2.5f, Depth - 2.5f);
         solids.Add(Solid.Sphere(cx, cy, cz, radius));
     }
 
     private static void AddCapsule(Random random, List<Solid> solids) {
         var radius = Range(random, 0.4f, 0.9f);
-        float ax = Range(random, 3, Width - 3), ay = Range(random, 3, Height - 3), az = Range(random, 2.5f, Depth - 2.5f);
+        var (low, high) = RoomRange(random, 1.5f);
+        float ax = Range(random, low, high), ay = Range(random, 3, Height - 3), az = Range(random, 2.5f, Depth - 2.5f);
         // The far end a few metres off in a random direction, kept inside the grid.
         var angle = random.NextDouble() * Math.PI * 2;
         var lift = (random.NextDouble() - 0.5) * 1.2;
         var length = Range(random, 2f, 5f);
-        var bx = Math.Clamp(ax + (float)(Math.Cos(angle) * Math.Cos(lift)) * length, 1f, Width - 1);
+        var bx = Math.Clamp(ax + (float)(Math.Cos(angle) * Math.Cos(lift)) * length, low - 0.6f, high + 0.6f);
         var by = Math.Clamp(ay + (float)(Math.Sin(angle) * Math.Cos(lift)) * length, 1f, Height - 1);
         var bz = Math.Clamp(az + (float)Math.Sin(lift) * length, 1f, Depth - 1);
         solids.Add(Solid.Capsule(ax, ay, az, bx, by, bz, radius));
