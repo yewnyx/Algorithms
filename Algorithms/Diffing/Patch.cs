@@ -4,15 +4,23 @@ namespace Yewnyx.Algorithms.Diffing;
 
 /// <summary>A moved item: deleted at <see cref="Original"/> and inserted at <see cref="Revised"/>.</summary>
 public readonly struct Move(int original, int revised) : IEquatable<Move> {
+    /// <summary>The index in the original sequence where the item was deleted.</summary>
     public readonly int Original = original;
+    /// <summary>The index in the revised sequence where the item was inserted.</summary>
     public readonly int Revised = revised;
 
+    /// <inheritdoc/>
     public bool Equals(Move other) => Original == other.Original && Revised == other.Revised;
+    /// <inheritdoc/>
     public override bool Equals(object? obj) => obj is Move other && Equals(other);
+    /// <summary>Whether both moves have the same <see cref="Original"/> and <see cref="Revised"/>.</summary>
     public static bool operator ==(Move left, Move right) => left.Equals(right);
+    /// <summary>Whether the moves differ in <see cref="Original"/> or <see cref="Revised"/>.</summary>
     public static bool operator !=(Move left, Move right) => !left.Equals(right);
+    /// <inheritdoc/>
     public override int GetHashCode() => HashCode.Combine(Original, Revised);
 
+    /// <summary>Splits the move into its two indexes: <c>var (original, revised) = move;</c>.</summary>
     public void Deconstruct(out int original, out int revised) => (original, revised) = (Original, Revised);
 }
 
@@ -34,9 +42,21 @@ public sealed class Patch<T> where T : IEquatable<T> {
     private int[] _revisedPositions = [];
     private Move[] _moves = [];
 
+    /// <summary>
+    /// The length of the original sequence the patch was set from, and so the length it applies to. 0 before
+    /// <see cref="Set"/>.
+    /// </summary>
     public int OriginalLength { get; private set; }
+    /// <summary>
+    /// The length of the revised sequence the patch was set from, and so the length it makes. 0 before
+    /// <see cref="Set"/>.
+    /// </summary>
     public int RevisedLength { get; private set; }
 
+    /// <summary>
+    /// The hunks, in order, as they were given to <see cref="Set"/>. The span is valid until the next
+    /// <see cref="Set"/>.
+    /// </summary>
     public ReadOnlySpan<Hunk> Hunks => _hunks.AsSpan(0, _hunkCount);
 
     /// <summary>The items the hunks delete, hunk by hunk.</summary>

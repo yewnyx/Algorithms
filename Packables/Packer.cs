@@ -6,12 +6,21 @@ namespace Yewnyx.Packables;
 
 /// <summary>A type that writes itself to a packed document and reads itself back.</summary>
 public interface IPackable {
+    /// <summary>
+    /// Writes the object's fields. <see cref="Packer.TryPack"/> calls it once for each object it reaches from the
+    /// root, so a shared or looping object writes itself once.
+    /// </summary>
     void PackInto(Packer packer);
+    /// <summary>
+    /// Reads the object's fields back. <see cref="Unpacker.Unpack{T}"/> calls it once for each object it binds to
+    /// the document's objects, the root first. An exception it throws goes on to the caller of Unpack, with the
+    /// object's index in <c>Data["Packables.Object"]</c> and its type name in <c>Data["Packables.Type"]</c>.
+    /// </summary>
     void UnpackFrom(Unpacker unpacker);
 }
 
 /// <summary>
-/// Writes one object's fields. <see cref="Pack"/> makes one for each object it reaches from the root.
+/// Writes one object's fields. <see cref="TryPack"/> makes one for each object it reaches from the root.
 /// Fields, maps and arrays are handles: each names its own container, so nothing is opened or closed.
 /// Keys are sorted when the document is sealed, so the order of writes doesn't matter.
 /// </summary>
@@ -27,32 +36,64 @@ public readonly ref struct Packer {
     /// <summary>The object's own fields.</summary>
     public KeyedWriter Fields => new(_session, _fields);
 
+    /// <summary>Writes a null under <paramref name="key"/>.</summary>
     public void WriteNull(string key) => Fields.WriteNull(key);
+    /// <summary>Writes a boolean under <paramref name="key"/>.</summary>
     public void WriteBoolean(string key, bool value) => Fields.WriteBoolean(key, value);
+    /// <summary>Writes an integer under <paramref name="key"/>. Int32 and Int64 store the same kind.</summary>
     public void WriteInt32(string key, int value) => Fields.WriteInt32(key, value);
+    /// <summary>Writes an integer under <paramref name="key"/>. Int32 and Int64 store the same kind.</summary>
     public void WriteInt64(string key, long value) => Fields.WriteInt64(key, value);
+    /// <summary>
+    /// Writes a number under <paramref name="key"/>, widened to a double. Single and Double store the same kind.
+    /// </summary>
     public void WriteSingle(string key, float value) => Fields.WriteSingle(key, value);
+    /// <summary>
+    /// Writes a number under <paramref name="key"/>. Negative zero is stored as zero, and every NaN as the same NaN.
+    /// </summary>
     public void WriteDouble(string key, double value) => Fields.WriteDouble(key, value);
+    /// <summary>Writes a string under <paramref name="key"/>. A null string is stored as null.</summary>
     public void WriteString(string key, string? value) => Fields.WriteString(key, value);
+    /// <summary>
+    /// Writes a ref to <paramref name="value"/> under <paramref name="key"/>, adding the object to the document the
+    /// first time it is reached, so shared and looping refs keep their identity. A null is stored as null. An object
+    /// whose type isn't registered is stored as null too, and makes <see cref="Packer.TryPack"/> return false.
+    /// </summary>
     public void WriteRef(string key, IPackable? value) => Fields.WriteRef(key, value);
 
+    /// <summary>Refused at compile time: a char isn't a number. Write it as a string, or cast it.</summary>
     [Obsolete(KeyedWriter.CharIsNotANumber, true)] public void WriteInt32(string key, char value) => throw new NotSupportedException();
+    /// <summary>Refused at compile time: a char isn't a number. Write it as a string, or cast it.</summary>
     [Obsolete(KeyedWriter.CharIsNotANumber, true)] public void WriteInt64(string key, char value) => throw new NotSupportedException();
+    /// <summary>Refused at compile time: a char isn't a number. Write it as a string, or cast it.</summary>
     [Obsolete(KeyedWriter.CharIsNotANumber, true)] public void WriteSingle(string key, char value) => throw new NotSupportedException();
+    /// <summary>Refused at compile time: a char isn't a number. Write it as a string, or cast it.</summary>
     [Obsolete(KeyedWriter.CharIsNotANumber, true)] public void WriteDouble(string key, char value) => throw new NotSupportedException();
 
+    /// <inheritdoc cref="KeyedWriter.WriteInt32s"/>
     public void WriteInt32s(string key, ReadOnlySpan<int> values) => Fields.WriteInt32s(key, values);
+    /// <inheritdoc cref="KeyedWriter.WriteInt32s"/>
     public void WriteInt64s(string key, ReadOnlySpan<long> values) => Fields.WriteInt64s(key, values);
+    /// <inheritdoc cref="KeyedWriter.WriteInt32s"/>
     public void WriteSingles(string key, ReadOnlySpan<float> values) => Fields.WriteSingles(key, values);
+    /// <inheritdoc cref="KeyedWriter.WriteInt32s"/>
     public void WriteDoubles(string key, ReadOnlySpan<double> values) => Fields.WriteDoubles(key, values);
+    /// <inheritdoc cref="KeyedWriter.Map"/>
     public KeyedWriter Map(string key) => Fields.Map(key);
+    /// <inheritdoc cref="KeyedWriter.Array"/>
     public ArrayWriter Array(string key) => Fields.Array(key);
 
     /// <summary>
     /// Packs <paramref name="root"/> and every object it reaches into <paramref name="document"/>,
     /// which is cleared first. Objects are told apart by reference and numbered breadth-first from the
     /// root. Returns false if an object's type isn't in <paramref name="registry"/>, naming it in
-    /// <paramref name="unregistered"/>. Throws if a type writes the same key twice.
+    /// <paramref name="unregistered"/>; the document is then incomplete and shouldn't be used. Throws
+    /// <see cref="ArgumentNullException"/> if <paramref name="root"/> is null, and
+    /// <see cref="InvalidOperationException"/> if a type writes the same key twice, which leaves the document sealed
+    /// with the duplicate in it: it isn't to be used either. On success the document is sealed, and the same graph
+    /// packs to the same objects, in the same order, with the same entries, and so writes as the same text, whatever
+    /// order the types write their keys in. Elements of an array keep the order they were written in. Container
+    /// numbers are not part of this. A document that is reused stops allocating once its buffers have grown.
     /// </summary>
     public static bool TryPack(IPackable root, PackableRegistry registry, PackedDocument document, out Type? unregistered) {
         if (root is null) { throw new ArgumentNullException(nameof(root)); }
@@ -81,6 +122,8 @@ public readonly ref struct Packer {
 /// <summary>
 /// Writes named entries: an object's fields, or a map. Numbers are stored as one of two kinds, a 64-bit
 /// integer or a double, so WriteInt32 and WriteInt64 store the same kind, as do WriteSingle and WriteDouble.
+/// Writing a key twice in one map is found when the document is sealed, and makes
+/// <see cref="Packer.TryPack"/> throw.
 /// </summary>
 public readonly ref struct KeyedWriter {
     // A char converts to every number type without a cast, so each number write refuses one. A ulong
@@ -98,18 +141,38 @@ public readonly ref struct KeyedWriter {
 
     private PackedDocument Document => _session.Document;
 
+    /// <summary>Writes a null under <paramref name="key"/>.</summary>
     public void WriteNull(string key) => Document.Add(_container, key, PackedValue.Null);
+    /// <summary>Writes a boolean under <paramref name="key"/>.</summary>
     public void WriteBoolean(string key, bool value) => Document.Add(_container, key, PackedValue.Bool(value));
+    /// <summary>Writes an integer under <paramref name="key"/>. Int32 and Int64 store the same kind.</summary>
     public void WriteInt32(string key, int value) => Document.Add(_container, key, PackedValue.Integer(value));
+    /// <summary>Writes an integer under <paramref name="key"/>. Int32 and Int64 store the same kind.</summary>
     public void WriteInt64(string key, long value) => Document.Add(_container, key, PackedValue.Integer(value));
+    /// <summary>
+    /// Writes a number under <paramref name="key"/>, widened to a double. Single and Double store the same kind.
+    /// </summary>
     public void WriteSingle(string key, float value) => Document.Add(_container, key, PackedValue.Double(value));
+    /// <summary>
+    /// Writes a number under <paramref name="key"/>. Negative zero is stored as zero, and every NaN as the same NaN.
+    /// </summary>
     public void WriteDouble(string key, double value) => Document.Add(_container, key, PackedValue.Double(value));
+    /// <summary>Writes a string under <paramref name="key"/>. A null string is stored as null.</summary>
     public void WriteString(string key, string? value) => Document.Add(_container, key, PackedValue.String(value));
+    /// <summary>
+    /// Writes a ref to <paramref name="value"/> under <paramref name="key"/>, adding the object to the document the
+    /// first time it is reached, so shared and looping refs keep their identity. A null is stored as null. An object
+    /// whose type isn't registered is stored as null too, and makes <see cref="Packer.TryPack"/> return false.
+    /// </summary>
     public void WriteRef(string key, IPackable? value) => Document.Add(_container, key, _session.RefTo(value));
 
+    /// <summary>Refused at compile time: a char isn't a number. Write it as a string, or cast it.</summary>
     [Obsolete(CharIsNotANumber, true)] public void WriteInt32(string key, char value) => throw new NotSupportedException();
+    /// <summary>Refused at compile time: a char isn't a number. Write it as a string, or cast it.</summary>
     [Obsolete(CharIsNotANumber, true)] public void WriteInt64(string key, char value) => throw new NotSupportedException();
+    /// <summary>Refused at compile time: a char isn't a number. Write it as a string, or cast it.</summary>
     [Obsolete(CharIsNotANumber, true)] public void WriteSingle(string key, char value) => throw new NotSupportedException();
+    /// <summary>Refused at compile time: a char isn't a number. Write it as a string, or cast it.</summary>
     [Obsolete(CharIsNotANumber, true)] public void WriteDouble(string key, char value) => throw new NotSupportedException();
 
     /// <summary>Adds an array of numbers under <paramref name="key"/>, straight from the span.</summary>
@@ -151,7 +214,9 @@ public readonly ref struct KeyedWriter {
     }
 }
 
-/// <summary>Appends elements to an array.</summary>
+/// <summary>
+/// Appends elements to an array, in the order they are written. Numbers are stored as for <see cref="KeyedWriter"/>.
+/// </summary>
 public readonly ref struct ArrayWriter {
     private readonly PackSession _session;
     private readonly int _container;
@@ -163,26 +228,44 @@ public readonly ref struct ArrayWriter {
 
     private PackedDocument Document => _session.Document;
 
+    /// <summary>Appends a null.</summary>
     public void WriteNull() => Document.Add(_container, PackedValue.Null);
+    /// <summary>Appends a boolean.</summary>
     public void WriteBoolean(bool value) => Document.Add(_container, PackedValue.Bool(value));
+    /// <summary>Appends an integer. Int32 and Int64 store the same kind.</summary>
     public void WriteInt32(int value) => Document.Add(_container, PackedValue.Integer(value));
+    /// <summary>Appends an integer. Int32 and Int64 store the same kind.</summary>
     public void WriteInt64(long value) => Document.Add(_container, PackedValue.Integer(value));
+    /// <summary>Appends a number, widened to a double. Single and Double store the same kind.</summary>
     public void WriteSingle(float value) => Document.Add(_container, PackedValue.Double(value));
+    /// <summary>Appends a number. Negative zero is stored as zero, and every NaN as the same NaN.</summary>
     public void WriteDouble(double value) => Document.Add(_container, PackedValue.Double(value));
+    /// <summary>Appends a string. A null string is stored as null.</summary>
     public void WriteString(string? value) => Document.Add(_container, PackedValue.String(value));
+    /// <summary>
+    /// Appends a ref to <paramref name="value"/>, adding the object to the document the first time it is
+    /// reached, so shared and looping refs keep their identity. A null is stored as null. An object whose type
+    /// isn't registered is stored as null too, and makes <see cref="Packer.TryPack"/> return false.
+    /// </summary>
     public void WriteRef(IPackable? value) => Document.Add(_container, _session.RefTo(value));
 
+    /// <summary>Refused at compile time: a char isn't a number. Write it as a string, or cast it.</summary>
     [Obsolete(KeyedWriter.CharIsNotANumber, true)] public void WriteInt32(char value) => throw new NotSupportedException();
+    /// <summary>Refused at compile time: a char isn't a number. Write it as a string, or cast it.</summary>
     [Obsolete(KeyedWriter.CharIsNotANumber, true)] public void WriteInt64(char value) => throw new NotSupportedException();
+    /// <summary>Refused at compile time: a char isn't a number. Write it as a string, or cast it.</summary>
     [Obsolete(KeyedWriter.CharIsNotANumber, true)] public void WriteSingle(char value) => throw new NotSupportedException();
+    /// <summary>Refused at compile time: a char isn't a number. Write it as a string, or cast it.</summary>
     [Obsolete(KeyedWriter.CharIsNotANumber, true)] public void WriteDouble(char value) => throw new NotSupportedException();
 
+    /// <summary>Appends a map and returns a writer for it.</summary>
     public KeyedWriter Map() {
         var map = Document.AddMap();
         Document.Add(_container, PackedValue.Map(map));
         return new KeyedWriter(_session, map);
     }
 
+    /// <summary>Appends an array and returns a writer for it.</summary>
     public ArrayWriter Array() {
         var array = Document.AddArray();
         Document.Add(_container, PackedValue.Array(array));

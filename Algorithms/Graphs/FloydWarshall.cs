@@ -61,6 +61,11 @@ public static class FloydWarshall {
     /// In: edge weights (0 or more, int.MaxValue for no edge). The diagonal is set to 0.
     /// Out: shortest path lengths. A path whose length would reach int.MaxValue reads as no path.
     /// </param>
+    /// <param name="next">
+    /// n*n (empty to skip).
+    /// Out: first vertex after <c>from</c> on the path to <c>to</c> (-1 if unreachable).
+    /// </param>
+    /// <param name="n">Vertex count.</param>
     public static void Solve(Span<int> distances, Span<int> next, int n) {
         _requireMatrices(distances.Length, next.Length, n, allowEmptyNext: true);
         var hasNext = !next.IsEmpty;

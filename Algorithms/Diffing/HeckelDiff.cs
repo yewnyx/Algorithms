@@ -9,16 +9,29 @@ namespace Yewnyx.Algorithms.Diffing;
 /// inserted as the equal run <c>revised[Revised..Revised + Length)</c>.
 /// </summary>
 public readonly struct BlockMove(int original, int revised, int length) : IEquatable<BlockMove> {
+    /// <summary>The index in the original sequence where the block starts.</summary>
     public readonly int Original = original;
+    /// <summary>The index in the revised sequence where the block starts.</summary>
     public readonly int Revised = revised;
+    /// <summary>The number of items in the block.</summary>
     public readonly int Length = length;
 
+    /// <inheritdoc/>
     public bool Equals(BlockMove other) => Original == other.Original && Revised == other.Revised && Length == other.Length;
+    /// <inheritdoc/>
     public override bool Equals(object? obj) => obj is BlockMove other && Equals(other);
+    /// <summary>
+    /// Whether both moves have the same <see cref="Original"/>, <see cref="Revised"/> and <see cref="Length"/>.
+    /// </summary>
     public static bool operator ==(BlockMove left, BlockMove right) => left.Equals(right);
+    /// <summary>
+    /// Whether the moves differ in <see cref="Original"/>, <see cref="Revised"/> or <see cref="Length"/>.
+    /// </summary>
     public static bool operator !=(BlockMove left, BlockMove right) => !left.Equals(right);
+    /// <inheritdoc/>
     public override int GetHashCode() => HashCode.Combine(Original, Revised, Length);
 
+    /// <summary>Splits the move into its three numbers: <c>var (original, revised, length) = move;</c>.</summary>
     public void Deconstruct(out int original, out int revised, out int length) => (original, revised, length) = (Original, Revised, Length);
 }
 
@@ -98,7 +111,13 @@ public static class HeckelDiff {
     /// <see cref="MyersDiff.Diff{T}(ReadOnlySpan{T}, ReadOnlySpan{T}, Span{Hunk}, Span{int}, int, out bool)"/>.
     /// Finding the blocks is not limited by it.
     /// </summary>
+    /// <param name="original">The sequence the hunks start from.</param>
+    /// <param name="revised">The sequence the hunks lead to.</param>
+    /// <param name="hunks">Receives the hunks; needs <see cref="MaxHunks"/> elements.</param>
+    /// <param name="moves">Receives the moved blocks; needs <see cref="MaxMoves"/> elements.</param>
+    /// <param name="workspace">Scratch space; needs <see cref="WorkspaceLength"/> elements.</param>
     /// <param name="budget">How many edits one Myers search looks for, as for <see cref="MyersDiff"/>.</param>
+    /// <param name="moveCount">Receives how many moves were written.</param>
     /// <param name="cutShort">Whether a Myers search was cut short, so the script may be longer than needed.</param>
     public static int Diff<T>(ReadOnlySpan<T> original, ReadOnlySpan<T> revised, Span<Hunk> hunks, Span<BlockMove> moves,
         Span<int> workspace, int budget, out int moveCount, out bool cutShort) where T : IEquatable<T> {

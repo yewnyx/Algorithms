@@ -4,6 +4,12 @@ using System.Diagnostics.CodeAnalysis;
 
 namespace Yewnyx.Algorithms.Graphs;
 
+/// <summary>
+/// A directed graph of edges between zero-based vertices, which finds strongly connected components in dependency
+/// order, and connected components. The graph holds only edges: vertices are the numbers from 0 up to the highest
+/// one an edge or <see cref="EnsureIndex"/> has mentioned. Not thread-safe: the graph keeps its working buffers
+/// and reuses them from one call to the next.
+/// </summary>
 /// <remarks>
 /// Results are written into caller-provided spans, so the graph never allocates output and the caller
 /// decides where results live (a pooled array, a slice of a larger buffer). The <c>ref</c> array
@@ -29,24 +35,41 @@ public sealed class Graph {
     /// <summary>
     /// Bumped whenever behaviour callers rely on changes (output order, buffer rules).
     /// Check it once at startup so a rebuilt library can't change behaviour silently.
+    /// The order <see cref="Tarjan(Span{int}, Span{Segment})"/> writes in is part of it.
     /// </summary>
     public static readonly int ContractVersion = 1;
 
+    /// <summary>
+    /// The number of vertices: one more than the highest index any edge or <see cref="EnsureIndex"/> has mentioned,
+    /// or 0.
+    /// </summary>
     public int VertexCount => _maxIndex + 1;
 
+    /// <summary>Adds each edge, as <see cref="AddEdge(Edge)"/> does. Returns the graph, for chaining.</summary>
     public Graph AddEdges(params Edge[] edges) {
         foreach (var edge in edges) { AddEdge(edge); }
         return this;
     }
 
+    /// <summary>
+    /// Adds a directed edge and makes sure both its vertices exist. Adding an edge that is already there changes nothing.
+    /// Returns the graph, for chaining.
+    /// </summary>
     public Graph AddEdge(Edge edge) {
         _edges.Add(edge);
         _maxIndex = Math.Max(_maxIndex, Math.Max(edge.From, edge.To));
         return this;
     }
 
+    /// <summary>
+    /// Adds the edge <paramref name="from"/> -> <paramref name="to"/>, as <see cref="AddEdge(Edge)"/> does.
+    /// </summary>
     public Graph AddEdge(int from, int to) => AddEdge((from, to));
 
+    /// <summary>
+    /// Makes sure vertices 0 to <paramref name="indexToEnsure"/> exist, so a vertex without edges still gets a component of
+    /// its own. Never lowers <see cref="VertexCount"/>. Returns the graph, for chaining.
+    /// </summary>
     public Graph EnsureIndex(int indexToEnsure) {
         _maxIndex = Math.Max(_maxIndex, indexToEnsure);
         return this;
@@ -67,7 +90,25 @@ public sealed class Graph {
     /// Output depends only on the vertex count and the set of edges (not insertion order or duplicates).
     /// Returns the number of components.
     /// </summary>
-    /// <remarks>Both spans need at least <see cref="VertexCount"/> elements.</remarks>
+    /// <remarks>
+    /// <para>
+    /// Both spans need at least <see cref="VertexCount"/> elements, or an <see cref="ArgumentException"/> is thrown
+    /// before anything is written. <paramref name="stronglyConnectedComponents"/> gets one <see cref="Segment"/> per
+    /// component, in the order the components are written, and they tile <paramref name="dependencyOrder"/> from 0 to
+    /// <see cref="VertexCount"/>. Elements past what was written are left alone. A graph with no vertices has no
+    /// components.
+    /// </para>
+    /// <para>
+    /// The search starts from vertex 0, then each vertex not yet reached in ascending order, and follows out-edges in
+    /// ascending order of their target. Vertices of one component come out in the reverse of the order the search
+    /// first reached them. Components are written as the search finishes them, which settles the order of components
+    /// that don't depend on each other. This order is the contract of <see cref="ContractVersion"/> 1: a change to
+    /// it raises the version. The search is iterative, takes O(vertices + edges) time and allocates nothing per
+    /// component; the working buffers are kept and reused.
+    /// </para>
+    /// </remarks>
+    /// <param name="dependencyOrder">Receives every vertex once, one component after another.</param>
+    /// <param name="stronglyConnectedComponents">Receives the slices of <paramref name="dependencyOrder"/> that hold each component.</param>
     public int Tarjan(Span<int> dependencyOrder, Span<Segment> stronglyConnectedComponents) {
         _requireLength(dependencyOrder.Length, nameof(dependencyOrder));
         _requireLength(stronglyConnectedComponents.Length, nameof(stronglyConnectedComponents));
@@ -81,7 +122,12 @@ public sealed class Graph {
     }
 
     /// <inheritdoc cref="Tarjan(Span{int}, Span{Segment})"/>
-    /// <remarks>Null or undersized arrays are replaced.</remarks>
+    /// <remarks>
+    /// A null array, or one with fewer than <see cref="VertexCount"/> elements, is replaced by a new array of exactly
+    /// <see cref="VertexCount"/> elements, so neither is null afterwards; the old contents aren't copied, and in a new
+    /// array the segments past the count are empty. An array that is long enough is kept and written in place, and may
+    /// be longer than the output: use the returned count and the segments, not the array's length.
+    /// </remarks>
     public int Tarjan([NotNull] ref int[]? dependencyOrder, [NotNull] ref Segment[]? stronglyConnectedComponents) {
         _ensureLength(ref dependencyOrder);
         _ensureLength(ref stronglyConnectedComponents);
@@ -96,9 +142,21 @@ public sealed class Graph {
     /// Returns the number of components; the vertices written are the ones those components cover.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Both output spans need at least <see cref="VertexCount"/> elements, and <paramref name="roots"/>
     /// must not share memory with <paramref name="dependencyOrder"/> (it is read while output is written).
+    /// The checks are made before anything is written: <see cref="ArgumentException"/> for a short span or for roots that
+    /// overlap the output, and <see cref="ArgumentOutOfRangeException"/> for a root that is not a vertex.
+    /// </para>
+    /// <para>
+    /// The components cover the start of <paramref name="dependencyOrder"/> and nothing past them is written. A root
+    /// that is listed twice, or was reached from an earlier one, is skipped. The order of components is the one
+    /// <see cref="Tarjan(Span{int}, Span{Segment})"/> promises, among the vertices written.
+    /// </para>
     /// </remarks>
+    /// <param name="roots">The vertices to search from, in order.</param>
+    /// <param name="dependencyOrder">Receives each vertex the roots reach once, one component after another.</param>
+    /// <param name="stronglyConnectedComponents">Receives the slices of <paramref name="dependencyOrder"/> that hold each component.</param>
     public int Tarjan(ReadOnlySpan<int> roots, Span<int> dependencyOrder, Span<Segment> stronglyConnectedComponents) {
         _requireLength(dependencyOrder.Length, nameof(dependencyOrder));
         _requireLength(stronglyConnectedComponents.Length, nameof(stronglyConnectedComponents));
@@ -117,8 +175,10 @@ public sealed class Graph {
 
     /// <inheritdoc cref="Tarjan(ReadOnlySpan{int}, Span{int}, Span{Segment})"/>
     /// <remarks>
-    /// Null or undersized arrays are replaced. <paramref name="roots"/> must not share memory with
-    /// <paramref name="dependencyOrder"/>.
+    /// A null array, or one with fewer than <see cref="VertexCount"/> elements, is replaced by a new array of exactly
+    /// <see cref="VertexCount"/> elements, so neither is null afterwards; in a new array the segments past the count
+    /// are empty. An array that is long enough is kept and written in place. <paramref name="roots"/> must not share
+    /// memory with <paramref name="dependencyOrder"/>.
     /// </remarks>
     public int Tarjan(
         ReadOnlySpan<int> roots, [NotNull] ref int[]? dependencyOrder, [NotNull] ref Segment[]? stronglyConnectedComponents) {
@@ -132,7 +192,12 @@ public sealed class Graph {
     /// and each group's vertices are written in ascending order.
     /// Output depends only on the vertex count and the set of edges. Returns the number of components.
     /// </summary>
-    /// <remarks>Both spans need at least <see cref="VertexCount"/> elements.</remarks>
+    /// <remarks>
+    /// Both spans need at least <see cref="VertexCount"/> elements, or an <see cref="ArgumentException"/> is thrown. A
+    /// vertex with no edges is a component of its own. The working buffers are kept in the graph.
+    /// </remarks>
+    /// <param name="vertices">Receives every vertex once, one component after another.</param>
+    /// <param name="components">Receives the slices of <paramref name="vertices"/> that hold each component.</param>
     public int ConnectedComponents(Span<int> vertices, Span<Segment> components) {
         _requireLength(vertices.Length, nameof(vertices));
         _requireLength(components.Length, nameof(components));
@@ -173,7 +238,11 @@ public sealed class Graph {
     }
 
     /// <inheritdoc cref="ConnectedComponents(Span{int}, Span{Segment})"/>
-    /// <remarks>Null or undersized arrays are replaced.</remarks>
+    /// <remarks>
+    /// A null array, or one with fewer than <see cref="VertexCount"/> elements, is replaced by a new array of exactly
+    /// <see cref="VertexCount"/> elements, so neither is null afterwards; in a new array the segments past the count
+    /// are empty. An array that is long enough is kept and written in place.
+    /// </remarks>
     public int ConnectedComponents([NotNull] ref int[]? vertices, [NotNull] ref Segment[]? components) {
         _ensureLength(ref vertices);
         _ensureLength(ref components);
