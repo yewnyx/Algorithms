@@ -150,5 +150,8 @@
         <TabItem Header="Spatial">
             <views:SpatialPanel />
         </TabItem>
+        <TabItem Header="Spatial grid">
+            <views:GridPanel />
+        </TabItem>
     </TabControl>
 </UserControl>

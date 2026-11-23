@@ -4,8 +4,8 @@ Small .NET libraries for graph algorithms, diffing, saving object graphs and que
 - **Diffing** (`Algorithms`): `MyersDiff`, `HistogramDiff`, `HeckelDiff` (moved blocks), diffs of items in groups (lines, then the characters in them), `Patch`, and an optional edit budget for all but `HistogramDiff`.
 - **Packables** (`Packables`, `Packables.Newtonsoft`): versioned saving and loading of object graphs, with JSON text.
 - **Collections**: `TwoWayDictionary`, a dictionary with one-to-one pairs that looks up in both directions.
-- **Spatial** (`Spatial`, experimental): the boxes within a radius of a point, and the nearest boxes, by scan or tree. Includes a Unity package.
-- **Visualizer**: a desktop and browser app that shows the graph algorithms on random graphs, opens Packables documents, diffs two texts you edit (with moved lines and the characters changed inside lines), and finds boxes near a sphere that follows the pointer in 3D, or a circle in a plane, by scan and by tree. [Try it in the browser](https://yewnyx.github.io/Algorithms/).
+- **Spatial** (`Spatial`, experimental): the boxes within a radius of a point, and the nearest boxes, by scan or tree. Also the distance to fixed shapes, exact or from a grid. Includes a Unity package.
+- **Visualizer**: a desktop and browser app that shows the graph algorithms on random graphs, opens Packables documents, diffs two texts you edit (with moved lines and the characters changed inside lines), and finds boxes near a sphere that follows the pointer in 3D, or a circle in a plane, by scan and by tree, and the distance to fixed shapes on a grid. [Try it in the browser](https://yewnyx.github.io/Algorithms/).
 
 ## Graphs
 
@@ -280,5 +280,59 @@ count = BoxTree.Nearest(tree, order, boxes, 4.5f, 0.5f, 0.5f, 100f, nearest, dis
 - A query returns -1 if it can tell its spans don't belong together (columns of different lengths, `order` and `boxes` of different lengths, or nodes that don't fit them). Then read nothing from its outputs. `Build` returns false, writing nothing, if a buffer is too short.
 - Cut the columns and `order` to the number of boxes, and `nodes` to `nodeCount`. A box outside the `extent` given to `Build` is still found, but queries may be slower.
 - A box that touches the sphere matches. A NaN coordinate leaves that side of the box open (unlimited). A negative or NaN radius, or a NaN point, matches nothing.
+
+### Shapes and wall distance
+
+For callers that ask "how much room is there here?" of geometry that doesn't move, many times a frame.
+
+- `Shapes` holds what nothing may pass through: boxes at any angle, spheres, capsules and triangles, with a `BoxTree` over them.
+- `Shapes.Distance` is the exact distance from a point to the nearest shape.
+- `Shapes.Write` stores the shapes as one block of bytes, and `Shapes.TryRead` views a block as shapes again. A tool can read meshes once and ship the block.
+- `WallDistance.MarkLayer` fills a grid with each cell's distance to the nearest shape, one byte a cell.
+- `WallDistance.RoomAt` answers from the grid alone, in constant time: a distance the nearest shape is proven to be at least.
+- `CellCost` is one more byte a cell that the caller writes: 0 is normal, 255 is closed.
+
+```csharp
+using Yewnyx.Spatial;
+
+// A floor, a pillar and one slanted triangle, in a room of 8 x 8 x 4 m.
+Solid[] solids = { Solid.Box(new Box(0, 0, -1, 8, 8, 0)), Solid.Capsule(4, 4, 0, 4, 4, 4, 0.25f) };
+float[] corners = { 0, 6, 0,   8, 6, 0,   4, 8, 3 };
+int[] triangles = { 0, 1, 2 };   // one triangle: corners 0, 1 and 2
+
+// Store them as one block, then view the block as shapes.
+var block = new byte[Shapes.BlockLength(solids.Length, corners.Length / 3, triangles.Length / 3)];
+Shapes.Write(solids, corners, triangles, new int[Shapes.WorkspaceLength(3)], block, out int length);
+Shapes.TryRead(block.AsSpan(0, length), out ShapeSet shapes);
+
+Shapes.Distance(shapes, 2f, 4f, 1f, limit: 5f, out float exact);
+// exact 1: the floor is nearest
+
+// A grid of half-metre cells over the room, one z layer at a time (layers can run side by side).
+var grid = new GridShape(0, 0, 0, 0.5f, 16, 16, 8);
+var map = new byte[grid.CellCount];
+for (int z = 0; z < grid.CountZ; z++) {
+    WallDistance.MarkLayer(grid, shapes, unit: 1f / 128f, cap: 128, z, map.AsSpan(z * grid.LayerLength, grid.LayerLength));
+}
+
+var wall = new WallMap(grid, 1f / 128f, 128, map);
+WallDistance.RoomAt(wall, 2f, 4f, 1f, out float room);
+// room 0.90: proven from the eight cells around the point, and never more than the exact 1
+
+// Cells whose centre is inside a box cost three times as much to cross.
+var cost = new byte[grid.CellCount];
+CellCost.Fill(grid, Solid.Box(new Box(0, 0, 0, 2, 2, 4)), 32, cost);
+CellCost.At(grid, cost, 1f, 1f, 1f, out byte value);
+// value 32
+```
+
+- Queries take and return points, never cell numbers. `GridShape.TryCentre` gives the centre of the cell that holds a point. To walk an array you own, `IndexOf` and `CentreOf` give a cell's place and centre.
+- A solid's fields can be read back, to draw it for instance. What each holds depends on its `Kind`.
+- A cell's count times the `unit` is never more than the true distance from its centre. A cell at the `cap` is that far or more.
+- A distance is within `Shapes.Slack` (a quarter of a millimetre) of the true one, for shapes within `Shapes.Reach` (1,024 m) of the origin.
+- A triangle has no inside, so the middle of a closed shell of triangles reads as room. A solid's inside reads 0.
+- The same shapes give the same block on every runtime. A block of another `Shapes.Version` is refused: make it again.
+- A damaged block reads nothing out of bounds, but it can give wrong answers. A solid of an unknown kind, or one that holds a number that isn't finite, never reads as farther than it is.
+- Every call returns false if it is refused (a point outside the grid, spans that don't belong together, a shape that may not be stored). Then read nothing from its outputs.
 
 `Spatial.Unity/` is a Unity package (`xyz.yewnyx.spatial`) around the same source: a `BoxSet` that recomputes only the boxes that moved, Burst jobs that rebuild the tree and answer batches of queries, a gizmo and a sample scene. See [Spatial.Unity/README.md](Spatial.Unity/README.md).

@@ -5,7 +5,7 @@
 Queries over many boxes from Unity jobs: which items are within a radius of a point, and which are nearest. For callers that query many boxes every frame from jobs, where most boxes rest and some move.
 
 - `Core/`: the Spatial library, with no Unity reference. The same files build as the `Spatial` library for .NET in this repository.
-- `Runtime/`: a `BoxSet` that owns the native arrays, and Burst jobs that update it and answer queries.
+- `Runtime/`: a `BoxSet` that owns the native arrays, and Burst jobs that update it and answer queries. Also a `WallGrid` for geometry that does not move, and `ColliderShapes` to fill it from colliders.
 
 ## Use
 
@@ -53,6 +53,37 @@ The set's job reads the arrays after `posesReady`, so your job, the set and the 
 
 With 1,000 items moving every frame in a Windows player on one desktop, the calling thread spent about 10 us in `Move` calls and under 1 us passing arrays.
 
+## Room around geometry that does not move
+
+For callers that ask how much room there is at a point, many times a frame, of colliders that stay put.
+
+```csharp
+// Colliders into shapes, in the frame of a root transform. In the editor this can read every mesh.
+ColliderShapes.TryWrite(colliders, root.worldToLocalMatrix, out byte[] block, out CollectReport report);
+
+// A grid of half-metre cells in that frame. It copies the shapes, so the block can go.
+var grid = new WallGrid(new GridShape(0, 0, 0, 0.5f, 80, 80, 60));
+grid.SetShapes(block);
+JobHandle marked = grid.ScheduleMark();   // each cell's distance to the nearest shape, one z layer per index
+
+grid.TryRoom(point, out float room);                    // proven from eight cells, never more than the true distance
+grid.TryDistance(point, limit: 2f, out float exact);    // exact, from the shapes
+grid.FillCost(Solid.Box(new Box(0, 0, 0, 2, 2, 4)), 32);   // cells whose centre is inside cost three times as much
+```
+
+- **One frame, no transform.** Points and shapes are in the grid's own frame. Where that frame sits in the world is the caller's.
+- **A built player cannot read a mesh** unless it was imported with Read/Write on. Write the block in the editor and store it; `SetShapes` takes it back. `SetShapes` also takes solids and triangles directly.
+- **Shapes are the physics engine's.** Under a turned child of an unevenly scaled parent the engine does not hold a sheared box, sphere or capsule: it takes the transform's rotation and lossy scale, and so does `ColliderShapes`. A mesh goes through the matrix, as the engine's does.
+- **Nothing is left out in silence.** A collider whose shape cannot be held goes in as a box around it: a convex mesh, a mesh that cannot be read, any other kind. `CollectReport` counts them. It also counts colliders that gave nothing (`Missing`): a mesh collider with no mesh, or an inactive collider of another kind. Shapes collected with any missing are not to be trusted.
+- **It never asks the physics engine,** so it sees only the colliders it is given.
+- **The same colliders give the same block,** on one kind of machine. `Shapes.Version` changes when the layout does; a block of another version is refused.
+- **The grid never claims room it has not worked out.** `TryRoom` gives 0 before the first `ScheduleMark`, and again from `SetShapes` until the next `ScheduleMark` is done; `IsMarked` is false for as long. A layer whose marking is refused, because the shapes are damaged, is left at 0.
+- **`TryRoom` and `TryDistance` say how far the nearest surface is,** not whether a point is in open space. A triangle has no inside.
+- **Costs take a byte a cell only once one is written.** Until `FillCost` writes a cost that isn't 0, and again after `ClearCost`, the grid holds none and `Cost` is empty.
+- **Read `Cost` again after `FillCost` or `ClearCost`.** They can put another array in its place. One kept from before is then freed, or is the empty one, which reads every cell as normal, closed ones included.
+- **Main thread only.** `TryRoom`, `IsMarked` and `Wall` wait for the marking jobs first. They do not wait for a job of yours.
+- **A job of yours that reads `Wall` or `Cost`** must be handed to `AddReader`. The next marking then runs after it, and `SetShapes`, cost changes and `Dispose` wait for it. Otherwise those write or free the arrays under your job.
+
 ## Seeing it
 
 - `BoxSetGizmo` draws a set in the scene view (`gizmo.Set = set`): each item's box, blue if it rested and red if the last `Schedule` worked it out again, and the tree's nodes, fainter the deeper they are. It waits for the set's jobs, so use it for looking, not in a build that must be quick.
@@ -72,12 +103,13 @@ With 1,000 items moving every frame in a Windows player on one desktop, the call
 
 ## Safety restrictions lifted in the jobs
 
-Unity's checks are turned off in these places, each for the reason shown. The job that updates the set lifts none.
+Unity's checks are turned off in these places, each for the reason shown. The job that updates a `BoxSet` lifts none.
 
 | Job | Array | Why it is safe |
 |---|---|---|
 | `InSphereJob`, `NearestJob` | the results | Query q writes only `results[q * stride .. (q + 1) * stride)`, so no two queries write the same place |
 | `NearestJob` | the squared distances | The same slices as the results |
+| `MarkJob` | the wall distance | Layer z writes only `wall[z * layer .. (z + 1) * layer)`, so no two layers write the same place |
 
 ## Tests
 

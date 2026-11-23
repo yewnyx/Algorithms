@@ -4,7 +4,7 @@
         <!-- Unity compiles the same source files and takes C# 9. -->
         <LangVersion>9.0</LangVersion>
         <PackageId>Yewnyx.Spatial</PackageId>
-        <Description>Queries over many boxes: which are near a point, and which are nearest. No allocation, and usable from Unity jobs.</Description>
+        <Description>Queries over many boxes: which are near a point, and which are nearest. Distance to fixed shapes, exact or from a grid. No allocation, and usable from Unity jobs.</Description>
         <PackageTags>spatial;boxes;nearest;bvh;unity</PackageTags>
         <RepositoryType>git</RepositoryType>
         <RepositoryUrl>https://github.com/yewnyx/Algorithms</RepositoryUrl>
