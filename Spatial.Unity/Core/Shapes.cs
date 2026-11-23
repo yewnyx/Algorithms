@@ -31,8 +31,8 @@ namespace Yewnyx.Spatial {
         /// <summary>How much wider than its shape each stored box is, so rounding never leaves a shape outside its box.</summary>
         internal const float Pad = 1f / 1024f;
 
-        /// <summary>The version of the block's layout. A block of any other version is refused.</summary>
-        public const int Version = 1;
+        /// <summary>The version of the block's layout and of the order its tree is in. A block of any other version is refused.</summary>
+        public const int Version = 2;
 
         // "YSHP" when the block is read in the order it was written. Read the other way round it is a different number.
         private const int Magic = 0x50485359;
