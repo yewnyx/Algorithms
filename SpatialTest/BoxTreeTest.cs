@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using FluentAssertions;
 
 namespace Yewnyx.Spatial.Test;
@@ -469,8 +470,100 @@ public class BoxTreeTest {
         var nodes = new BoxNode[8];
         var order = new int[8];
 
-        // The order runs through x first, then y, then z, whichever way the boxes were given.
+        // The order goes round the corners one step along one axis at a time, whichever way the boxes
+        // were given: from the near corner up z, across y, down z, across x, up z, back y, down z.
         BoxTree.Build(boxes, new Box(0, 0, 0, 1024, 1024, 1024), nodes, order, new int[BoxTree.WorkspaceLength(8)], out _).Should().BeTrue();
-        order.Should().Equal(7, 6, 5, 4, 3, 2, 1, 0);
+        order.Select(i => 7 - i).Should().Equal(0b000, 0b100, 0b110, 0b010, 0b011, 0b111, 0b101, 0b001);
+    }
+
+    // A cell's place along the Hilbert curve through 1024 cells a side, worked out the plain way
+    // (Skilling, "Programming the Hilbert curve", 2004), x's bit the highest of each three.
+    private static int HilbertKey(int cellX, int cellY, int cellZ) {
+        uint x = (uint)cellX, y = (uint)cellY, z = (uint)cellZ;
+        for (var bit = 1u << 9; bit > 1; bit >>= 1) {
+            var low = bit - 1;
+            if ((x & bit) != 0) { x ^= low; }
+            if ((y & bit) != 0) { x ^= low; } else { var swap = (x ^ y) & low; x ^= swap; y ^= swap; }
+            if ((z & bit) != 0) { x ^= low; } else { var swap = (x ^ z) & low; x ^= swap; z ^= swap; }
+        }
+        y ^= x;
+        z ^= y;
+        var turn = 0u;
+        for (var bit = 1u << 9; bit > 1; bit >>= 1) { if ((z & bit) != 0) { turn ^= bit - 1; } }
+        x ^= turn; y ^= turn; z ^= turn;
+        var key = 0;
+        for (var bit = 9; bit >= 0; bit--) { key = (key << 3) | (int)((((x >> bit) & 1) << 2) | (((y >> bit) & 1) << 1) | ((z >> bit) & 1)); }
+        return key;
+    }
+
+    [Fact]
+    public void TheOrderIsThatOfTheHilbertCurve() {
+        // 24 blocks of 16 x 16 x 16 cells, with a small box in the middle of every cell. The curve can
+        // lie 24 ways round in a block, and it enters these one in each way. So between them they
+        // read every entry of the table the tree makes its keys from, and a fault in any one entry
+        // changes the order.
+        (int x, int y, int z)[] blocks = [
+            (0, 0, 0), (576, 752, 848), (416, 464, 256), (320, 560, 160), (256, 192, 688), (400, 688, 976), (32, 560, 592), (864, 480, 96),
+            (96, 928, 80), (352, 96, 768), (128, 480, 688), (560, 976, 544), (960, 656, 512), (528, 144, 640), (640, 96, 336), (144, 1008, 672),
+            (720, 224, 128), (240, 416, 384), (176, 48, 896), (480, 832, 768), (272, 720, 656), (976, 416, 816), (672, 656, 944), (160, 272, 592),
+        ];
+        var cells = new (int x, int y, int z)[blocks.Length * 4096];
+        var boxes = new Box[cells.Length];
+        for (var i = 0; i < cells.Length; i++) {
+            var block = blocks[i / 4096];
+            var cell = cells[i] = (block.x + i % 16, block.y + i / 16 % 16, block.z + i / 256 % 16);
+            boxes[i] = new Box(cell.x + 0.25f, cell.y + 0.25f, cell.z + 0.25f, cell.x + 0.75f, cell.y + 0.75f, cell.z + 0.75f);
+        }
+        var nodes = new BoxNode[boxes.Length];
+        var order = new int[boxes.Length];
+        BoxTree.Build(boxes, new Box(0, 0, 0, 1024, 1024, 1024), nodes, order, new int[BoxTree.WorkspaceLength(boxes.Length)], out _).Should().BeTrue();
+
+        // The plain computation must put the boxes in the order the tree did.
+        var expected = Enumerable.Range(0, boxes.Length).OrderBy(i => HilbertKey(cells[i].x, cells[i].y, cells[i].z)).ToArray();
+        order.AsSpan().SequenceEqual(expected).Should().BeTrue();
+    }
+
+    [Fact]
+    public void BoxesThatFollowOneAnotherInTheOrderAreNeighbours() {
+        // One small box in each cube of a 16 x 16 x 16 lattice. Along a Hilbert curve every step
+        // goes to a cube that shares a face with the last, so any run of the order is a compact
+        // lump. (Along a Morton curve half the steps jump, some of them right across the lattice.)
+        var boxes = new Box[16 * 16 * 16];
+        for (var i = 0; i < boxes.Length; i++) {
+            float x = i % 16 + 0.25f, y = i / 16 % 16 + 0.25f, z = i / 256 + 0.25f;
+            boxes[i] = new Box(x, y, z, x + 0.5f, y + 0.5f, z + 0.5f);
+        }
+        var nodes = new BoxNode[boxes.Length];
+        var order = new int[boxes.Length];
+        BoxTree.Build(boxes, new Box(0, 0, 0, 16, 16, 16), nodes, order, new int[BoxTree.WorkspaceLength(boxes.Length)], out _).Should().BeTrue();
+
+        for (var i = 1; i < order.Length; i++) {
+            int a = order[i - 1], b = order[i];
+            var steps = Math.Abs(a % 16 - b % 16) + Math.Abs(a / 16 % 16 - b / 16 % 16) + Math.Abs(a / 256 - b / 256);
+            steps.Should().Be(1, $"boxes {a} and {b} follow one another");
+        }
+    }
+
+    [Fact]
+    public void TheSameBoxesGiveTheSameTreeByteForByte() {
+        // Nine boxes scattered through a cube of 16.
+        Box[] boxes = [
+            new(1, 1, 1, 2, 2, 2), new(13, 2, 3, 15, 3, 4), new(6, 12, 1, 7, 14, 2), new(2, 3, 12, 3, 4, 13), new(12, 13, 12, 14, 14, 13),
+            new(7, 7, 7, 9, 9, 9), new(3, 10, 9, 4, 11, 11), new(10, 4, 10, 11, 5, 12), new(14, 9, 2, 15, 11, 3),
+        ];
+        var nodes = new BoxNode[9];
+        var order = new int[9];
+        BoxTree.Build(boxes, new Box(0, 0, 0, 16, 16, 16), nodes, order, new int[BoxTree.WorkspaceLength(9)], out var nodeCount).Should().BeTrue();
+
+        // The order, and the nodes as they lie in memory: six floats for the box, then First and Count.
+        // If this changes, the order or the tree's layout changed. A baked block of shapes holds a
+        // tree, so Shapes.Version must then be raised too.
+        order.Should().Equal(0, 3, 6, 2, 8, 5, 4, 7, 1);
+        Convert.ToHexString(MemoryMarshal.AsBytes(nodes.AsSpan(0, nodeCount))).Should().Be(
+            "0000803F0000803F0000803F0000704100006041000050410200000000000000" +
+            "0000803F0000803F0000803F0000E04000006041000050410000000004000000" +
+            "0000E04000000040000000400000704100006041000050410400000000000000" +
+            "0000E0400000E040000000400000704100003041000010410400000002000000" +
+            "0000204100000040000040400000704100006041000050410600000003000000");
     }
 }

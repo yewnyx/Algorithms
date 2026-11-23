@@ -236,7 +236,7 @@ if (Format1Converter.TryConvert(oldJson, document, "application/packable+json", 
 `Spatial` finds the boxes within a radius of a point, and the nearest boxes. It's suitable for queries against boxes in which most are still and some move. Non-throwing and zero allocation.
 
 - `BoxScan` is an optimized scan - it's not indexed, but arranges the data in a way that is convenient/optimized to loop over.
-- `BoxTree` is an index: it sorts the boxes along a Morton curve into a tree, and a query only checks the branches near the point.
+- `BoxTree` is an index: it sorts the boxes along a Hilbert curve into a tree, and a query only checks the branches near the point.
 
 Both find the same boxes, and `Nearest` gives identical results, ties included (the lower index comes first).
 

@@ -96,7 +96,7 @@ if (route.Status == RouteStatus.Found) {                // reading the answer wa
 - **Shapes are the physics engine's.** Under a turned child of an unevenly scaled parent the engine does not hold a sheared box, sphere or capsule: it takes the transform's rotation and lossy scale, and so does `ColliderShapes`. A mesh goes through the matrix, as the engine's does.
 - **Nothing is left out in silence.** A collider whose shape cannot be held goes in as a box around it: a convex mesh, a mesh that cannot be read, any other kind. `CollectReport` counts them. It also counts colliders that gave nothing (`Missing`): a mesh collider with no mesh, or an inactive collider of another kind. Shapes collected with any missing are not to be trusted.
 - **It never asks the physics engine,** so it sees only the colliders it is given.
-- **The same colliders give the same block,** on one kind of machine. `Shapes.Version` changes when the layout does; a block of another version is refused.
+- **The same colliders give the same block,** on one kind of machine. `Shapes.Version` changes when the layout or the tree's order does; a block of another version is refused.
 - **The grid never claims room it has not worked out.** `TryRoom` gives 0 before the first `ScheduleMark`, and again from `SetShapes` until the next `ScheduleMark` is done; `IsMarked` is false for as long. A layer whose marking is refused, because the shapes are damaged, is left at 0.
 - **`TryRoom` and `TryDistance` say how far the nearest surface is,** not whether a point is in open space. A triangle has no inside.
 - **Costs take a byte a cell only once one is written.** Until `FillCost` writes a cost that isn't 0, and again after `ClearCost`, the grid holds none and `Cost` is empty.

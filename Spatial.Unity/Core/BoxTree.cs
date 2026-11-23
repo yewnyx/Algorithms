@@ -19,8 +19,13 @@ namespace Yewnyx.Spatial {
     /// branches near the point: about O(log n) each for boxes that are spread out.
     /// </summary>
     /// <remarks>
-    /// Boxes are sorted along a Morton curve and split at the middle, O(n) after the sort. Nothing
-    /// is allocated and nothing throws. The tree and the results depend only on the inputs.
+    /// Boxes are sorted along a Hilbert curve and split at the middle, O(n) after the sort. Boxes
+    /// that follow one another along the curve lie close together, so each half is a compact lump,
+    /// and for boxes spread through an area or a volume the nodes' boxes overlap little. (A few
+    /// rows of boxes along an axis are the one kind of set that a Morton curve would sort better.)
+    /// Nothing throws, and a build or a query allocates nothing; on a managed runtime the table
+    /// the keys are made from is allocated once, about 3 KB, the first time a tree is built. The
+    /// tree and the results depend only on the inputs.
     /// A query that is handed spans that don't belong together, or nodes that are damaged, reads
     /// and writes nothing out of bounds, ends within one visit per node, and returns -1 where it can
     /// tell. Nothing is to be read from the outputs of a query that returned -1.
@@ -66,7 +71,8 @@ namespace Yewnyx.Spatial {
                 var cellX = _cell(_scaled(box.MinX, box.MaxX, extent.MinX, scaleX));
                 var cellY = _cell(_scaled(box.MinY, box.MaxY, extent.MinY, scaleY));
                 var cellZ = _cell(_scaled(box.MinZ, box.MaxZ, extent.MinZ, scaleZ));
-                keys[i] = _spread(cellX) | (_spread(cellY) << 1) | (_spread(cellZ) << 2);
+                // The place along the curve of the cell the box's middle falls in, of 1024 a side across the extent.
+                keys[i] = HilbertOrder.FromMorton(_spread(cellX) | (_spread(cellY) << 1) | (_spread(cellZ) << 2));
                 sorted[i] = i;
             }
 
