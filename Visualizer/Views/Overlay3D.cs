@@ -14,6 +14,8 @@ internal static class Overlay3D {
     private static readonly IPen AnchorEdge = new Pen(new SolidColorBrush(Color.FromRgb(0xFF, 0x80, 0xAB)), 2);
     private static readonly IBrush AnchorFill = new SolidColorBrush(Color.FromArgb(0x60, 0xFF, 0x80, 0xAB));
     private static readonly IBrush White = new SolidColorBrush(Colors.White);
+    private static readonly IPen CostEdge = new Pen(new SolidColorBrush(Color.FromRgb(0xFF, 0x98, 0x00)), 1.5);
+    private static readonly IPen PathLine = new Pen(new SolidColorBrush(Color.FromRgb(0xFF, 0xEB, 0x3B)), 3);
 
     /// <summary>The solids as wireframes in one pen.</summary>
     public static void Wire(DrawingContext context, in Projection cam, IEnumerable<Solid> solids, IPen pen) {
@@ -49,6 +51,26 @@ internal static class Overlay3D {
             context.DrawLine(NearestLine, at, to);
             context.DrawRectangle(White, null, new Rect(to.X - 3.5, to.Y - 3.5, 7, 7));
         }
+        if (anchor is { } a) { Anchor(context, cam.Project(a.x, a.y, a.z)); }
+    }
+
+    /// <summary>A line through points of the world.</summary>
+    public static void Polyline(DrawingContext context, in Projection cam, IReadOnlyList<(float x, float y, float z)> points, IPen pen) {
+        if (points.Count < 2) { return; }
+        var geometry = new StreamGeometry();
+        using (var g = geometry.Open()) {
+            g.BeginFigure(cam.Project(points[0].x, points[0].y, points[0].z), false);
+            for (var i = 1; i < points.Count; i++) { g.LineTo(cam.Project(points[i].x, points[i].y, points[i].z)); }
+            g.EndFigure(false);
+        }
+        context.DrawGeometry(null, pen, geometry);
+    }
+
+    /// <summary>Colouring by travel: the cost boxes dropped, the solid the field starts in, the anchor, and the path the field leads the probe along.</summary>
+    public static void Travel(DrawingContext context, in Projection cam, WallWorld world, IReadOnlyList<(float x, float y, float z)>? path, (float x, float y, float z)? anchor) {
+        Wire(context, cam, world.CostBoxes, CostEdge);
+        if (world.GoalSolid is { } goal) { Wire(context, cam, [goal], SeedEdge); }
+        if (path is not null) { Polyline(context, cam, path, PathLine); }
         if (anchor is { } a) { Anchor(context, cam.Project(a.x, a.y, a.z)); }
     }
 }

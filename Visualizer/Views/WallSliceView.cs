@@ -13,7 +13,9 @@ namespace Yewnyx.Algorithms.Visualizer.Views;
 /// seeds' flood reached, with the cells open but unreached dim and the cells too near a shape dark. The solids are pale
 /// shapes cut from their own numbers. The probe has two circles in wall-distance colour (what the grid alone proves is
 /// free, and what the shapes say is) and, in region colour, its reach and the nearest open cell. Pressing and dragging
-/// puts the probe there; Shift or the right button puts the anchor, whose region the nearest-open query can be held to.
+/// puts the probe there; Shift or the right button puts the anchor, whose region the nearest-open query can be held to, or
+/// where a travel field starts. Coloured by travel, each cell shows how far it is from the goal going round what is in the way,
+/// with short strokes downhill on a coarse lattice and the path the field leads the probe along.
 /// The x-by-y slice (looking down) also draws its legend; the x-by-z slice (from the side, z up) draws a line where the
 /// other slice cuts.
 /// </summary>
@@ -36,8 +38,14 @@ public sealed class WallSliceView : Control {
     private static readonly IPen NearestOff = new Pen(new SolidColorBrush(Color.FromArgb(0xA0, 0xFF, 0xFF, 0xFF)), 1.5, DashStyle.Dot);
     private static readonly IPen AnchorEdge = new Pen(new SolidColorBrush(Color.FromRgb(0xFF, 0x80, 0xAB)), 2);
     private static readonly IBrush ProbeDot = new SolidColorBrush(Colors.White);
+    private static readonly IPen CostEdge = new Pen(new SolidColorBrush(Color.FromRgb(0xFF, 0x98, 0x00)), 2);
+    private static readonly IBrush CostFill = new SolidColorBrush(Color.FromArgb(0x50, 0xFF, 0x98, 0x00));
+    private static readonly IPen Stroke = new Pen(new SolidColorBrush(Color.FromArgb(0xE0, 0xFF, 0xFF, 0xFF)), 1.4);
+    private static readonly IPen PathNear = new Pen(new SolidColorBrush(Color.FromRgb(0xFF, 0xEB, 0x3B)), 3);
+    private static readonly IPen PathFar = new Pen(new SolidColorBrush(Color.FromArgb(0x90, 0xFF, 0xEB, 0x3B)), 2, DashStyle.Dot);
     private static readonly IBrush TextBrush = new SolidColorBrush(Color.FromRgb(0xC8, 0xD0, 0xDC));
 
+    private List<(double U, double V)[]>? _costOutlines, _goalOutlines;
     private List<(double U, double V)[]>? _outlines, _seedOutlines;
     private (WallWorld? world, float at) _outlinesFor;
     private bool _pressed;
@@ -63,6 +71,10 @@ public sealed class WallSliceView : Control {
     public float AnchorX { get; set; }
     public float AnchorY { get; set; }
     public float AnchorZ { get; set; }
+
+    /// <summary>For travel colour: the path the field leads down from the probe, and whether to draw the strokes.</summary>
+    public List<(float x, float y, float z)>? Path { get; set; }
+    public bool ShowStrokes { get; set; } = true;
 
     /// <summary>The colour of this slice's frame and title, to match its plane in the 3D view; none for the plain look.</summary>
     public Color? Accent { get; set; }
@@ -149,6 +161,7 @@ public sealed class WallSliceView : Control {
         var (scale, ox, oy) = Geometry();
         var cell = WallWorld.CellSize * scale;
         var regions = Colour == SliceColour.Regions;
+        var travel = Colour == SliceColour.Travel;
         var brushes = SliceColours.Brushes(world, Colour);
 
         // The layer the slice cuts, or for the side slice the row of cells holding the probe's y.
@@ -183,7 +196,9 @@ public sealed class WallSliceView : Control {
         }
         context.DrawRectangle(null, Accent is { } edge ? new Pen(new SolidColorBrush(edge), 1.8) : Frame, new Rect(ox, oy, WallWorld.Width * scale, PlaneHeight * scale));
 
-        DrawSolids(context, world, regions, scale, ox, oy);
+        DrawSolids(context, world, regions, travel, scale, ox, oy);
+        if (travel && ShowStrokes) { DrawStrokes(context, world, scale, ox, oy); }
+        if (travel && Path is { Count: > 1 } path) { DrawPath(context, path, scale, ox, oy); }
 
         if (Plane == SlicePlane.Xz) {
             var cut = ToPixel(0, ProbeZ, scale, ox, oy);
@@ -192,7 +207,10 @@ public sealed class WallSliceView : Control {
 
         // The probe is on this slice, at its own height or row, so its circles are true circles here.
         var at = ToPixel(ProbeX, Plane == SlicePlane.Xy ? ProbeY : ProbeZ, scale, ox, oy);
-        if (regions) {
+        if (travel) {
+            // The anchor is where a point goal sits.
+            if (HasAnchor) { DrawAnchor(context, scale, ox, oy); }
+        } else if (regions) {
             context.DrawEllipse(null, ReachEdge, at, Reach * scale, Reach * scale);
             if (HasAnchor) { DrawAnchor(context, scale, ox, oy); }
             if (HasNearest) { DrawNearest(context, at, scale, ox, oy); }
@@ -202,7 +220,54 @@ public sealed class WallSliceView : Control {
         }
         context.DrawEllipse(ProbeDot, null, at, 3, 3);
 
-        if (ShowLegend) { DrawLegend(context, world, regions, ox, oy + PlaneHeight * scale + 6, WallWorld.Width * scale); }
+        if (ShowLegend) { DrawLegend(context, world, regions, travel, ox, oy + PlaneHeight * scale + 6, WallWorld.Width * scale); }
+    }
+
+    // Short strokes downhill on a coarse lattice: from the middle of every other cell, a line along the field's direction as far as it lies in this plane.
+    private void DrawStrokes(DrawingContext context, WallWorld world, double scale, double ox, double oy) {
+        var rows = Plane == SlicePlane.Xy ? WallWorld.CountY : WallWorld.CountZ;
+        var geometry = new StreamGeometry();
+        var any = false;
+        using (var g = geometry.Open()) {
+            for (var row = 1; row < rows; row += 2) {
+                for (var column = 1; column < WallWorld.CountX; column += 2) {
+                    double u = (column + 0.5) * WallWorld.CellSize, v = (row + 0.5) * WallWorld.CellSize;
+                    var (x, y, z) = Plane == SlicePlane.Xy ? ((float)u, (float)v, ProbeZ) : ((float)u, ProbeY, (float)v);
+                    if (!world.SampleField(x, y, z, out var dx, out var dy, out var dz, out _)) { continue; }
+                    var (du, dv) = Plane == SlicePlane.Xy ? (dx, dy) : (dx, dz);
+                    var along = Math.Sqrt(du * du + dv * dv);
+                    // A direction mostly across this plane has no stroke to show on it.
+                    if (along < 0.2) { continue; }
+                    var length = WallWorld.CellSize * 1.4 * along;
+                    double tipU = u + du / along * length, tipV = v + dv / along * length;
+                    var tail = ToPixel(u, v, scale, ox, oy);
+                    var tip = ToPixel(tipU, tipV, scale, ox, oy);
+                    g.BeginFigure(tail, false);
+                    g.LineTo(tip);
+                    // The head: two short strokes back from the tip.
+                    double bx = tail.X - tip.X, by = tail.Y - tip.Y, back = Math.Sqrt(bx * bx + by * by);
+                    if (back > 0.5) {
+                        double ex = bx / back * 4, ey = by / back * 4;
+                        g.LineTo(new Point(tip.X + ex * 0.8 - ey * 0.6, tip.Y + ey * 0.8 + ex * 0.6));
+                        g.BeginFigure(tip, false);
+                        g.LineTo(new Point(tip.X + ex * 0.8 + ey * 0.6, tip.Y + ey * 0.8 - ex * 0.6));
+                    }
+                    g.EndFigure(false);
+                    any = true;
+                }
+            }
+        }
+        if (any) { context.DrawGeometry(null, Stroke, geometry); }
+    }
+
+    // The way the field leads the probe, as a line on this slice: bright where it runs near the slice, faint and dotted where it is above or below it.
+    private void DrawPath(DrawingContext context, List<(float x, float y, float z)> path, double scale, double ox, double oy) {
+        for (var i = 1; i < path.Count; i++) {
+            var (au, av, aoff) = OnSlice(path[i - 1].x, path[i - 1].y, path[i - 1].z);
+            var (bu, bv, boff) = OnSlice(path[i].x, path[i].y, path[i].z);
+            var near = Math.Abs(aoff) < 1.0 && Math.Abs(boff) < 1.0;
+            context.DrawLine(near ? PathNear : PathFar, ToPixel(au, av, scale, ox, oy), ToPixel(bu, bv, scale, ox, oy));
+        }
     }
 
     // The cell the nearest-open query found, joined to the probe by a line; hollow and dotted if it is off this slice's plane.
@@ -232,14 +297,22 @@ public sealed class WallSliceView : Control {
     }
 
     // Pale shapes: where the plane cuts each solid, from the solid's own numbers; in region colour the seeds too, as yellow boxes.
-    private void DrawSolids(DrawingContext context, WallWorld world, bool regions, double scale, double ox, double oy) {
+    private void DrawSolids(DrawingContext context, WallWorld world, bool regions, bool travel, double scale, double ox, double oy) {
         var at = Fixed;
-        if (_outlines is null || _outlinesFor != (world, at)) {
+        if (_outlines is null || _outlinesFor != (world, at) || travel) {
             _outlines = world.Sections(Plane, at);
             _seedOutlines = world.SeedSections(Plane, at);
+            _costOutlines = world.CostSections(Plane, at);
+            _goalOutlines = world.GoalSections(Plane, at);
             _outlinesFor = (world, at);
         }
         if (ShowSolids) { Fill(context, _outlines, SolidFill, SolidEdge, scale, ox, oy); }
+        if (travel) {
+            // Dropped cost boxes in orange, and the solid the field starts in in yellow.
+            Fill(context, _costOutlines!, CostFill, CostEdge, scale, ox, oy);
+            Fill(context, _goalOutlines!, SeedFill, SeedEdge, scale, ox, oy);
+            return;
+        }
         if (!regions) { return; }
         if (_seedOutlines is not null) { Fill(context, _seedOutlines, SeedFill, SeedEdge, scale, ox, oy); }
         // A seed the plane misses still shows, as a hollow mark where it lies over or under the slice.
@@ -271,7 +344,25 @@ public sealed class WallSliceView : Control {
         g.EndFigure(true);
     }
 
-    private void DrawLegend(DrawingContext context, WallWorld world, bool regions, double x, double y, double width) {
+    private void DrawLegend(DrawingContext context, WallWorld world, bool regions, bool travel, double x, double y, double width) {
+        if (travel) {
+            var brushes = SliceColours.Brushes(world, SliceColour.Travel);
+            var travelBar = Math.Min(width * 0.4, 260.0);
+            var travelStep = travelBar / SliceColours.Bands;
+            for (var band = 0; band < SliceColours.Bands; band++) { context.FillRectangle(brushes[band], new Rect(x + band * travelStep, y, Math.Ceiling(travelStep) + 0.5, 10)); }
+            DrawText(context, "at the goal", new Point(x, y + 11), 11, Silver);
+            var farText = $"{world.TravelMax:0.#} m of travel";
+            var farLabel = new FormattedText(farText, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, Typeface.Default, 11, Silver);
+            context.DrawText(farLabel, new Point(x + travelBar - farLabel.Width, y + 11));
+            var at = x + travelBar + 16;
+            foreach (var (label, brush) in new[] { ("open, not reached", brushes[SliceColours.FieldUnreached]), ("not open", brushes[SliceColours.FieldClosed]) }) {
+                context.FillRectangle(brush, new Rect(at, y, 20, 10));
+                var formatted = new FormattedText(label, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, Typeface.Default, 11, Silver);
+                context.DrawText(formatted, new Point(at, y + 11));
+                at += Math.Max(formatted.Width, 20) + 20;
+            }
+            return;
+        }
         if (regions) {
             var brushes = SliceColours.Brushes(world, SliceColour.Regions);
             var shown = Math.Min(world.RegionCount, 6);
