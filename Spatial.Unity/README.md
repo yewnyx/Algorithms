@@ -58,16 +58,19 @@ With 1,000 items moving every frame in a Windows player on one desktop, the call
 For callers that ask how much room there is at a point, many times a frame, of colliders that stay put.
 
 ```csharp
-// Colliders into shapes, in the frame of a root transform. In the editor this can read every mesh.
-ColliderShapes.TryWrite(colliders, root.worldToLocalMatrix, out byte[] block, out CollectReport report);
-
-// A grid of half-metre cells in that frame. It copies the shapes, so the block can go.
+// A grid of half-metre cells in the frame of a root transform.
 var grid = new WallGrid(new GridShape(0, 0, 0, 0.5f, 80, 80, 60));
-grid.SetShapes(block);
+
+// Colliders into shapes, in that frame. In the editor this can read every mesh.
+ColliderShapes.TryWrite(colliders, root.worldToLocalMatrix, out byte[] block, out CollectReport report);
+// Or, for a part of a larger level: only what reaches into the grid's box, and terrains as heightfields.
+ColliderShapes.TryWrite(colliders, root.worldToLocalMatrix, ColliderShapes.Within(grid.Shape, grid.Unit, grid.Cap), out block, out report);
+
+grid.SetShapes(block);                    // it copies the shapes, so the block can go
 JobHandle marked = grid.ScheduleMark();   // each cell's distance to the nearest shape, one z layer per index
 
 grid.TryRoom(point, out float room);                    // proven from eight cells, never more than the true distance
-grid.TryDistance(point, limit: 2f, out float exact);    // exact, from the shapes
+grid.TryDistance(point, limit: 1f, out float exact);    // exact, from the shapes
 grid.FillCost(Solid.Box(new Box(0, 0, 0, 2, 2, 4)), 32);   // cells whose centre is inside cost three times as much
 
 // Where a body of radius 0.6 can be, flooded from seeds such as the openings into a room.
@@ -96,7 +99,16 @@ if (route.Status == RouteStatus.Found) {                // reading the answer wa
 - **Shapes are the physics engine's.** Under a turned child of an unevenly scaled parent the engine does not hold a sheared box, sphere or capsule: it takes the transform's rotation and lossy scale, and so does `ColliderShapes`. A mesh goes through the matrix, as the engine's does.
 - **Nothing is left out in silence.** A collider whose shape cannot be held goes in as a box around it: a convex mesh, a mesh that cannot be read, any other kind. `CollectReport` counts them. It also counts colliders that gave nothing (`Missing`): a mesh collider with no mesh, or an inactive collider of another kind. Shapes collected with any missing are not to be trusted.
 - **It never asks the physics engine,** so it sees only the colliders it is given.
-- **The same colliders give the same block,** on one kind of machine. `Shapes.Version` changes when the layout or the tree's order does; a block of another version is refused.
+- **A part of a larger level is collected within a box.** The calls that take one leave out the colliders that lie wholly outside it, and of a mesh that reaches in, the triangles that do not. `CollectReport` counts both (`Outside`, `TrianglesOutside`).
+  - A shape may not be stored more than `Shapes.Reach` (1,024 m) from the frame's origin, and one that is refuses the whole block. Cut at the box, far scenery is not in the way.
+  - `ColliderShapes.Within` gives the box for a grid: the grid's own, grown by as far as marking looks from a cell and a cell more. A cell at the grid's edge then holds its true distance to what lies just outside.
+  - Shapes collected that way know nothing beyond the box. Marking, regions, fields and routes never ask beyond it. `TryDistance` can: with such shapes its answer is the true one only for a point inside the grid and a limit no more than the box was grown by (the cap times the unit, a unit and a cell: 1.5 m at the settings above).
+- **A terrain goes in as a heightfield** in the calls that take a box: solid from its surface down as far as the frame reaches, so the space under the ground never reads as room. It is taken if any of that solid reaches into the box, so a grid that lies wholly under a terrain reads as solid too.
+  - Its surface is never below the terrain's, and at most `ColliderShapes.TerrainBound` (0.25 m) above it. Gentle ground keeps every 8th height; a terrain of 513 by 513 heights took 22 to 50 KB in the ones measured.
+  - It sits where the engine puts a terrain: at its transform's position, along the world's axes, whatever the transform's turn and scale.
+  - A terrain with holes goes in as a box around it and is counted (`Holed`). Trees painted on a terrain whose prefabs have colliders are not taken, and are counted (`Trees`): with any of those, the shapes leave something out.
+  - The calls that take no box take a terrain as a box around it.
+- **The same colliders give the same block,** on one kind of machine. `Shapes.Version` changes when the layout, the tree's order or the packing of heights does; a block of another version is refused.
 - **The grid never claims room it has not worked out.** `TryRoom` gives 0 before the first `ScheduleMark`, and again from `SetShapes` until the next `ScheduleMark` is done; `IsMarked` is false for as long. A layer whose marking is refused, because the shapes are damaged, is left at 0.
 - **`TryRoom` and `TryDistance` say how far the nearest surface is,** not whether a point is in open space. A triangle has no inside.
 - **Costs take a byte a cell only once one is written.** Until `FillCost` writes a cost that isn't 0, and again after `ClearCost`, the grid holds none and `Cost` is empty.

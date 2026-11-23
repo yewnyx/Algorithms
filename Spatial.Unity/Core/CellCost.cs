@@ -19,7 +19,7 @@ namespace Yewnyx.Spatial {
         /// </summary>
         /// <remarks>
         /// Returns false, writing nothing, if the shape cannot be used, <paramref name="cost"/> holds
-        /// fewer bytes than the grid has cells, or the solid may not be stored (see <see cref="Shapes.Build"/>).
+        /// fewer bytes than the grid has cells, or the solid may not be stored (see <see cref="Shapes.Build(ReadOnlySpan{Solid}, ReadOnlySpan{float}, ReadOnlySpan{int}, Span{Box}, Span{BoxNode}, Span{int}, Span{int}, out int)"/>).
         /// </remarks>
         public static bool Fill(in GridShape shape, in Solid solid, byte value, Span<byte> cost) => Fill(shape, solid, value, cost, out _);
 

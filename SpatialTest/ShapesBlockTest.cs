@@ -10,12 +10,12 @@ public class ShapesBlockTest {
     private static readonly int[] Triangles = [0, 1, 2, 1, 3, 2];
 
     // Where each part of that block starts: 3 solids, 4 corners, 2 triangles, 5 boxes, 5 order entries, 3 nodes.
-    private const int SolidsAt = 32, CornersAt = 224, TrianglesAt = 272, BoxesAt = 296, OrderAt = 416, NodesAt = 436, Length = 532;
+    private const int SolidsAt = 40, CornersAt = 232, TrianglesAt = 280, BoxesAt = 304, OrderAt = 424, NodesAt = 444, Length = 540;
 
     // The block those shapes make, byte for byte. If this changes, the layout or the tree changed:
     // raise Shapes.Version, so that stored blocks are made again and not misread.
     private const string Fixed =
-        "5953485002000000030000000400000002000000030000000000000000000000" +
+        "59534850030000000300000004000000020000000300000000000000000000000000000000000000" +
         "000000000000803F0000003F0000003F0000803F0000000000000000000000000000803F0000000000000000000000000000803F0000803F0000003F0000003F" +
         "010000000000A0400000A0400000A0400000000000000000000000000000000000000000000000000000000000000000000000000000003F0000000000000000" +
         "02000000000040C00000000000000000000040C000000000000080400000000000000000000000000000000000000000000000000000803E0000000000000000" +
@@ -95,10 +95,10 @@ public class ShapesBlockTest {
 
     [Fact]
     public void ABlockOfNoShapesIsOnlyAHeader() {
-        Shapes.BlockLength(0, 0, 0).Should().Be(32);
-        var block = new byte[32];
+        Shapes.BlockLength(0, 0, 0).Should().Be(40);
+        var block = new byte[40];
         Shapes.Write([], [], [], new int[Shapes.WorkspaceLength(0)], block, out var length).Should().BeTrue();
-        length.Should().Be(32);
+        length.Should().Be(40);
         Shapes.TryRead(block, out var shapes).Should().BeTrue();
         shapes.Count.Should().Be(0);
         Distance(block, 1, 2, 3, limit: 9f).Should().Be(9f);
@@ -106,7 +106,7 @@ public class ShapesBlockTest {
 
     [Fact]
     public void BlockLengthRefusesWhatAnIntCannotHold() {
-        Shapes.BlockLength(3, 4, 2).Should().Be(32 + 3 * 64 + 4 * 12 + 2 * 12 + 5 * 60);
+        Shapes.BlockLength(3, 4, 2).Should().Be(40 + 3 * 64 + 4 * 12 + 2 * 12 + 5 * 60);
         Shapes.BlockLength(-1, 0, 0).Should().Be(-1);
         Shapes.BlockLength(0, -1, 0).Should().Be(-1);
         Shapes.BlockLength(0, 0, -1).Should().Be(-1);
@@ -133,7 +133,7 @@ public class ShapesBlockTest {
         var good = Written();
         Shapes.TryRead(good, out _).Should().BeTrue();
         Shapes.TryRead([], out _).Should().BeFalse();
-        Shapes.TryRead(good.AsSpan(0, 31), out _).Should().BeFalse("shorter than a header");
+        Shapes.TryRead(good.AsSpan(0, 39), out _).Should().BeFalse("shorter than a header");
         Shapes.TryRead(good.AsSpan(0, good.Length - 1), out _).Should().BeFalse("one byte short");
         Shapes.TryRead(good.Append((byte)0).ToArray(), out _).Should().BeFalse("one byte long");
 

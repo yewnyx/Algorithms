@@ -43,6 +43,9 @@ namespace Yewnyx.Spatial {
         private NativeArray<Solid> _solids;
         private NativeArray<float> _corners;
         private NativeArray<int> _triangles, _order;
+        private NativeArray<HeightField> _heightFields;
+        private NativeArray<uint> _heightBlocks;
+        private NativeArray<ushort> _heights;
         private NativeArray<Box> _boxes;
         private NativeArray<BoxNode> _nodes;
 
@@ -76,7 +79,7 @@ namespace Yewnyx.Spatial {
             // No byte of cost is held until one is written: an empty array means every cell is normal.
             _cost = new NativeArray<byte>(0, allocator);
             _filled = new NativeArray<byte>(shape.CountZ, allocator);
-            _allocateShapes(0, 0, 0, 0);
+            _allocateShapes(0, 0, 0, 0, 0, 0, 0);
         }
 
         public GridShape Shape { get; }
@@ -95,14 +98,15 @@ namespace Yewnyx.Spatial {
         /// <summary>
         /// The bytes the grid's arrays take, for a caller that keeps grids within a budget: one a
         /// cell for the wall distance, one a cell for each size class, one a cell for the costs once
-        /// a cost has been written, and the shapes. Not counted: while a flood of regions runs it
+        /// a cost has been written, and the shapes, heightfields among them. Not counted: while a flood of regions runs it
         /// also holds a queue of 4 bytes a cell, which is freed when the flood is done.
         /// </summary>
         public long ByteCount {
             get {
                 _requireAlive();
                 return (long)_wall.Length + _cost.Length + _filled.Length + (long)_solids.Length * 64 + (long)_corners.Length * 4 +
-                       (long)_triangles.Length * 4 + (long)_order.Length * 4 + (long)_boxes.Length * 24 + (long)_nodes.Length * 32 +
+                       (long)_triangles.Length * 4 + (long)_heightFields.Length * 92 + (long)_heightBlocks.Length * 4 + (long)_heights.Length * 2 +
+                       (long)_order.Length * 4 + (long)_boxes.Length * 24 + (long)_nodes.Length * 32 +
                        (long)_sizes.Count * (_wall.Length + 16);
             }
         }
@@ -120,10 +124,14 @@ namespace Yewnyx.Spatial {
             _settle();
             if (!Shapes.TryRead(block, out var shapes)) { return false; }
             _disposeShapes();
-            _allocateShapes(shapes.Solids.Length, shapes.Corners.Length, shapes.Triangles.Length, shapes.Nodes.Length);
+            _allocateShapes(shapes.Solids.Length, shapes.Corners.Length, shapes.Triangles.Length,
+                shapes.HeightFields.Length, shapes.HeightBlocks.Length, shapes.Heights.Length, shapes.Nodes.Length);
             shapes.Solids.CopyTo(_solids.AsSpan());
             shapes.Corners.CopyTo(_corners.AsSpan());
             shapes.Triangles.CopyTo(_triangles.AsSpan());
+            shapes.HeightFields.CopyTo(_heightFields.AsSpan());
+            shapes.HeightBlocks.CopyTo(_heightBlocks.AsSpan());
+            shapes.Heights.CopyTo(_heights.AsSpan());
             shapes.Boxes.CopyTo(_boxes.AsSpan());
             shapes.Nodes.CopyTo(_nodes.AsSpan());
             shapes.Order.CopyTo(_order.AsSpan());
@@ -140,23 +148,42 @@ namespace Yewnyx.Spatial {
         /// Once the new shapes are taken, the wall distance says nothing of them: it is set to 0 and
         /// <see cref="IsMarked"/> is false until the next <see cref="ScheduleMark"/> is done.
         /// </remarks>
-        public bool SetShapes(ReadOnlySpan<Solid> solids, ReadOnlySpan<float> corners, ReadOnlySpan<int> triangles) {
+        public bool SetShapes(ReadOnlySpan<Solid> solids, ReadOnlySpan<float> corners, ReadOnlySpan<int> triangles) =>
+            _setShapes(solids, corners, triangles, default, default, default);
+
+        /// <summary>
+        /// Takes the shapes as <see cref="ColliderShapes.Collect(IReadOnlyList{UnityEngine.Collider}, UnityEngine.Matrix4x4, in Box, CollectedShapes)"/>
+        /// collected them, heightfields among them, and copies them. Returns false, keeping the
+        /// shapes it had, if a shape may not be stored.
+        /// </summary>
+        /// <remarks>As with the other overloads, the wall distance says nothing until the next marking is done.</remarks>
+        public bool SetShapes(CollectedShapes shapes) {
+            if (shapes == null) { throw new ArgumentNullException(nameof(shapes)); }
+            return _setShapes(shapes.Solids.ToArray(), shapes.Corners.ToArray(), shapes.Triangles.ToArray(),
+                shapes.HeightFields.ToArray(), shapes.HeightBlocks.ToArray(), shapes.Heights.ToArray());
+        }
+
+        private bool _setShapes(ReadOnlySpan<Solid> solids, ReadOnlySpan<float> corners, ReadOnlySpan<int> triangles,
+            ReadOnlySpan<HeightField> heightFields, ReadOnlySpan<uint> heightBlocks, ReadOnlySpan<ushort> heights) {
             _settle();
             if (corners.Length % 3 != 0 || triangles.Length % 3 != 0) { return false; }
-            var total = (long)solids.Length + triangles.Length / 3;
+            var total = (long)solids.Length + triangles.Length / 3 + heightFields.Length;
             if (total > int.MaxValue / 4) { return false; }
             var count = (int)total;
             var boxes = new NativeArray<Box>(count, Allocator.Temp);
             var nodes = new NativeArray<BoxNode>(Shapes.NodesLength(count), Allocator.Temp);
             var order = new NativeArray<int>(count, Allocator.Temp);
             var workspace = new NativeArray<int>(Shapes.WorkspaceLength(count), Allocator.Temp);
-            var built = Shapes.Build(solids, corners, triangles, boxes.AsSpan(), nodes.AsSpan(), order.AsSpan(), workspace.AsSpan(), out var nodeCount);
+            var built = Shapes.Build(solids, corners, triangles, heightFields, heightBlocks, heights, boxes.AsSpan(), nodes.AsSpan(), order.AsSpan(), workspace.AsSpan(), out var nodeCount);
             if (built) {
                 _disposeShapes();
-                _allocateShapes(solids.Length, corners.Length, triangles.Length, nodeCount);
+                _allocateShapes(solids.Length, corners.Length, triangles.Length, heightFields.Length, heightBlocks.Length, heights.Length, nodeCount);
                 solids.CopyTo(_solids.AsSpan());
                 corners.CopyTo(_corners.AsSpan());
                 triangles.CopyTo(_triangles.AsSpan());
+                heightFields.CopyTo(_heightFields.AsSpan());
+                heightBlocks.CopyTo(_heightBlocks.AsSpan());
+                heights.CopyTo(_heights.AsSpan());
                 boxes.AsSpan().CopyTo(_boxes.AsSpan());
                 nodes.AsSpan().Slice(0, nodeCount).CopyTo(_nodes.AsSpan());
                 order.AsSpan().CopyTo(_order.AsSpan());
@@ -219,6 +246,12 @@ namespace Yewnyx.Spatial {
         /// <paramref name="limit"/> if nothing is nearer. The point need not be inside the grid.
         /// Returns false if the point is not a number, the limit is negative, or the shapes are found damaged.
         /// </summary>
+        /// <remarks>
+        /// It is the distance to the shapes held. Shapes that were collected within a box hold
+        /// nothing of what lies beyond it, so with those the answer is the true one only for a
+        /// point inside the grid and a limit no more than the box was grown by (see
+        /// <see cref="ColliderShapes.Within"/>: the cap times the unit, a unit and a cell).
+        /// </remarks>
         public bool TryDistance(float3 point, float limit, out float distance) {
             // The shapes are written only by SetShapes, on this thread: there is nothing to wait for.
             _requireAlive();
@@ -531,11 +564,16 @@ namespace Yewnyx.Spatial {
         }
 
         private ShapeArrays _shapes() => new ShapeArrays {
-            Solids = _solids, Corners = _corners, Triangles = _triangles, Boxes = _boxes, Nodes = _nodes, Order = _order,
+            Solids = _solids, Corners = _corners, Triangles = _triangles,
+            HeightFields = _heightFields, HeightBlocks = _heightBlocks, Heights = _heights,
+            Boxes = _boxes, Nodes = _nodes, Order = _order,
         };
 
-        private void _allocateShapes(int solids, int corners, int triangles, int nodes) {
-            var count = solids + triangles / 3;
+        private void _allocateShapes(int solids, int corners, int triangles, int heightFields, int heightBlocks, int heights, int nodes) {
+            var count = solids + triangles / 3 + heightFields;
+            _heightFields = new NativeArray<HeightField>(heightFields, _allocator, NativeArrayOptions.UninitializedMemory);
+            _heightBlocks = new NativeArray<uint>(heightBlocks, _allocator, NativeArrayOptions.UninitializedMemory);
+            _heights = new NativeArray<ushort>(heights, _allocator, NativeArrayOptions.UninitializedMemory);
             _solids = new NativeArray<Solid>(solids, _allocator, NativeArrayOptions.UninitializedMemory);
             _corners = new NativeArray<float>(corners, _allocator, NativeArrayOptions.UninitializedMemory);
             _triangles = new NativeArray<int>(triangles, _allocator, NativeArrayOptions.UninitializedMemory);
@@ -545,7 +583,8 @@ namespace Yewnyx.Spatial {
         }
 
         private void _disposeShapes() {
-            _solids.Dispose(); _corners.Dispose(); _triangles.Dispose(); _boxes.Dispose(); _nodes.Dispose(); _order.Dispose();
+            _solids.Dispose(); _corners.Dispose(); _triangles.Dispose(); _heightFields.Dispose(); _heightBlocks.Dispose(); _heights.Dispose();
+            _boxes.Dispose(); _nodes.Dispose(); _order.Dispose();
         }
 
         // The wall distance was worked out from other shapes: it proves nothing of these, and

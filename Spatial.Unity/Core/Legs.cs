@@ -28,6 +28,9 @@ namespace Yewnyx.Spatial {
         /// <summary>How much of a line of sight is not looked at, at the end it starts from: an end may lie on a surface.</summary>
         public const float Allowance = 0.05f;
 
+        /// <summary>How far apart a line of sight is asked whether it has come out from under a heightfield.</summary>
+        public const double Rise = 1d / 64d;
+
         // What a point that passed is truly clear by, beyond the radius: an exact distance is within
         // the slack of the true one, and the point asked about within the slack of the one meant.
         private const double Least = Margin - 2d * Shapes.Slack;
@@ -68,7 +71,7 @@ namespace Yewnyx.Spatial {
                     double from = (k - 1) * length / stretches, to = k * length / stretches;
                     if (covered < to) {
                         if (!exact) { return false; }
-                        if (!_march(shapes, ax, ay, az, dx / length, dy / length, dz / length, radius, limit, from > covered ? from : covered, to, ref covered)) { return false; }
+                        if (!_march(shapes, Shapes.Every, ax, ay, az, dx / length, dy / length, dz / length, radius, limit, from > covered ? from : covered, to, ref covered)) { return false; }
                     }
                 }
                 before = proven;
@@ -84,12 +87,38 @@ namespace Yewnyx.Spatial {
         /// Whether the straight line from an end to a point meets no shape, not counting the first
         /// <see cref="Allowance"/> of it.
         /// </summary>
+        /// <remarks>
+        /// A heightfield's surface may lie above the ground it was made from, by no more than its
+        /// gap, so an end that rests on that ground can be under the surface. Beyond the allowance
+        /// the line is therefore not held against the heightfields until it has come out from under
+        /// them, for the gap at the most. The other shapes are looked at all the way.
+        /// </remarks>
         public static bool Sees(in ShapeSet shapes, float cellSize, double endX, double endY, double endZ, double x, double y, double z) {
             double dx = x - endX, dy = y - endY, dz = z - endZ;
             var length = Math.Sqrt(dx * dx + dy * dy + dz * dz);
             if (length <= Allowance) { return true; }
+            double ux = dx / length, uy = dy / length, uz = dz / length;
             var covered = -1d;
-            return _march(shapes, endX, endY, endZ, dx / length, dy / length, dz / length, 0d, cellSize, Allowance, length, ref covered);
+            var from = (double)Allowance;
+            double gap = shapes.Gap;
+            if (gap > 0d) {
+                // Where the line comes out from under the heightfields: the first of these places
+                // that reads clear of them, or where the gap is used up.
+                var last = from + gap < length ? from + gap : length;
+                var clear = from;
+                while (clear < last && !(Shapes.DistanceAmong(shapes, Shapes.OnlyHeightFields, (float)(endX + ux * clear), (float)(endY + uy * clear), (float)(endZ + uz * clear), cellSize, out var above) && above >= Margin)) {
+                    clear += Rise;
+                }
+                if (clear > last) { clear = last; }
+                if (clear > from) {
+                    if (!_march(shapes, Shapes.NoHeightFields, endX, endY, endZ, ux, uy, uz, 0d, cellSize, from, clear, ref covered)) { return false; }
+                    covered = -1d;
+                    from = clear;
+                }
+            }
+            // From there on against every shape. Where the line is so short that it ends before it
+            // has come out, this still looks at its far end.
+            return _march(shapes, Shapes.Every, endX, endY, endZ, ux, uy, uz, 0d, cellSize, from, length, ref covered);
         }
 
         /// <summary>What the cell that holds a point costs: 0 where no cost is kept. A point on the grid's faces is in the cell beside it.</summary>
@@ -100,18 +129,18 @@ namespace Yewnyx.Spatial {
         }
 
         // Proves the part of a leg from one distance along it to another, in metres from a, against
-        // the shapes themselves. Each point asked about must read the radius and the margin. What
+        // the shapes themselves, or some of them (see Shapes.Every). Each point asked about must read the radius and the margin. What
         // it reads beyond the radius is how far on the leg is then sure to be clear; where that is
         // short, the next point is taken a fixed step on, short enough that two points which both
         // pass prove everything between them. covered is set to how far the leg is proven.
-        private static bool _march(in ShapeSet shapes, double ax, double ay, double az, double ux, double uy, double uz,
+        private static bool _march(in ShapeSet shapes, int which, double ax, double ay, double az, double ux, double uy, double uz,
             double radius, float limit, double from, double to, ref double covered) {
             // Two points a distance L apart that are both d from every shape have everything
             // between them at least sqrt(d * d - L * L / 4) from every shape.
             var fixedStep = 2d * Math.Sqrt((radius + Least) * (radius + Least) - radius * radius);
             var at = from;
             while (true) {
-                if (!Shapes.Distance(shapes, (float)(ax + ux * at), (float)(ay + uy * at), (float)(az + uz * at), limit, out var distance) ||
+                if (!Shapes.DistanceAmong(shapes, which, (float)(ax + ux * at), (float)(ay + uy * at), (float)(az + uz * at), limit, out var distance) ||
                     !(distance >= radius + Margin)) { return false; }
                 var sure = distance - 2d * Shapes.Slack - radius;
                 if (at + sure >= to || at >= to) {

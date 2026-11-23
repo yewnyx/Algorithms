@@ -160,7 +160,7 @@ namespace Yewnyx.Spatial.Tests {
             int[] triangles = { 0, 1, 2 };
             var block = new byte[Shapes.BlockLength(TwoRooms.Length, 3, 1)];
             Assert.That(Shapes.Write(TwoRooms, corners, triangles, new int[Shapes.WorkspaceLength(5)], block, out var length), Is.True);
-            block[32 + TwoRooms.Length * 64 + corners.Length * 4 + 4] = 99;
+            block[40 + TwoRooms.Length * 64 + corners.Length * 4 + 4] = 99;
 
             using var grid = new WallGrid(Grid);
             Assert.That(grid.SetShapes(block.AsSpan(0, length)), Is.True);
