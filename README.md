@@ -292,6 +292,7 @@ For callers that ask "how much room is there here?" of geometry that doesn't mov
 - `WallDistance.RoomAt` answers from the grid alone, in constant time: a distance the nearest shape is proven to be at least.
 - `CellCost` is one more byte a cell that the caller writes: 0 is normal, 255 is closed.
 - `SizeClass` is what a body of one radius needs of the grid, and `Regions` floods where it can be: which cells are open for it, and which of them join.
+- `Travel` builds a field of how far each open cell is from a goal, going round what is in the way, and says at any point which way leads down it. Many bodies with no plan of their own can follow one field.
 
 ```csharp
 using Yewnyx.Spatial;
@@ -337,6 +338,17 @@ bool open = Regions.IsOpen(grid, region, 2f, 4f, 2f);          // true
 bool low = Regions.IsOpen(grid, region, 2f, 4f, 0.3f);         // false: too near the floor
 Regions.NearestOpen(grid, region, 2f, 4f, 0.1f, reach: 2f, out float x, out float y, out float z);
 // 1.75, 3.75, 0.75: the centre of the nearest open cell, up off the floor
+
+// How far every open cell is from a goal at 6, 6, 2, in centimetres, through the cells that body can be in.
+var field = new ushort[grid.CellCount];
+TravelSeed[] goal = { TravelSeed.FromPoint(Solid.Sphere(6, 6, 2, 0.8f), 6, 6, 2) };
+Travel.Build(grid, region, cost, goal, unit: 0.01f, field, new float[Travel.TimesLength(grid)], new int[Travel.HeapLength(grid)],
+    out int covered, out int cut);
+// covered 1586: every cell the flood reached; cut 0
+
+Travel.Sample(new TravelField(grid, 0.01f, field), 2f, 2f, 2f, out float wayX, out float wayY, out float wayZ, out float travel);
+// travel 6.91 m: the straight line is 5.66, but the pillar stands in it and the costly corner is beside it
+// way 0.71, 0.71, 0: the direction that leads down the field from here
 ```
 
 - Queries take and return points, never cell numbers. `GridShape.TryCentre` gives the centre of the cell that holds a point. To walk an array you own, `IndexOf` and `CentreOf` give a cell's place and centre.
@@ -351,6 +363,10 @@ Regions.NearestOpen(grid, region, 2f, 4f, 0.1f, reach: 2f, out float x, out floa
 - A region is the open cells joined by steps between cells that share a face, never across a diagonal: so a sheet with no thickness is never crossed. A radius of half a cell or less has no guarantee and is refused.
 - A seed reaches from the open cells whose centres are inside it. One with none reaches nothing and is counted, not moved.
 - `NearestOpen` is by straight line, whatever lies between: the cell can be on the other side of a thin wall. It can also be asked for the nearest open cell in the same region as another point, which can still be across a wall when both sides are joined some other way.
-- Every call returns false if it is refused (a point outside the grid, spans that don't belong together, a shape that may not be stored). Then read nothing from its outputs. A refused `MarkLayer` or `FromSeeds` leaves its array at 0, which claims no room and no open cell.
+- A field spreads from its seeds through the cells of a region array, by steps between cells that share a face, and a step pays for the cell it enters: a cost of c makes a cell 1 + c / 16 times as far to cross. A seed's cells start at their distance from a point (a goal), or at their distance in front of a plane, which makes the field lead out through an opening. A cell is started only if the straight way from it to the point, or square to the plane, lies through cells the field can enter: so a seed never starts a cell behind a wall, and one across an opening too narrow to pass starts nothing in front of it.
+- Distances are found by fast marching, from a cell's neighbours on all three axes at once. Through open space they are a little over the straight line: about 5 parts in 100 far from the start.
+- A distance of more than 65,534 counts doesn't fit. Such a cell is left unreached and counted, never held at the largest count.
+- `Travel.Sample` blends the distance between the eight cells round a point. Its direction is down that slope where the slope truly leads down, and otherwise towards the lowest cell that shares a face with the nearest reached one, or, if none of those six is lower, the lowest of the 26 round it. At a goal the direction never settles: a follower has arrived when the distance falls below about a cell. It promises nothing about what lies between cells: whatever follows it still needs its own way of not hitting things.
+- Every call returns false if it is refused (a point outside the grid, spans that don't belong together, a shape that may not be stored). Then read nothing from its outputs. A refused `MarkLayer`, `FromSeeds` or `Build` leaves its array saying nothing: no room, no open cell, no cell reached.
 
 `Spatial.Unity/` is a Unity package (`xyz.yewnyx.spatial`) around the same source: a `BoxSet` that recomputes only the boxes that moved, Burst jobs that rebuild the tree and answer batches of queries, a gizmo and a sample scene. See [Spatial.Unity/README.md](Spatial.Unity/README.md).
