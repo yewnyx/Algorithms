@@ -30,6 +30,7 @@
                             <ComboBoxItem Content="Wall distance" />
                             <ComboBoxItem Content="Regions" />
                             <ComboBoxItem Content="Travel" />
+                            <ComboBoxItem Content="Routes" />
                         </ComboBox>
                     </StackPanel>
                     <StackPanel Classes="field"><TextBlock Classes="label" Text="Body radius (m)" ToolTip.Tip="The size class: a cell is open when its centre is at least this far from every shape." /><NumericUpDown x:Name="RadiusBox" Minimum="0.05" Maximum="4" Increment="0.05" Value="0.9" FormatString="0.00" Width="90" /></StackPanel>
@@ -53,6 +54,17 @@
                     <Button x:Name="ClearButton" Content="Clear costs" Margin="8,0,0,0" VerticalAlignment="Center" />
                     <CheckBox x:Name="StrokesBox" Content="Strokes downhill" IsChecked="True" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#C8D0DC"
                               ToolTip.Tip="A short stroke on every other cell: the direction the field leads down from there, as far as it lies in the slice." />
+                </WrapPanel>
+                <WrapPanel Orientation="Horizontal">
+                    <TextBlock Classes="section" Text="ROUTE" Width="56" />
+                    <TextBlock Text="From the probe to the pink diamond." Foreground="#C8D0DC" VerticalAlignment="Center" Margin="0,0,8,0"
+                               ToolTip.Tip="Press on a slice to put the start (the probe); Shift or the right button puts the goal (the anchor). Costs dropped above bend the route too. Colour by Routes shows it." />
+                    <CheckBox x:Name="CellsBox" Content="Show the cells' way" IsChecked="True" VerticalAlignment="Center" Foreground="#C8D0DC"
+                              ToolTip.Tip="The way the search found, from cell centre to cell centre, before it is pulled straight." />
+                    <CheckBox x:Name="StraightBox" Content="Show it pulled straight" IsChecked="True" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#C8D0DC"
+                              ToolTip.Tip="The same way with every stretch that a straight leg can replace replaced by one." />
+                    <CheckBox x:Name="ShapesBox" Content="Use the shapes" IsChecked="True" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#C8D0DC"
+                              ToolTip.Tip="On: the library may prove a leg clear against the shapes themselves. Off: it is given no shapes and proves a leg by the map alone, which needs more room than the radius, so legs only the shapes accept are lost." />
                 </WrapPanel>
             </StackPanel>
         </Border>

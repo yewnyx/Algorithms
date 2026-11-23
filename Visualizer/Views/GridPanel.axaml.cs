@@ -43,6 +43,9 @@ public partial class GridPanel : UserControl {
         LikeBox.IsCheckedChanged += (_, _) => Refresh();
         GoalBox.SelectionChanged += (_, _) => { _travelDirty = true; Refresh(); };
         StrokesBox.IsCheckedChanged += (_, _) => Refresh();
+        CellsBox.IsCheckedChanged += (_, _) => Refresh();
+        StraightBox.IsCheckedChanged += (_, _) => Refresh();
+        ShapesBox.IsCheckedChanged += (_, _) => Refresh();
         DropButton.Click += (_, _) => DropCost();
         ClearButton.Click += (_, _) => { _world.ClearCost(); Flooded(); };
         TopView.AnchorMoved += (x, y) => MoveAnchor(x, y, null);
@@ -54,6 +57,7 @@ public partial class GridPanel : UserControl {
 
     private bool ByRegions => ColourBox.SelectedIndex == 1;
     private bool ByTravel => ColourBox.SelectedIndex == 2;
+    private bool ByRoutes => ColourBox.SelectedIndex == 3;
 
     // The field is built when it is shown, and again after anything it depends on changes.
     private bool _travelDirty = true;
@@ -144,9 +148,20 @@ public partial class GridPanel : UserControl {
             (path, pathEnd) = _world.FollowField(x, y, z);
         }
 
+        // The routes from the probe to the anchor: the cells' way, the same pulled straight, and the straight one again with the shapes the other way about.
+        WallWorld.RouteFound? cellsRoute = null, straightRoute = null, otherRoute = null;
+        if (ByRoutes && _world.Problem is null && _anchor is { } goal) {
+            var useShapes = ShapesBox.IsChecked == true;
+            cellsRoute = _world.FindRoute(x, y, z, goal.x, goal.y, goal.z, false, useShapes);
+            straightRoute = _world.FindRoute(x, y, z, goal.x, goal.y, goal.z, true, useShapes);
+            otherRoute = _world.FindRoute(x, y, z, goal.x, goal.y, goal.z, true, !useShapes);
+        }
+
         foreach (var view in new[] { TopView, SideView }) {
             view.World = _world;
-            view.Colour = ByTravel ? SliceColour.Travel : ByRegions ? SliceColour.Regions : SliceColour.WallDistance;
+            view.Colour = ByRoutes ? SliceColour.Routes : ByTravel ? SliceColour.Travel : ByRegions ? SliceColour.Regions : SliceColour.WallDistance;
+            view.CellsWay = CellsBox.IsChecked == true ? Line(cellsRoute, x, y, z, true) : null;
+            view.StraightWay = StraightBox.IsChecked == true ? Line(straightRoute, x, y, z, false) : null;
             view.Path = path;
             view.ShowStrokes = StrokesBox.IsChecked == true;
             (view.ProbeX, view.ProbeY, view.ProbeZ) = (x, y, z);
@@ -159,17 +174,24 @@ public partial class GridPanel : UserControl {
             view.InvalidateVisual();
         }
         CubeView.World = _world;
-        CubeView.Colour = ByTravel ? SliceColour.Travel : ByRegions ? SliceColour.Regions : SliceColour.WallDistance;
+        CubeView.Colour = ByRoutes ? SliceColour.Routes : ByTravel ? SliceColour.Travel : ByRegions ? SliceColour.Regions : SliceColour.WallDistance;
         (CubeView.ProbeX, CubeView.ProbeY, CubeView.ProbeZ) = (x, y, z);
         CubeView.Room = hasRoom ? room : float.NaN;
         CubeView.Exact = hasExact ? exact : float.NaN;
         CubeView.ShowSolids = SolidsBox.IsChecked == true;
         var world = _world;
         var anchor = _anchor;
-        CubeView.Overlay = ByTravel ? (context, cam) => Overlay3D.Travel(context, cam, world, path, anchor)
+        var cellsWay = CellsBox.IsChecked == true ? Line(cellsRoute, x, y, z, true) : null;
+        var straightWay = StraightBox.IsChecked == true ? Line(straightRoute, x, y, z, false) : null;
+        CubeView.Overlay = ByRoutes ? (context, cam) => Overlay3D.Routes(context, cam, world, cellsWay, straightWay, anchor)
+            : ByTravel ? (context, cam) => Overlay3D.Travel(context, cam, world, path, anchor)
             : ByRegions ? (context, cam) => Overlay3D.Regions(context, cam, world, (x, y, z), look, anchor, hasNearest ? (nx, ny, nz) : null) : null;
         CubeView.InvalidateVisual();
 
+        if (ByRoutes) {
+            RouteTexts(x, y, z, cellsRoute, straightRoute, otherRoute);
+            return;
+        }
         if (ByTravel) {
             TravelTexts(x, y, z, path!, pathEnd);
             return;
@@ -200,6 +222,75 @@ public partial class GridPanel : UserControl {
             $"{_world.Solids.Length} shapes ({Of(SolidKind.Box):N0} boxes, {Of(SolidKind.Sphere):N0} spheres, {Of(SolidKind.Capsule):N0} capsules) in a grid of {WallWorld.CountX}×{WallWorld.CountY}×{WallWorld.CountZ} = " +
             $"{WallWorld.CountX * WallWorld.CountY * WallWorld.CountZ:N0} cells of {WallWorld.CellSize} m; marking every layer took {_world.MarkMilliseconds:0.0} ms. " +
             "Room is worked out from the eight cells around the probe alone; it never reads the shapes.";
+    }
+
+    // A route as a line for the slices: the start, the points, and the goal again when the route stops short of it.
+    private WallSliceView.RouteLine? Line(WallWorld.RouteFound? found, float x, float y, float z, bool dots) {
+        if (found is not { Status: RouteStatus.Found }) { return null; }
+        var points = new List<(float x, float y, float z)> { (x, y, z) };
+        points.AddRange(found.Points);
+        var stops = found.Ends.HasFlag(RouteEnds.StopsShortOfGoal);
+        if (stops && _anchor is { } goal) { points.Add(goal); }
+        return new WallSliceView.RouteLine(points, found.Ends.HasFlag(RouteEnds.FirstLegUnproven), stops, dots);
+    }
+
+    private static double Length(float x, float y, float z, List<(float x, float y, float z)> points) {
+        double total = 0;
+        float px = x, py = y, pz = z;
+        foreach (var (qx, qy, qz) in points) {
+            total += Math.Sqrt((double)(qx - px) * (qx - px) + (double)(qy - py) * (qy - py) + (double)(qz - pz) * (qz - pz));
+            (px, py, pz) = (qx, qy, qz);
+        }
+        return total;
+    }
+
+    private void RouteTexts(float x, float y, float z, WallWorld.RouteFound? cells, WallWorld.RouteFound? straight, WallWorld.RouteFound? other) {
+        HintText.Text = "Press on either slice to put the start (the white dot); Shift or the right button puts the goal (the pink diamond); the wheel over a slice moves the other slice. " +
+            "Blue: the cells' way, a dot at every cell centre; yellow: the same pulled straight; thin and dashed: off this slice, seen flat; dotted: a leg the library does not prove clear; orange boxes are costs you dropped. The 3D view draws the same colours on the two planes, with both routes in space.";
+        if (_world.Problem is { } problem) {
+            HeadlineText.Text = $"No route: {problem}.";
+            CountsText.Text = "A route is for a body of one size and runs through the open cells of its regions, so the size class has to exist: try a smaller body radius.";
+            NoteText.Text = $"Cap {_world.Cap} × unit {_world.Unit:0.#####} m = {_world.Cap * _world.Unit:0.###} m.";
+            return;
+        }
+        if (_anchor is not { } goal || cells is null || straight is null || other is null) {
+            HeadlineText.Text = "There is no goal: the seeds found no room for the anchor, and nothing has put it anywhere.";
+            CountsText.Text = "Press Shift or the right button on a slice to put the goal.";
+            NoteText.Text = "";
+            return;
+        }
+        var radius = _world.Size.Radius;
+        var direct = Math.Sqrt((double)(goal.x - x) * (goal.x - x) + (double)(goal.y - y) * (goal.y - y) + (double)(goal.z - z) * (goal.z - z));
+        if (straight.Status != RouteStatus.Found) {
+            HeadlineText.Text = straight.Status switch {
+                RouteStatus.Unreachable => $"No route for a body of radius {radius:0.##} m: the start and the goal are in different regions, or one of them has no open cell within reach that it can see, or the open cells in between are shut by cost.",
+                RouteStatus.Refused => "The library refused the search: a point is not a number, the size class does not fit the map, or an array is the wrong length.",
+                _ => $"The search ended as {straight.Status}.",
+            };
+            CountsText.Text = $"Status {straight.Status}, {straight.Count} points, {straight.Expanded:N0} cells searched. The straight line from the start to the goal is {direct:0.00} m.";
+            NoteText.Text = "Move the start or the goal into an open cell of the same region (coloured, in region view), shrink the body, or clear the costs.";
+            return;
+        }
+        var shapes = ShapesBox.IsChecked == true;
+        var lengthCells = cells.Status == RouteStatus.Found ? Length(x, y, z, cells.Points) : double.NaN;
+        var lengthStraight = Length(x, y, z, straight.Points);
+        var ends = straight.Ends == RouteEnds.None
+            ? ""
+            : " " + (straight.Ends.HasFlag(RouteEnds.FirstLegUnproven) ? "The first leg is not proven clear: the start is nearer a shape than the radius, or beside a closed cell, so the route starts at the centre of the nearest open cell it can see. " : "") +
+              (straight.Ends.HasFlag(RouteEnds.StopsShortOfGoal) ? "The route stops short of the goal, at an open cell near it, since the way from there to the goal is not proven clear." : "");
+        HeadlineText.Text = $"Found: from the probe to the goal for a body of radius {radius:0.##} m, {straight.Count} point{(straight.Count == 1 ? "" : "s")} and {lengthStraight:0.0} m once pulled straight (the straight line is {direct:0.0} m).{ends}";
+        CountsText.Text = cells.Status == RouteStatus.Found
+            ? $"The cells' way has {cells.Count} points and is {lengthCells:0.0} m long; the search cost it {cells.Cost:0.0} over {cells.Expanded:N0} cells taken up. Pulling it straight drops it to {straight.Count} point{(straight.Count == 1 ? "" : "s")}, {(lengthCells > 0 ? (lengthCells - lengthStraight) * 100 / lengthCells : 0):0}% shorter" +
+              (straight.Expanded == 0 ? ", and the straight line from the start to the goal was clear, so nothing was searched." : ".")
+            : $"The cells' way: {cells.Status}.";
+        var otherLength = other.Status == RouteStatus.Found ? Length(x, y, z, other.Points) : double.NaN;
+        var comparison = other.Status == RouteStatus.Found
+            ? $"{(shapes ? "Without the shapes" : "With the shapes")} the same search gives {other.Count} point{(other.Count == 1 ? "" : "s")} and {otherLength:0.0} m."
+            : $"{(shapes ? "Without the shapes" : "With the shapes")} the same search finds no route ({other.Status}).";
+        NoteText.Text = (shapes
+                ? "The library may prove a leg clear against the shapes themselves. "
+                : "The library is given no shapes, so a leg is proven by the map alone, which needs more room than the radius. ") + comparison +
+            $" The searches took {straight.Milliseconds:0.00} ms for the route and {cells.Milliseconds:0.00} ms for the cells' way. {(_world.CostBoxes.Count > 0 ? " Costs bend the cells' way. A pulled leg crosses no cell that costs more than the cells of the stretch it replaces and the cells its ends are in, so the route goes round what the way went round and crosses a dear area only where the way did. It also costs no more as flown (its length in each cell times 1 + cost / 16) than that stretch, so a start or goal inside a dear area is searched for and not cut straight across; the leg from an end to the centre of its own cell is exempt." : "")} A step between touching open cells keeps the guarantee of {_world.Size.Guarantee:0.000} m from every shape, a straight leg keeps the full radius of {_world.Size.Radius:0.###} m, and no leg comes nearer than half a cell to a closed cell. The view searches with no leeway; the Unity package defaults to a tenth, so its ways and counts differ.";
     }
 
     private void TravelTexts(float x, float y, float z, List<(float x, float y, float z)> path, string pathEnd) {

@@ -3,8 +3,8 @@ using Yewnyx.Algorithms.Visualizer.Model;
 
 namespace Yewnyx.Algorithms.Visualizer.Views;
 
-/// <summary>What the cells of a slice are coloured by.</summary>
-public enum SliceColour { WallDistance, Regions, Travel }
+/// <summary>What the cells of a slice are coloured by. Routes colours as regions do, with the route drawn over it.</summary>
+public enum SliceColour { WallDistance, Regions, Travel, Routes }
 
 /// <summary>
 /// How a cell of a <see cref="WallWorld"/> is coloured: a key for each cell and a brush for each key, for each way of
@@ -21,14 +21,14 @@ internal static class SliceColours {
 
     /// <summary>The brush for each key a cell can have in a colouring.</summary>
     public static IBrush[] Brushes(WallWorld world, SliceColour colour) => colour switch {
-        SliceColour.Regions => RegionBrushes(),
+        SliceColour.Regions or SliceColour.Routes => RegionBrushes(),
         SliceColour.Travel => TravelBrushes(),
         _ => Ramp(world.Cap),
     };
 
     /// <summary>The key of a cell in a colouring: an index into <see cref="Brushes"/>.</summary>
     public static int KeyAt(WallWorld world, SliceColour colour, int cellX, int cellY, int cellZ) => colour switch {
-        SliceColour.Regions => world.RegionKey(cellX, cellY, cellZ),
+        SliceColour.Regions or SliceColour.Routes => world.RegionKey(cellX, cellY, cellZ),
         SliceColour.Travel => world.TravelKey(cellX, cellY, cellZ),
         _ => world.CountAt(cellX, cellY, cellZ),
     };

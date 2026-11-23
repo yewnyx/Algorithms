@@ -43,6 +43,14 @@ public sealed class WallSliceView : Control {
     private static readonly IPen Stroke = new Pen(new SolidColorBrush(Color.FromArgb(0xE0, 0xFF, 0xFF, 0xFF)), 1.4);
     private static readonly IPen PathNear = new Pen(new SolidColorBrush(Color.FromRgb(0xFF, 0xEB, 0x3B)), 3);
     private static readonly IPen PathFar = new Pen(new SolidColorBrush(Color.FromArgb(0x90, 0xFF, 0xEB, 0x3B)), 2, DashStyle.Dot);
+    // The route before it is pulled straight (blue, a dot at every cell centre it steps through) and after (yellow). Thinner and dashed where it is above or below the slice (it is drawn flat, as seen from the slice), dotted where the library does not prove the leg.
+    private static readonly IPen CellsNear = new Pen(new SolidColorBrush(Color.FromRgb(0x4F, 0xC3, 0xF7)), 2);
+    private static readonly IPen CellsFar = new Pen(new SolidColorBrush(Color.FromArgb(0xC0, 0x4F, 0xC3, 0xF7)), 1.5, DashStyle.Dash);
+    private static readonly IPen CellsDash = new Pen(new SolidColorBrush(Color.FromRgb(0x4F, 0xC3, 0xF7)), 2, DashStyle.Dot);
+    private static readonly IBrush CellsDot = new SolidColorBrush(Color.FromRgb(0x4F, 0xC3, 0xF7));
+    private static readonly IPen RouteNear = new Pen(new SolidColorBrush(Color.FromRgb(0xFF, 0xEB, 0x3B)), 3.5);
+    private static readonly IPen RouteFar = new Pen(new SolidColorBrush(Color.FromArgb(0xC0, 0xFF, 0xEB, 0x3B)), 2.5, DashStyle.Dash);
+    private static readonly IPen RouteDash = new Pen(new SolidColorBrush(Color.FromRgb(0xFF, 0xEB, 0x3B)), 3.5, DashStyle.Dot);
     private static readonly IBrush TextBrush = new SolidColorBrush(Color.FromRgb(0xC8, 0xD0, 0xDC));
 
     private List<(double U, double V)[]>? _costOutlines, _goalOutlines;
@@ -76,6 +84,15 @@ public sealed class WallSliceView : Control {
     public List<(float x, float y, float z)>? Path { get; set; }
     public bool ShowStrokes { get; set; } = true;
 
+    /// <summary>
+    /// For route colour: a route as the points it leads through, the start first. <see cref="DashFirst"/> and <see cref="DashLast"/> say that
+    /// the first or last leg is one the library does not prove clear; <see cref="Dots"/> marks each point.
+    /// </summary>
+    public sealed record RouteLine(List<(float x, float y, float z)> Points, bool DashFirst, bool DashLast, bool Dots);
+
+    public RouteLine? CellsWay { get; set; }
+    public RouteLine? StraightWay { get; set; }
+
     /// <summary>The colour of this slice's frame and title, to match its plane in the 3D view; none for the plain look.</summary>
     public Color? Accent { get; set; }
 
@@ -100,7 +117,7 @@ public sealed class WallSliceView : Control {
     private float Fixed => Plane == SlicePlane.Xy ? ProbeZ : ProbeY;
 
     private (double scale, double ox, double oy) Geometry() {
-        var bottom = ShowLegend ? 30.0 : Inset;
+        var bottom = ShowLegend ? (Colour == SliceColour.Routes ? 46.0 : 30.0) : Inset;
         var scale = Math.Max(0.01, Math.Min((Bounds.Width - 2 * Inset) / WallWorld.Width, (Bounds.Height - TopInset - bottom) / PlaneHeight));
         var ox = (Bounds.Width - scale * WallWorld.Width) / 2;
         var oy = TopInset + (Bounds.Height - TopInset - bottom - scale * PlaneHeight) / 2;
@@ -160,7 +177,8 @@ public sealed class WallSliceView : Control {
         if (world is null) { return; }
         var (scale, ox, oy) = Geometry();
         var cell = WallWorld.CellSize * scale;
-        var regions = Colour == SliceColour.Regions;
+        var routes = Colour == SliceColour.Routes;
+        var regions = Colour == SliceColour.Regions || routes;
         var travel = Colour == SliceColour.Travel;
         var brushes = SliceColours.Brushes(world, Colour);
 
@@ -196,9 +214,13 @@ public sealed class WallSliceView : Control {
         }
         context.DrawRectangle(null, Accent is { } edge ? new Pen(new SolidColorBrush(edge), 1.8) : Frame, new Rect(ox, oy, WallWorld.Width * scale, PlaneHeight * scale));
 
-        DrawSolids(context, world, regions, travel, scale, ox, oy);
+        DrawSolids(context, world, regions, travel, routes, scale, ox, oy);
         if (travel && ShowStrokes) { DrawStrokes(context, world, scale, ox, oy); }
         if (travel && Path is { Count: > 1 } path) { DrawPath(context, path, scale, ox, oy); }
+        if (routes) {
+            if (CellsWay is { } cells) { DrawRoute(context, cells, CellsNear, CellsFar, CellsDash, scale, ox, oy); }
+            if (StraightWay is { } straight) { DrawRoute(context, straight, RouteNear, RouteFar, RouteDash, scale, ox, oy); }
+        }
 
         if (Plane == SlicePlane.Xz) {
             var cut = ToPixel(0, ProbeZ, scale, ox, oy);
@@ -207,8 +229,8 @@ public sealed class WallSliceView : Control {
 
         // The probe is on this slice, at its own height or row, so its circles are true circles here.
         var at = ToPixel(ProbeX, Plane == SlicePlane.Xy ? ProbeY : ProbeZ, scale, ox, oy);
-        if (travel) {
-            // The anchor is where a point goal sits.
+        if (travel || routes) {
+            // The anchor is where a point goal sits, and where a route ends.
             if (HasAnchor) { DrawAnchor(context, scale, ox, oy); }
         } else if (regions) {
             context.DrawEllipse(null, ReachEdge, at, Reach * scale, Reach * scale);
@@ -220,7 +242,7 @@ public sealed class WallSliceView : Control {
         }
         context.DrawEllipse(ProbeDot, null, at, 3, 3);
 
-        if (ShowLegend) { DrawLegend(context, world, regions, travel, ox, oy + PlaneHeight * scale + 6, WallWorld.Width * scale); }
+        if (ShowLegend) { DrawLegend(context, world, regions, travel, routes, ox, oy + PlaneHeight * scale + 6, WallWorld.Width * scale); }
     }
 
     // Short strokes downhill on a coarse lattice: from the middle of every other cell, a line along the field's direction as far as it lies in this plane.
@@ -260,6 +282,23 @@ public sealed class WallSliceView : Control {
         if (any) { context.DrawGeometry(null, Stroke, geometry); }
     }
 
+    // A route as a line on this slice: bold where it runs near the slice, thin and dashed where it is above or below it (flattened onto the slice), dotted where the library does not prove the leg.
+    private void DrawRoute(DrawingContext context, RouteLine line, IPen near, IPen far, IPen dashed, double scale, double ox, double oy) {
+        var points = line.Points;
+        for (var i = 1; i < points.Count; i++) {
+            var (au, av, aoff) = OnSlice(points[i - 1].x, points[i - 1].y, points[i - 1].z);
+            var (bu, bv, boff) = OnSlice(points[i].x, points[i].y, points[i].z);
+            var onSlice = Math.Abs(aoff) < 1.0 && Math.Abs(boff) < 1.0;
+            var unproven = (i == 1 && line.DashFirst) || (i == points.Count - 1 && line.DashLast);
+            context.DrawLine(!onSlice ? far : unproven ? dashed : near, ToPixel(au, av, scale, ox, oy), ToPixel(bu, bv, scale, ox, oy));
+        }
+        if (!line.Dots) { return; }
+        for (var i = 1; i < points.Count; i++) {
+            var (u, v, off) = OnSlice(points[i].x, points[i].y, points[i].z);
+            if (Math.Abs(off) < 1.0) { context.DrawEllipse(CellsDot, null, ToPixel(u, v, scale, ox, oy), 2.5, 2.5); }
+        }
+    }
+
     // The way the field leads the probe, as a line on this slice: bright where it runs near the slice, faint and dotted where it is above or below it.
     private void DrawPath(DrawingContext context, List<(float x, float y, float z)> path, double scale, double ox, double oy) {
         for (var i = 1; i < path.Count; i++) {
@@ -297,9 +336,9 @@ public sealed class WallSliceView : Control {
     }
 
     // Pale shapes: where the plane cuts each solid, from the solid's own numbers; in region colour the seeds too, as yellow boxes.
-    private void DrawSolids(DrawingContext context, WallWorld world, bool regions, bool travel, double scale, double ox, double oy) {
+    private void DrawSolids(DrawingContext context, WallWorld world, bool regions, bool travel, bool routes, double scale, double ox, double oy) {
         var at = Fixed;
-        if (_outlines is null || _outlinesFor != (world, at) || travel) {
+        if (_outlines is null || _outlinesFor != (world, at) || travel || routes) {
             _outlines = world.Sections(Plane, at);
             _seedOutlines = world.SeedSections(Plane, at);
             _costOutlines = world.CostSections(Plane, at);
@@ -307,9 +346,10 @@ public sealed class WallSliceView : Control {
             _outlinesFor = (world, at);
         }
         if (ShowSolids) { Fill(context, _outlines, SolidFill, SolidEdge, scale, ox, oy); }
+        // Dropped cost boxes in orange.
+        if (travel || routes) { Fill(context, _costOutlines!, CostFill, CostEdge, scale, ox, oy); }
         if (travel) {
-            // Dropped cost boxes in orange, and the solid the field starts in in yellow.
-            Fill(context, _costOutlines!, CostFill, CostEdge, scale, ox, oy);
+            // The solid the field starts in, in yellow.
             Fill(context, _goalOutlines!, SeedFill, SeedEdge, scale, ox, oy);
             return;
         }
@@ -344,7 +384,7 @@ public sealed class WallSliceView : Control {
         g.EndFigure(true);
     }
 
-    private void DrawLegend(DrawingContext context, WallWorld world, bool regions, bool travel, double x, double y, double width) {
+    private void DrawLegend(DrawingContext context, WallWorld world, bool regions, bool travel, bool routes, double x, double y, double width) {
         if (travel) {
             var brushes = SliceColours.Brushes(world, SliceColour.Travel);
             var travelBar = Math.Min(width * 0.4, 260.0);
@@ -374,6 +414,18 @@ public sealed class WallSliceView : Control {
                 var formatted = new FormattedText(label, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, Typeface.Default, 11, Silver);
                 context.DrawText(formatted, new Point(at, y + 11));
                 at += Math.Max(formatted.Width, 20) + 24;
+            }
+            if (routes) {
+                // The routes' own key, on a second row: a short sample of each line, then its label.
+                var row = y + 28;
+                var key = x;
+                foreach (var (label, pen, dots) in new[] { ("cells' way", CellsNear, true), ("straightened", RouteNear, false), ("dotted: unproven", RouteDash, false) }) {
+                    context.DrawLine(pen, new Point(key, row + 5), new Point(key + 26, row + 5));
+                    if (dots) { context.DrawEllipse(CellsDot, null, new Point(key + 13, row + 5), 2.5, 2.5); }
+                    var formatted = new FormattedText(label, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, Typeface.Default, 11, Silver);
+                    context.DrawText(formatted, new Point(key + 32, row - 1));
+                    key += 32 + formatted.Width + 12;
+                }
             }
             return;
         }

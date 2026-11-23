@@ -82,6 +82,13 @@ var toGoal = new[] { TravelSeed.FromPoint(Solid.Sphere(goal.x, goal.y, goal.z, 0
 WallGridField field = grid.ScheduleField(body, toGoal);
 field.TrySample(point, out float3 way, out float travel);                 // the way down the field at a point, and how far is left
 JobHandle sampled = field.ScheduleSample(points, ways, travels);          // the same for many points at once, in a job
+
+// The way for one body of that size from a point to a goal: a few straight legs.
+var route = new WallGridRoute();                        // keep it: it holds the search's arrays, and serves any grid
+route.Schedule(grid, body, from, to);                   // searched in a job
+if (route.Status == RouteStatus.Found) {                // reading the answer waits for the job
+    NativeArray<float3>.ReadOnly legs = route.Points;   // go to each in turn; the last is the goal
+}
 ```
 
 - **One frame, no transform.** Points and shapes are in the grid's own frame. Where that frame sits in the world is the caller's.
@@ -107,6 +114,17 @@ JobHandle sampled = field.ScheduleSample(points, ways, travels);          // the
 - **A field says nothing of what lies between cells.** Whatever follows it needs its own way of not hitting things.
 - **A field outlives its grid.** When memory is short, dispose the grid and keep its fields: a field that was good goes on answering as it was built. **It then cannot know that the way has changed.** If a door shuts or a cost changes there, it does not refuse: dispose it yourself, and build a new one from a new grid.
 - **You own a field.** Dispose it; it holds 2 bytes a cell. A job of yours that reads its `Distance` must be handed to the field's `AddReader`, so that `Dispose` waits for it.
+- **A route is for one body with somewhere to go.** Its points are straight legs that keep the body's full radius from every shape: proven from the wall distance where that can say, and from the shapes where it can't. Where no straight leg is clear the route steps between open cells, which keeps the size class's `Guarantee`.
+- **A route keeps to what its way paid.** The way is searched by the cells' costs and then pulled straight. A straight leg is taken only if it is no worse than the part of the way it replaces: it passes through no cell that costs more than the costliest cell of that part, and it costs no more as flown, which is its length in each cell times 1 + cost / 16. So pulling straight never makes a route cost more, and a route goes round an area filled with a higher cost where its way did. The straight leg from start to goal is taken with nothing searched where it is sure to be the cheapest: where no cell under it has a cost, or where it costs no more than the same line would at the least cost among the grid's open cells. So in a grid where every open cell has the one cost, routes cost what they would with no costs at all; one corner left at a lower cost, and a straight leg waits for a search.
+- **A route has few legs; it is not always the shortest.** From each point, the next is the farthest cell of the searched way that a straight leg reaches. Now and then a nearer turning point would have made the whole route a little shorter.
+- **Where a whole grid costs more, fill the cost over all of it.** A search is told the least cost among the cells the flood reached, and saves work only where that is above 0: then a clear straight leg is taken with nothing searched, and a search takes up about as many cells as with no costs. So fill a solid that covers the whole grid, with any cells it has beyond the room's walls and doorways. One reachable cell left at the normal cost, and every route with a costed cell under its straight line waits for a search, and a slow one.
+- **A route's way may cost a tenth more than the cheapest,** and is found with about a tenth of the work for it. `WallGridRoute.Leeway` is that share: 0 gives the cheapest way, and more gives quicker searches. In a grid where much of the room costs more than the rest a small leeway saves little. One as large as that cost is, 2 for a cost of 32, can make such a search far quicker, and what it gives up depends on the room: in the rooms measured the ways came out from hardly dearer to 15 in 100 dearer on the whole, and up to twice as dear at the worst, and in some the search still took up thousands of cells.
+- **Read a route's `Status` first.** `Unreachable`: there is no way for a body of that size. `Refused`: the size class has no regions (flood first), or a point is not a number. `BufferTooShort`: it has more points than the route was made to hold, and `Count` says how many.
+- **`Ends` says what a route does not promise.** `FirstLegUnproven`: the start is nearer a shape than the radius, and the first point is the centre of the nearest open cell it can see. `StopsShortOfGoal`: the goal is, and the route ends at an open cell's centre beside it.
+- **A route is of the grid as it was when it was searched.** After `FillCost`, `ClearCost`, `SetShapes` or another flood, `IsCurrent` is false. The points are kept: stop following them, and search again. `IsCurrent` is about the grid alone, so read `Status` as well.
+- **Closed cells keep a leg half a cell off, not a radius.** To keep a body off something shut by cost alone, such as a door, fill `CellCost.Closed` wider than it by the body's radius.
+- **Keep one `WallGridRoute` for each search that runs at once, not one for each agent.** It holds 16 bytes for each cell of the largest grid it has searched, and serves grids of any size. Copy the points out when a search is done, and a few route objects serve any number of agents. A search scheduled while its last is still running runs after it and replaces its answer.
+- **Reading a route's `Status`, `Points` and the rest waits for the search.** To not wait, look at `Handle.IsCompleted` first.
 - **Main thread only.** `TryRoom`, `IsMarked` and `Wall` wait for the marking jobs first, and what reads a size class's regions waits for its flood. They do not wait for a job of yours.
 - **A job of yours that reads `Wall` or `Cost`** must be handed to `AddReader`. The next marking then runs after it, and `SetShapes`, cost changes and `Dispose` wait for it. Otherwise those write or free the arrays under your job.
 

@@ -332,7 +332,7 @@ namespace Yewnyx.Spatial.Tests {
             using var grid = new WallGrid(Grid);
             var before = grid.ByteCount;
             grid.AddSizeClass(0.51f);
-            Assert.That(grid.ByteCount, Is.EqualTo(before + Grid.CellCount + 12));
+            Assert.That(grid.ByteCount, Is.EqualTo(before + Grid.CellCount + 16));
         }
 
         [Test]
