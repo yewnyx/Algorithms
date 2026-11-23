@@ -102,6 +102,27 @@ namespace Yewnyx.Spatial {
         }
 
         /// <summary>
+        /// The least cost among the cells that have a region. No way through the regions enters a
+        /// cell that costs less, which is what <see cref="Routes.Find"/> wants to know.
+        /// </summary>
+        /// <remarks>
+        /// 0 if <paramref name="cost"/> is empty, no cell has a region, the shape cannot be used
+        /// or an array is shorter than one byte per cell.
+        /// </remarks>
+        public static byte LeastCost(in GridShape shape, ReadOnlySpan<byte> region, ReadOnlySpan<byte> cost) {
+            var cells = shape.CellCount;
+            if (cells == 0 || cost.Length < cells || region.Length < cells) { return 0; }
+            var least = -1;
+            for (var i = 0; i < cells; i++) {
+                if (region[i] != 0 && (least < 0 || cost[i] < least)) {
+                    least = cost[i];
+                    if (least == 0) { break; }
+                }
+            }
+            return least < 0 ? (byte)0 : (byte)least;
+        }
+
+        /// <summary>
         /// Whether the cell that holds a point is open and was reached by a seed. False if the point
         /// is outside the grid or not a number, the shape cannot be used, or the region array is
         /// shorter than one byte per cell.

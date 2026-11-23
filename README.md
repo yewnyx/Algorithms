@@ -293,6 +293,7 @@ For callers that ask "how much room is there here?" of geometry that doesn't mov
 - `CellCost` is one more byte a cell that the caller writes: 0 is normal, 255 is closed.
 - `SizeClass` is what a body of one radius needs of the grid, and `Regions` floods where it can be: which cells are open for it, and which of them join.
 - `Travel` builds a field of how far each open cell is from a goal, going round what is in the way, and says at any point which way leads down it. Many bodies with no plan of their own can follow one field.
+- `Routes` finds the way for one body from a point to a goal: a few straight legs, each proven clear for the body's full radius.
 
 ```csharp
 using Yewnyx.Spatial;
@@ -349,6 +350,12 @@ Travel.Build(grid, region, cost, goal, unit: 0.01f, field, new float[Travel.Time
 Travel.Sample(new TravelField(grid, 0.01f, field), 2f, 2f, 2f, out float wayX, out float wayY, out float wayZ, out float travel);
 // travel 6.91 m: the straight line is 5.66, but the pillar stands in it and the costly corner is beside it
 // way 0.71, 0.71, 0: the direction that leads down the field from here
+
+// The way for that body from 2, 2, 2 to the same goal, in straight legs. The arrays are the search's own.
+var points = new float[3 * 16];
+RouteResult route = Routes.Find(wall, size, shapes, region, cost, 2f, 2f, 2f, 6f, 6f, 2f, straighten: true,
+    new float[Routes.SumsLength(grid)], new int[Routes.LinksLength(grid)], new int[Routes.HeapLength(grid)], points);
+// route.Status Found, route.Count 2: to 5.75, 3.75, 2.25, which clears the pillar, and from there to 6, 6, 2
 ```
 
 - Queries take and return points, never cell numbers. `GridShape.TryCentre` gives the centre of the cell that holds a point. To walk an array you own, `IndexOf` and `CentreOf` give a cell's place and centre.
@@ -367,6 +374,15 @@ Travel.Sample(new TravelField(grid, 0.01f, field), 2f, 2f, 2f, out float wayX, o
 - Distances are found by fast marching, from a cell's neighbours on all three axes at once. Through open space they are a little over the straight line: about 5 parts in 100 far from the start.
 - A distance of more than 65,534 counts doesn't fit. Such a cell is left unreached and counted, never held at the largest count.
 - `Travel.Sample` blends the distance between the eight cells round a point. Its direction is down that slope where the slope truly leads down, and otherwise towards the lowest cell that shares a face with the nearest reached one, or, if none of those six is lower, the lowest of the 26 round it. At a goal the direction never settles: a follower has arrived when the distance falls below about a cell. It promises nothing about what lies between cells: whatever follows it still needs its own way of not hitting things.
+- A route is the points to go to in turn; the start isn't among them. `RouteResult.Status` says whether there is one: `Found`, `Unreachable`, `BufferTooShort` (its `Count` then says how many points it has) or `Refused`.
+- Every leg of a route is one of two kinds. A straight leg is proven clear along its whole length for the class's full radius: from the grid where the grid can say, and from the shapes where it can't. Where no straight leg is clear, the route steps between the centres of two open cells that touch, which keeps `SizeClass.Guarantee`. With a `ShapeSet` of no shapes a straight leg is proven from the grid alone, which needs more room: for a radius of 0.51 m on half-metre cells, up to 0.64 m from a wall.
+- An end need not be in an open cell. It then takes the nearest open cell whose centre it can see, no farther than 1.73 times the radius and a cell. A start nearer a shape than the radius gives `RouteEnds.FirstLegUnproven`, and the route's first point is that centre. A goal like that gives `StopsShortOfGoal`, and the route ends at one. Ends in two regions are `Unreachable` at once, with nothing searched.
+- The way is searched cell by cell, cheapest first by the cells' costs, and then pulled straight. A straight leg takes the place of part of the way only if it is clear and no worse than that part in two things: it passes through no cell that costs more than the costliest cell of that part, and it costs no more as flown, which is its length in each cell times 1 + cost / 16 for that cell. So a route never costs more as flown than its way left as cells, it goes round an area that its way went round, and it crosses one only where that costs no more than what its way did.
+- No leg passes through a closed cell, or nearer one than half a cell. That is less than a body's radius: to keep a body off something shut by cost alone, close the cells out to the radius beyond it.
+- The straight leg from start to goal is taken with nothing searched where it is sure to cost no more than any way: no way between the centres of the two ends' cells costs less than the straight line between them at the least cost of any cell. `Regions.LeastCost` gives that least, and `Routes.Find` takes it as `leastCost`; with 0, which is always right, the leg is taken at once only where no cell under it has a cost. The search reckons what is left to go at the same least cost, so where every cell costs something it takes up about as many cells as with no costs. Both save work only where the least is above 0: where a whole grid is meant to cost more, give every cell with a region that cost.
+- `Routes.Find` takes a `leeway`: how much more than the cheapest the way may cost, as a share of it. With 0.1 the way costs up to a tenth more, and the search takes up about a tenth as many cells where the grid has no costs or one cost all through. Where much of a room costs more than the rest it saves little unless it is as large as that cost is: what is left to go is reckoned at the least cost of any cell. With 0, the default, the way is the cheapest. The legs are held to the way that was found either way.
+- Pulling straight takes, from each point, the farthest cell of the way that a straight leg reaches. That gives few legs, not always the shortest route: now and then a nearer turning point would have made the next leg shorter.
+- A search's own arrays take 16 bytes a cell, and can be used again without clearing, for grids of any size they are long enough for. The links must be all zero the first time; every search leaves them so.
 - Every call returns false if it is refused (a point outside the grid, spans that don't belong together, a shape that may not be stored). Then read nothing from its outputs. A refused `MarkLayer`, `FromSeeds` or `Build` leaves its array saying nothing: no room, no open cell, no cell reached.
 
 `Spatial.Unity/` is a Unity package (`xyz.yewnyx.spatial`) around the same source: a `BoxSet` that recomputes only the boxes that moved, Burst jobs that rebuild the tree and answer batches of queries, a gizmo and a sample scene. See [Spatial.Unity/README.md](Spatial.Unity/README.md).
