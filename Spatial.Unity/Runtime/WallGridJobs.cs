@@ -30,7 +30,8 @@ namespace Yewnyx.Spatial {
         [ReadOnly, DeallocateOnJobCompletion] public NativeArray<Solid> Seeds;
         [DeallocateOnJobCompletion] public NativeArray<int> Queue;
         public NativeArray<byte> Region;
-        // Whether the flood was done (1 or 0), how many cells it reached, and how many seeds held no open cell.
+        // Whether the flood was done (1 or 0), how many cells it reached, how many seeds held no
+        // open cell, and the least cost among the cells it reached.
         public NativeArray<int> Result;
 
         public void Execute() {
@@ -47,6 +48,7 @@ namespace Yewnyx.Spatial {
             Result[0] = done ? 1 : 0;
             Result[1] = reached;
             Result[2] = empty;
+            Result[3] = done ? Regions.LeastCost(Shape, Region.AsReadOnlySpan(), Cost.AsReadOnlySpan()) : 0;
         }
     }
 
@@ -74,6 +76,40 @@ namespace Yewnyx.Spatial {
             Result[0] = built ? 1 : 0;
             Result[1] = reached;
             Result[2] = cut;
+        }
+    }
+
+    /// <summary>Finds a route for one size class.</summary>
+    [BurstCompile]
+    internal struct RouteJob : IJob {
+        public GridShape Shape;
+        public float Unit;
+        public byte Cap;
+        public SizeClass Size;
+        public ShapeArrays Shapes;
+        public bool Straighten;
+        public float Leeway;
+        [ReadOnly] public NativeArray<byte> Wall, Region, Cost;
+        // The size class's flood: element 0 is 1 if its regions are those of the shapes and costs
+        // held, and element 3 is the least cost among their cells.
+        [ReadOnly] public NativeArray<int> Flooded;
+        public float3 From, To;
+        // The search's own.
+        public NativeArray<float> Sums;
+        public NativeArray<int> Links, Heap;
+        public NativeArray<float3> Points;
+        public NativeArray<RouteResult> Result;
+
+        public void Execute() {
+            // A route is only as good as the regions it is searched through, and they are only
+            // there while the wall distance is that of the shapes held.
+            if (Flooded[0] == 0) {
+                Result[0] = default;
+                return;
+            }
+            Result[0] = Routes.Find(new WallMap(Shape, Unit, Cap, Wall.AsReadOnlySpan()), Size, Shapes.Set,
+                Region.AsReadOnlySpan(), Cost.AsReadOnlySpan(), From.x, From.y, From.z, To.x, To.y, To.z, Straighten,
+                Sums.AsSpan(), Links.AsSpan(), Heap.AsSpan(), Points.Reinterpret<float>(12).AsSpan(), (byte)Flooded[3], Leeway);
         }
     }
 

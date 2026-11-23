@@ -103,7 +103,7 @@ namespace Yewnyx.Spatial {
                 _requireAlive();
                 return (long)_wall.Length + _cost.Length + _filled.Length + (long)_solids.Length * 64 + (long)_corners.Length * 4 +
                        (long)_triangles.Length * 4 + (long)_order.Length * 4 + (long)_boxes.Length * 24 + (long)_nodes.Length * 32 +
-                       (long)_sizes.Count * (_wall.Length + 12);
+                       (long)_sizes.Count * (_wall.Length + 16);
             }
         }
 
@@ -242,6 +242,10 @@ namespace Yewnyx.Spatial {
         /// regions until <see cref="ScheduleRegions"/> floods them again.
         /// The grid holds a byte of cost a cell from the first time a cost other than 0 is written
         /// into a cell, until <see cref="ClearCost"/>. A solid that holds no cell's centre writes none.
+        /// To make a whole grid cost more, fill a solid that covers all of it, and not only the
+        /// room inside it: a route is found with far less work where every cell that a flood
+        /// reaches has a cost (see <see cref="Routes.Find"/>), and one such cell left at the normal
+        /// cost undoes that.
         /// </remarks>
         public bool FillCost(in Solid solid, byte value) {
             _settle();
@@ -293,7 +297,7 @@ namespace Yewnyx.Spatial {
             _sizes.Add(new Sized {
                 Size = size,
                 Region = new NativeArray<byte>(Shape.CellCount, _allocator),
-                Result = new NativeArray<int>(3, _allocator),
+                Result = new NativeArray<int>(4, _allocator),
             });
             return _sizes.Count - 1;
         }
@@ -367,6 +371,20 @@ namespace Yewnyx.Spatial {
             // wait for the grid's other readers itself: it writes nothing they read.
             _read(build);
             return new WallGridField(this, sizeClass, sized.Stamp, unit, distance, result, build);
+        }
+
+        // Schedules a search for a route with the arrays of a WallGridRoute. It reads the wall
+        // distance, the costs, the regions and the shapes, so what next writes them waits for it.
+        internal JobHandle ScheduleRoute(int sizeClass, float3 from, float3 to, bool straighten, float leeway,
+            NativeArray<float> sums, NativeArray<int> links, NativeArray<int> heap, NativeArray<float3> points, NativeArray<RouteResult> result, JobHandle dependsOn) {
+            var sized = _sized(sizeClass);
+            var search = new RouteJob {
+                Shape = Shape, Unit = Unit, Cap = Cap, Size = sized.Size, Shapes = _shapes(), Straighten = straighten, Leeway = leeway,
+                Wall = _wall, Region = sized.Region, Cost = _cost, Flooded = sized.Result, From = from, To = to,
+                Sums = sums, Links = links, Heap = heap, Points = points, Result = result,
+            }.Schedule(JobHandle.CombineDependencies(dependsOn, sized.Flood, _mark));
+            _read(search);
+            return search;
         }
 
         // What a size class's regions are stamped with: it changes whenever they do.
