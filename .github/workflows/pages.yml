@@ -1,16 +1,7 @@
 name: Visualizer on GitHub Pages
+# The site is built from the spatial branch, which has the Spatial tab, so a push to main doesn't deploy. Running
+# this by hand does, and replaces the site with what main has.
 on:
-  push:
-    branches:
-    - main
-    paths:
-    - 'Algorithms/**'
-    - 'Collections/**'
-    - 'Packables/**'
-    - 'Packables.Newtonsoft/**'
-    - 'Visualizer/**'
-    - 'Visualizer.Browser/**'
-    - '.github/workflows/pages.yml'
   workflow_dispatch:
 permissions:
   contents: read
