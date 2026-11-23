@@ -138,7 +138,8 @@ public static class GroupClasses {
 /// gives the groups class ids.</item>
 /// <item>Any diff over the ids (<see cref="MyersDiff"/>, <see cref="HistogramDiff"/>, ...) gives the
 /// group hunks: which lines changed.</item>
-/// <item><see cref="Refine{T}"/> diffs the items inside the changed groups and writes item hunks: a
+/// <item><see cref="Refine{T}(ReadOnlySpan{T}, ReadOnlySpan{Segment}, ReadOnlySpan{T}, ReadOnlySpan{Segment}, ReadOnlySpan{Hunk}, Span{Hunk}, Span{int})"/>
+/// diffs the items inside the changed groups and writes item hunks: a
 /// complete script over the items, which <see cref="Patch{T}"/> takes, and which a view draws as the
 /// characters that changed inside changed lines.</item>
 /// </list>
@@ -194,6 +195,13 @@ public static class GroupedDiff {
     /// <see cref="MyersDiff.Diff{T}(ReadOnlySpan{T}, ReadOnlySpan{T}, Span{Hunk}, Span{int}, int, out bool)"/>.
     /// The budget is per pair, so it bounds a long changed line however many lines there are.
     /// </summary>
+    /// <param name="original">The items of the original sequence.</param>
+    /// <param name="originalGroups">The groups that tile <paramref name="original"/>.</param>
+    /// <param name="revised">The items of the revised sequence.</param>
+    /// <param name="revisedGroups">The groups that tile <paramref name="revised"/>.</param>
+    /// <param name="groupHunks">The hunks of a diff of the groups' class ids.</param>
+    /// <param name="hunks">Receives the item hunks; needs <see cref="MaxHunks"/> elements.</param>
+    /// <param name="workspace">Scratch space; needs <see cref="WorkspaceLength"/> elements.</param>
     /// <param name="budget">How many edits one Myers search looks for, as for <see cref="MyersDiff"/>.</param>
     /// <param name="cutShort">Whether a pair's diff was cut short, so its hunks may be more than needed.</param>
     public static int Refine<T>(ReadOnlySpan<T> original, ReadOnlySpan<Segment> originalGroups, ReadOnlySpan<T> revised,

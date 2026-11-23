@@ -54,9 +54,13 @@ public static class MyersDiff {
     /// out the passes that are linear in the input. The same buffer sizes as without a budget are needed.
     /// </para>
     /// </remarks>
+    /// <param name="original">The sequence the hunks start from.</param>
+    /// <param name="revised">The sequence the hunks lead to.</param>
+    /// <param name="hunks">Receives the hunks; needs <see cref="MaxHunks"/> elements.</param>
+    /// <param name="workspace">Scratch space; needs <see cref="WorkspaceLength"/> elements.</param>
     /// <param name="budget">
     /// How many edits (items inserted or deleted) one search looks for. It limits neither the script nor
-    /// the total work.
+    /// the total work. Throws <see cref="ArgumentOutOfRangeException"/> if negative.
     /// </param>
     /// <param name="cutShort">Whether any search was cut short, so the script may be longer than the shortest.</param>
     public static int Diff<T>(ReadOnlySpan<T> original, ReadOnlySpan<T> revised, Span<Hunk> hunks, Span<int> workspace,

@@ -214,4 +214,35 @@ public class GraphTest
         dependencyOrder[0].Should().Be(length - 1);
         dependencyOrder[length - 1].Should().Be(0);
     }
+
+    [Fact]
+    public void ALongEnoughArrayIsKeptAndANullOrShortOneIsReplacedByExactlyTheVertexCount() {
+        graph.AddEdges((0, 1), (1, 2), (2, 0), (2, 3));
+
+        int[]? order = new int[10];
+        Segment[]? components = new Segment[10];
+        var (keptOrder, keptComponents) = (order, components);
+        graph.Tarjan(ref order, ref components).Should().Be(2);
+        order.Should().BeSameAs(keptOrder);
+        components.Should().BeSameAs(keptComponents);
+
+        int[]? shortOrder = new int[2];
+        Segment[]? noComponents = null;
+        var count = graph.Tarjan(ref shortOrder, ref noComponents);
+        shortOrder.Should().HaveCount(4);
+        noComponents.Should().HaveCount(4);
+        // In a new array the segments past the count are empty.
+        noComponents.Skip(count).Should().OnlyContain(segment => segment == default);
+
+        order = new int[10];
+        components = new Segment[10];
+        (keptOrder, keptComponents) = (order, components);
+        graph.Tarjan([3], ref order, ref components).Should().Be(1);
+        order.Should().BeSameAs(keptOrder);
+        components.Should().BeSameAs(keptComponents);
+
+        graph.ConnectedComponents(ref order, ref components).Should().Be(1);
+        order.Should().BeSameAs(keptOrder);
+        components.Should().BeSameAs(keptComponents);
+    }
 }
