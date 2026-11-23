@@ -38,6 +38,7 @@ The `ref` overloads make or grow the arrays; the span overloads write into buffe
 - `Graph.ConnectedComponents` groups vertices joined by edges in either direction, using union-find, with groups ordered by their lowest vertex.
 - `FloydWarshall.Solve` computes all-pairs shortest paths in place over a caller-owned n × n weight matrix, with an optional next-hop matrix for rebuilding paths. It suits small graphs: O(n³) time.
 - `Graph.ContractVersion` is bumped whenever behaviour callers rely on changes, such as output order or buffer rules, so a rebuilt library can't change behaviour silently. Check it once at startup.
+- `Graph.AddEdge` and `AddEdges` refuse a negative vertex with `ArgumentOutOfRangeException`, and `AddEdges` adds none of its edges if one is refused.
 
 ## Diffing
 

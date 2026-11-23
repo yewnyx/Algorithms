@@ -46,7 +46,12 @@ public sealed class Graph {
     public int VertexCount => _maxIndex + 1;
 
     /// <summary>Adds each edge, as <see cref="AddEdge(Edge)"/> does. Returns the graph, for chaining.</summary>
+    /// <exception cref="ArgumentOutOfRangeException">An edge has a negative vertex. No edge is added.</exception>
     public Graph AddEdges(params Edge[] edges) {
+        foreach (var edge in edges) {
+            _requireVertex(edge.From, nameof(edges));
+            _requireVertex(edge.To, nameof(edges));
+        }
         foreach (var edge in edges) { AddEdge(edge); }
         return this;
     }
@@ -55,7 +60,10 @@ public sealed class Graph {
     /// Adds a directed edge and makes sure both its vertices exist. Adding an edge that is already there changes nothing.
     /// Returns the graph, for chaining.
     /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">A vertex is negative: vertices are 0 or more.</exception>
     public Graph AddEdge(Edge edge) {
+        _requireVertex(edge.From, nameof(edge));
+        _requireVertex(edge.To, nameof(edge));
         _edges.Add(edge);
         _maxIndex = Math.Max(_maxIndex, Math.Max(edge.From, edge.To));
         return this;
@@ -64,7 +72,12 @@ public sealed class Graph {
     /// <summary>
     /// Adds the edge <paramref name="from"/> -> <paramref name="to"/>, as <see cref="AddEdge(Edge)"/> does.
     /// </summary>
-    public Graph AddEdge(int from, int to) => AddEdge((from, to));
+    /// <exception cref="ArgumentOutOfRangeException">A vertex is negative: vertices are 0 or more.</exception>
+    public Graph AddEdge(int from, int to) {
+        _requireVertex(from, nameof(from));
+        _requireVertex(to, nameof(to));
+        return AddEdge((from, to));
+    }
 
     /// <summary>
     /// Makes sure vertices 0 to <paramref name="indexToEnsure"/> exist, so a vertex without edges still gets a component of
@@ -247,6 +260,10 @@ public sealed class Graph {
         _ensureLength(ref vertices);
         _ensureLength(ref components);
         return ConnectedComponents(vertices.AsSpan(), components.AsSpan());
+    }
+
+    private static void _requireVertex(int vertex, string paramName) {
+        if (vertex < 0) { throw new ArgumentOutOfRangeException(paramName, vertex, "Vertices are 0 or more."); }
     }
 
     private static int _findRoot(Span<int> parent, int v) {

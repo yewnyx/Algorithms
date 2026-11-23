@@ -245,4 +245,24 @@ public class GraphTest
         order.Should().BeSameAs(keptOrder);
         components.Should().BeSameAs(keptComponents);
     }
+
+    [Fact]
+    public void ANegativeVertexIsRefusedWhenTheEdgeIsAdded() {
+        graph.AddEdge(0, 1);
+
+        var from = () => graph.AddEdge(-1, 2);
+        var to = () => graph.AddEdge(2, -1);
+        var manyFrom = () => graph.AddEdges((1, 2), (-3, 0));
+        var manyTo = () => graph.AddEdges((1, 2), (3, -4));
+
+        from.Should().Throw<ArgumentOutOfRangeException>().WithParameterName("from");
+        to.Should().Throw<ArgumentOutOfRangeException>().WithParameterName("to");
+        manyFrom.Should().Throw<ArgumentOutOfRangeException>().WithParameterName("edges");
+        manyTo.Should().Throw<ArgumentOutOfRangeException>().WithParameterName("edges");
+        // Nothing was added by the refused calls, not even the good edge in the last two.
+        graph.VertexCount.Should().Be(2);
+        int[]? order = null;
+        Segment[]? components = null;
+        graph.Tarjan(ref order, ref components).Should().Be(2);
+    }
 }
