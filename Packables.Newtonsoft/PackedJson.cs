@@ -8,11 +8,13 @@ using Newtonsoft.Json.Linq;
 
 namespace Yewnyx.Packables;
 
+/// <summary>Why a JSON text was refused.</summary>
 public enum PackedJsonErrorKind {
     /// <summary>No error: what a successful read leaves.</summary>
     None,
     /// <summary>Not JSON, or JSON of the wrong shape.</summary>
     Malformed,
+    /// <summary>The "Content-Type" is missing, or isn't the one asked for.</summary>
     ContentType,
     /// <summary>The version is missing, or not one this build reads.</summary>
     Version,
@@ -22,19 +24,28 @@ public enum PackedJsonErrorKind {
     UnknownTag,
     /// <summary>A JSON object or array used as a value without a "$" wrapper.</summary>
     BareContainer,
+    /// <summary>
+    /// A key of a map or of an object's fields, or an object's id, comes twice. A top-level key that comes twice is
+    /// <see cref="Malformed"/>.
+    /// </summary>
     DuplicateKey,
+    /// <summary>The root is missing, or isn't a ref.</summary>
     NoRoot,
+    /// <summary>The nesting goes deeper than the limit.</summary>
     TooDeep,
     /// <summary>A date value in a tree parsed elsewhere: the parser has already rewritten it.</summary>
     DateValue,
 }
 
+/// <summary>Why a read was refused: what was wrong and where.</summary>
 public readonly struct PackedJsonError(PackedJsonErrorKind kind, string path) {
+    /// <summary>What was wrong.</summary>
     public readonly PackedJsonErrorKind Kind = kind;
 
     /// <summary>Where in the JSON, as a JSON path.</summary>
     public readonly string Path = path;
 
+    /// <summary>Reads like <c>Version at 'version'</c>.</summary>
     public override string ToString() => $"{Kind} at '{Path}'";
 }
 
@@ -61,7 +72,12 @@ public readonly struct PackedJsonError(PackedJsonErrorKind kind, string path) {
 /// </list>
 /// </summary>
 public static class PackedJson {
+    /// <summary>
+    /// The format version that is written, and the only one <c>TryRead</c> takes. Format 1 needs
+    /// <see cref="Format1Converter"/>.
+    /// </summary>
     public const int FormatVersion = 3;
+    /// <summary>The deepest nesting a read allows when it isn't told otherwise.</summary>
     public const int DefaultMaxDepth = 64;
 
     /// <summary>
@@ -77,12 +93,21 @@ public static class PackedJson {
         }
     }
 
+    /// <summary>
+    /// Writes the document as JSON text, indented unless <paramref name="indented"/> is false, with "\n" line breaks.
+    /// <paramref name="contentType"/> is written as the "Content-Type", and a read must be given the same one. Throws
+    /// <see cref="ArgumentException"/> if the document isn't sealed.
+    /// </summary>
     public static string Write(PackedDocument document, string contentType, bool indented = true) {
         var text = new StringWriter { NewLine = "\n" };
         Write(document, text, contentType, indented);
         return text.ToString();
     }
 
+    /// <summary>
+    /// As <see cref="Write(PackedDocument, string, bool)"/>, to <paramref name="text"/>, which is left open and
+    /// breaks lines as it does.
+    /// </summary>
     public static void Write(PackedDocument document, TextWriter text, string contentType, bool indented = true) {
         if (!document.IsSealed) { throw new ArgumentException("Seal the document first.", nameof(document)); }
         using var writer = new JsonTextWriter(text) { Formatting = indented ? Formatting.Indented : Formatting.None, CloseOutput = false };
@@ -186,14 +211,24 @@ public static class PackedJson {
     /// Reads a format 3 document into <paramref name="document"/>, which is cleared first and sealed on
     /// success. The content type matches with or without a "+json" suffix. Nothing is rewritten on the
     /// way in: dates stay strings. Nesting deeper than <paramref name="maxDepth"/>, from 1 to
-    /// <see cref="MaxDepthLimit"/>, is refused as TooDeep.
+    /// <see cref="MaxDepthLimit"/>, is refused as TooDeep. Returns false if the text is refused, with
+    /// <paramref name="error"/> saying why and where, and the document left empty. Throws
+    /// <see cref="ArgumentOutOfRangeException"/> for a <paramref name="maxDepth"/> outside that range.
     /// </summary>
     public static bool TryRead(string json, PackedDocument document, string contentType, out PackedJsonError error,
         int maxDepth = DefaultMaxDepth) => TryRead(new StringReader(json), document, contentType, out error, maxDepth);
 
+    /// <summary>
+    /// As <see cref="TryRead(string, PackedDocument, string, out PackedJsonError, int)"/>, from UTF-8 text in a
+    /// stream, which is left open. A byte order mark is accepted.
+    /// </summary>
     public static bool TryRead(Stream utf8, PackedDocument document, string contentType, out PackedJsonError error,
         int maxDepth = DefaultMaxDepth) => TryRead(new StreamReader(utf8, Encoding.UTF8, true, 4096, true), document, contentType, out error, maxDepth);
 
+    /// <summary>
+    /// As <see cref="TryRead(string, PackedDocument, string, out PackedJsonError, int)"/>, from a reader, which is left
+    /// open. Nothing but white space may follow the document.
+    /// </summary>
     public static bool TryRead(TextReader text, PackedDocument document, string contentType, out PackedJsonError error,
         int maxDepth = DefaultMaxDepth) {
         CheckMaxDepth(maxDepth);
