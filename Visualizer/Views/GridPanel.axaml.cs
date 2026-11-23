@@ -41,6 +41,10 @@ public partial class GridPanel : UserControl {
         SeedCountBox.ValueChanged += (_, _) => Flooded();
         ReachBox.ValueChanged += (_, _) => Refresh();
         LikeBox.IsCheckedChanged += (_, _) => Refresh();
+        GoalBox.SelectionChanged += (_, _) => { _travelDirty = true; Refresh(); };
+        StrokesBox.IsCheckedChanged += (_, _) => Refresh();
+        DropButton.Click += (_, _) => DropCost();
+        ClearButton.Click += (_, _) => { _world.ClearCost(); Flooded(); };
         TopView.AnchorMoved += (x, y) => MoveAnchor(x, y, null);
         SideView.AnchorMoved += (x, z) => MoveAnchor(x, null, z);
 
@@ -49,6 +53,10 @@ public partial class GridPanel : UserControl {
     }
 
     private bool ByRegions => ColourBox.SelectedIndex == 1;
+    private bool ByTravel => ColourBox.SelectedIndex == 2;
+
+    // The field is built when it is shown, and again after anything it depends on changes.
+    private bool _travelDirty = true;
     private float BodyRadius => (float)(RadiusBox.Value ?? 0.9m);
 
     // The anchor: a place whose region the nearest-open query can be held to. Until it is put somewhere it sits in the first seed.
@@ -65,6 +73,7 @@ public partial class GridPanel : UserControl {
     private void Generate() {
         _world = new WallWorld((int)(SeedBox.Value ?? 1), Unit, Cap);
         _anchorPut = false;
+        _travelDirty = true;
         Flooded();
     }
 
@@ -78,6 +87,7 @@ public partial class GridPanel : UserControl {
     private void Flooded() {
         if (_world is null) { return; }
         _world.Flood(BodyRadius, (int)(SeedCountBox.Value ?? 3), (int)(SeedBox.Value ?? 1) + 1000);
+        _travelDirty = true;
         if (!_anchorPut) { _anchor = _world.Seeds.Length > 0 ? (_world.Seeds[0].X, _world.Seeds[0].Y, _world.Seeds[0].Z) : null; }
         Refresh();
     }
@@ -86,6 +96,16 @@ public partial class GridPanel : UserControl {
     public void MoveAnchor(float? x, float? y, float? z) {
         _anchor = (WallWorld.Clamp(x ?? X, WallWorld.Width), WallWorld.Clamp(y ?? Y, WallWorld.Height), WallWorld.Clamp(z ?? Z, WallWorld.Depth));
         _anchorPut = true;
+        if (GoalBox.SelectedIndex == WallWorld.GoalPoint) { _travelDirty = true; }
+        Refresh();
+    }
+
+    // Writes the cost into a cube about the probe.
+    private void DropCost() {
+        float x = WallWorld.Clamp(X, WallWorld.Width), y = WallWorld.Clamp(Y, WallWorld.Height), z = WallWorld.Clamp(Z, WallWorld.Depth);
+        _world.DropCost(x, y, z, 1.5f, (byte)(CostBox.Value ?? 64));
+        // A cost of 255 closes cells, which the regions have to leave out, so the flood is made again.
+        Flooded();
         Refresh();
     }
 
@@ -112,9 +132,23 @@ public partial class GridPanel : UserControl {
         var isOpen = _world.IsOpen(x, y, z);
         var hasNearest = _world.NearestOpen(x, y, z, look, like, out var nx, out var ny, out var nz);
 
+        // The travel field, and the path it leads down from the probe.
+        List<(float x, float y, float z)>? path = null;
+        var pathEnd = "";
+        if (ByTravel) {
+            if (_travelDirty) {
+                var goalAt = _anchor ?? (x, y, z);
+                _world.BuildTravel(GoalBox.SelectedIndex, goalAt.x, goalAt.y, goalAt.z);
+                _travelDirty = false;
+            }
+            (path, pathEnd) = _world.FollowField(x, y, z);
+        }
+
         foreach (var view in new[] { TopView, SideView }) {
             view.World = _world;
-            view.Colour = ByRegions ? SliceColour.Regions : SliceColour.WallDistance;
+            view.Colour = ByTravel ? SliceColour.Travel : ByRegions ? SliceColour.Regions : SliceColour.WallDistance;
+            view.Path = path;
+            view.ShowStrokes = StrokesBox.IsChecked == true;
             (view.ProbeX, view.ProbeY, view.ProbeZ) = (x, y, z);
             view.Room = hasRoom ? room : float.NaN;
             view.Exact = hasExact ? exact : float.NaN;
@@ -125,16 +159,21 @@ public partial class GridPanel : UserControl {
             view.InvalidateVisual();
         }
         CubeView.World = _world;
-        CubeView.Colour = ByRegions ? SliceColour.Regions : SliceColour.WallDistance;
+        CubeView.Colour = ByTravel ? SliceColour.Travel : ByRegions ? SliceColour.Regions : SliceColour.WallDistance;
         (CubeView.ProbeX, CubeView.ProbeY, CubeView.ProbeZ) = (x, y, z);
         CubeView.Room = hasRoom ? room : float.NaN;
         CubeView.Exact = hasExact ? exact : float.NaN;
         CubeView.ShowSolids = SolidsBox.IsChecked == true;
         var world = _world;
         var anchor = _anchor;
-        CubeView.Overlay = ByRegions ? (context, cam) => Overlay3D.Regions(context, cam, world, (x, y, z), look, anchor, hasNearest ? (nx, ny, nz) : null) : null;
+        CubeView.Overlay = ByTravel ? (context, cam) => Overlay3D.Travel(context, cam, world, path, anchor)
+            : ByRegions ? (context, cam) => Overlay3D.Regions(context, cam, world, (x, y, z), look, anchor, hasNearest ? (nx, ny, nz) : null) : null;
         CubeView.InvalidateVisual();
 
+        if (ByTravel) {
+            TravelTexts(x, y, z, path!, pathEnd);
+            return;
+        }
         if (ByRegions) {
             RegionTexts(x, y, z, isOpen, hasNearest, nx, ny, nz, look, like is not null);
             return;
@@ -161,6 +200,39 @@ public partial class GridPanel : UserControl {
             $"{_world.Solids.Length} shapes ({Of(SolidKind.Box):N0} boxes, {Of(SolidKind.Sphere):N0} spheres, {Of(SolidKind.Capsule):N0} capsules) in a grid of {WallWorld.CountX}×{WallWorld.CountY}×{WallWorld.CountZ} = " +
             $"{WallWorld.CountX * WallWorld.CountY * WallWorld.CountZ:N0} cells of {WallWorld.CellSize} m; marking every layer took {_world.MarkMilliseconds:0.0} ms. " +
             "Room is worked out from the eight cells around the probe alone; it never reads the shapes.";
+    }
+
+    private void TravelTexts(float x, float y, float z, List<(float x, float y, float z)> path, string pathEnd) {
+        HintText.Text = "Press on either slice to put the probe there; Shift or the right button puts the anchor, which is the goal when the goal is a point; the wheel over a slice moves the other slice. " +
+            "Cell colour is how far the cell is from the goal, going round what is in the way; strokes lead downhill; the yellow line is the path the field leads the probe along; orange boxes are costs you dropped. The 3D view draws the same colours on the two planes, with the path, the cost boxes and the goal in space.";
+        var goal = GoalBox.SelectedIndex switch { WallWorld.GoalPoint => "the anchor", WallWorld.GoalFirstDoor => "the first door", _ => "the second door" };
+        if (_world.TravelProblem is { } problem) {
+            HeadlineText.Text = $"No field from {goal}: {problem}.";
+            CountsText.Text = "A field spreads from its seed through the cells of the regions the flood reached, so the body has to fit: try a smaller body radius, or put the anchor in an open cell.";
+            NoteText.Text = $"Body radius {BodyRadius:0.##} m; the first door is 2.5 m wide and the second 1.5 m.";
+            return;
+        }
+        var cells = WallWorld.CountX * WallWorld.CountY * WallWorld.CountZ;
+        var has = _world.SampleField(x, y, z, out var dx, out var dy, out var dz, out var travel);
+        var headline = $"The field from {goal} reaches {_world.TravelReached:N0} cells ({_world.TravelReached * 100.0 / cells:0.#}% of the grid), the farthest {_world.TravelMax:0.#} m of travel away. ";
+        if (!has) {
+            headline += "The probe is out of the field: none of the eight cells round it is reached.";
+        } else {
+            headline += $"At the probe it says {travel:0.00} m of travel";
+            if (GoalBox.SelectedIndex == WallWorld.GoalPoint && _anchor is { } a) {
+                var straight = Math.Sqrt((x - a.x) * (x - a.x) + (y - a.y) * (y - a.y) + (z - a.z) * (z - a.z));
+                headline += $", the straight line to the goal being {straight:0.00} m";
+            }
+            headline += ".";
+        }
+        HeadlineText.Text = headline;
+        CountsText.Text = has
+            ? $"Downhill from the probe leads ({dx:0.00}, {dy:0.00}, {dz:0.00}). Following it in quarter-metre steps: {path.Count - 1} step{(path.Count == 2 ? "" : "s")}, which {pathEnd}."
+            : $"Following the field from the probe: {pathEnd}.";
+        NoteText.Text = $"The field took {_world.TravelMilliseconds:0.0} ms to build (a count is {WallWorld.TravelUnit} m{(_world.TravelCut > 0 ? $"; {_world.TravelCut:N0} cells were too far to count and are left unreached" : "")}). " +
+            (GoalBox.SelectedIndex != WallWorld.GoalPoint ? "A door seed starts only the open cells with a straight open way to its plane, so a body too wide to pass starts just the cells behind the plane, and the room in front is reached some other way or not at all. " : "") +
+            (_world.CostBoxes.Count > 0 ? $"{_world.CostBoxes.Count} cost box{(_world.CostBoxes.Count == 1 ? "" : "es")} dropped: crossing a cell costs 1 + cost / 16 times as much. " : "No cost boxes yet: drop one at the probe to see the field bend round it. ") +
+            "The library promises nothing about what lies between cells; whatever follows the field still needs its own way of not hitting things.";
     }
 
     private void RegionTexts(float x, float y, float z, bool isOpen, bool hasNearest, float nx, float ny, float nz, float look, bool held) {

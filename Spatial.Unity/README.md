@@ -76,6 +76,12 @@ grid.ScheduleRegions(body, seeds);
 grid.IsOpen(body, point);                                    // can a body of that size be here?
 grid.TryNearestOpen(body, point, reach: 2f, out float3 open);        // the nearest place it can be
 grid.TryNearestOpen(body, point, reach: 2f, like: from, out open);   // ... that can be reached from another point
+
+// A travel field for that size of body: how far every cell is from a goal, going round what is in the way.
+var toGoal = new[] { TravelSeed.FromPoint(Solid.Sphere(goal.x, goal.y, goal.z, 0.8f), goal.x, goal.y, goal.z) };
+WallGridField field = grid.ScheduleField(body, toGoal);
+field.TrySample(point, out float3 way, out float travel);                 // the way down the field at a point, and how far is left
+JobHandle sampled = field.ScheduleSample(points, ways, travels);          // the same for many points at once, in a job
 ```
 
 - **One frame, no transform.** Points and shapes are in the grid's own frame. Where that frame sits in the world is the caller's.
@@ -94,6 +100,13 @@ grid.TryNearestOpen(body, point, reach: 2f, like: from, out open);   // ... that
 - **`TryNearestOpen` is by straight line,** whatever lies between: the cell can be on the other side of a thin wall or under a floor, with either form.
 - **A seed with no open cell inside reaches nothing.** `EmptySeeds` counts them; make the seed larger and flood again.
 - **`AddSizeClass` returns -1** for a radius of half a cell or less, or one that needs more than the grid's cap can say.
+- **A field is for followers with no plan of their own.** Build one per goal, and sample it for every follower each frame; `ScheduleSample` does that in a job, and can run after a job of yours that fills the points. A refused sample gives a travel of -1 there.
+- **A field starts from seeds:** the cells inside a solid, at their distance from a point (a goal), or at their distance in front of a plane, which makes the field lead out through an opening. A cell is started only if the straight way from it to the point, or square to the plane, is open, so a seed can be generous: it never starts a cell behind a wall. A seed that starts no cell gives a field that is built and reaches nothing: read `Reached`, and try a larger seed.
+- **A follower has arrived when its travel falls below about a cell.** The lowest cell can be most of a cell from the goal, and the direction keeps turning there.
+- **A field is of the regions as they were when it was built.** Once they are forgotten or flooded again it stops answering: `IsBuilt` is false and every sample is refused. Build a new one then. It is built in a job after the flood, with scratch of 12 bytes a cell that is freed when the build is done. Builds do not wait for one another, so the fields of a grid can all be built side by side.
+- **A field says nothing of what lies between cells.** Whatever follows it needs its own way of not hitting things.
+- **A field outlives its grid.** When memory is short, dispose the grid and keep its fields: a field that was good goes on answering as it was built. **It then cannot know that the way has changed.** If a door shuts or a cost changes there, it does not refuse: dispose it yourself, and build a new one from a new grid.
+- **You own a field.** Dispose it; it holds 2 bytes a cell. A job of yours that reads its `Distance` must be handed to the field's `AddReader`, so that `Dispose` waits for it.
 - **Main thread only.** `TryRoom`, `IsMarked` and `Wall` wait for the marking jobs first, and what reads a size class's regions waits for its flood. They do not wait for a job of yours.
 - **A job of yours that reads `Wall` or `Cost`** must be handed to `AddReader`. The next marking then runs after it, and `SetShapes`, cost changes and `Dispose` wait for it. Otherwise those write or free the arrays under your job.
 
@@ -124,7 +137,7 @@ Unity's checks are turned off in these places, each for the reason shown. The jo
 | `NearestJob` | the squared distances | The same slices as the results |
 | `MarkJob` | the wall distance | Layer z writes only `wall[z * layer .. (z + 1) * layer)`, so no two layers write the same place |
 
-The job that floods regions lifts none.
+The jobs that flood regions, build a travel field and sample one lift none.
 
 ## Tests
 

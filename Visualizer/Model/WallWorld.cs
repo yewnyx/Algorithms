@@ -166,7 +166,7 @@ public sealed class WallWorld {
         }
         Seeds = seeds.ToArray();
 
-        if (!Regions.FromSeeds(map, size, ReadOnlySpan<byte>.Empty, Seeds, _region, _queue, out var reached, out var empty)) {
+        if (!Regions.FromSeeds(map, size, Cost, Seeds, _region, _queue, out var reached, out var empty)) {
             Problem = "the flood was refused: more regions than a byte holds, or a seed that may not be stored";
             return;
         }
@@ -203,6 +203,139 @@ public sealed class WallWorld {
         foreach (var seed in Seeds) {
             if (SolidSection.Cut(seed, plane, fixedAt) is { } outline) { outlines.Add(outline); }
         }
+        return outlines;
+    }
+
+    // ---- Travel: how far each open cell is from a goal, going round what is in the way. ----
+
+    /// <summary>Metres per count of the travel field: fine, so that two neighbours never share a count.</summary>
+    public const float TravelUnit = 0.01f;
+
+    /// <summary>The goals a field can start from: a point (where the view puts it), or the plane through a door.</summary>
+    public const int GoalPoint = 0, GoalFirstDoor = 1, GoalSecondDoor = 2;
+
+    private readonly ushort[] _travel = new ushort[CountX * CountY * CountZ];
+    private readonly float[] _times = new float[CountX * CountY * CountZ];
+    private readonly int[] _heap = new int[2 * CountX * CountY * CountZ];
+
+    /// <summary>One byte per cell of what it costs to cross it: 0 normal, 255 closed. Cost boxes are written into it.</summary>
+    public byte[] Cost { get; } = new byte[CountX * CountY * CountZ];
+
+    /// <summary>The boxes written into <see cref="Cost"/>, which the view draws.</summary>
+    public List<Solid> CostBoxes { get; } = [];
+
+    /// <summary>The solid the field starts in, or null if there is no field.</summary>
+    public Solid? GoalSolid { get; private set; }
+
+    /// <summary>Why there is no field, or null if there is one.</summary>
+    public string? TravelProblem { get; private set; }
+
+    public int TravelReached { get; private set; }
+    public int TravelCut { get; private set; }
+    public double TravelMilliseconds { get; private set; }
+
+    /// <summary>One count per cell of travel distance, or Travel.Unreached.</summary>
+    public ushort[] TravelCounts => _travel;
+
+    /// <summary>The farthest travel distance the field reaches, in metres.</summary>
+    public float TravelMax { get; private set; }
+
+    /// <summary>Writes a cost into every cell whose centre is inside a cube about a point, and returns false if the library refuses.</summary>
+    public bool DropCost(float x, float y, float z, float half, byte value) {
+        var box = Solid.Box(new Box(x - half, y - half, z - half, x + half, y + half, z + half));
+        var shape = Shape;
+        if (!CellCost.Fill(shape, box, value, Cost)) { return false; }
+        CostBoxes.Add(box);
+        return true;
+    }
+
+    public void ClearCost() {
+        Array.Clear(Cost);
+        CostBoxes.Clear();
+    }
+
+    /// <summary>
+    /// Builds the field for a goal, through the cells of the regions the flood reached and the costs written so far. A point goal
+    /// starts from the cells within 0.8 m of the point, each at its distance from it; a door goal starts from a box round the door,
+    /// the cells in front of the door plane at their distance from it and those behind at 0, so the field leads out through the door.
+    /// </summary>
+    public void BuildTravel(int goal, float x, float y, float z) {
+        GoalSolid = null;
+        (TravelReached, TravelCut, TravelMax, TravelMilliseconds) = (0, 0, 0f, 0.0);
+        Array.Fill(_travel, Travel.Unreached);
+        TravelProblem = null;
+        if (Problem is not null) {
+            TravelProblem = "there are no regions without a size class, and a field spreads through regions";
+            return;
+        }
+        var clock = Stopwatch.StartNew();
+        TravelSeed seed;
+        if (goal == GoalPoint) {
+            GoalSolid = Solid.Sphere(x, y, z, 0.8f);
+            seed = TravelSeed.FromPoint(GoalSolid.Value, x, y, z);
+        } else {
+            // The door in the partition: the box round it reaches a little way to either side, and the plane through its middle faces +x.
+            float wall = goal == GoalFirstDoor ? PartitionA : PartitionB, from = goal == GoalFirstDoor ? 8f : 4.5f, to = goal == GoalFirstDoor ? 10.5f : 6f;
+            GoalSolid = Solid.Box(new Box(wall - 0.75f, from, 0, wall + 1.25f, to, DoorHeight));
+            seed = TravelSeed.FromPlane(GoalSolid.Value, wall + 0.25f, (from + to) / 2, DoorHeight / 2, 1, 0, 0);
+        }
+        var shape = Shape;
+        TravelSeed[] seeds = [seed];
+        if (!Travel.Build(shape, _region, Cost, seeds, TravelUnit, _travel, _times, _heap, out var reached, out var cut)) {
+            TravelProblem = "the library refused to build the field";
+            return;
+        }
+        (TravelReached, TravelCut) = (reached, cut);
+        foreach (var count in _travel) {
+            if (count != Travel.Unreached && count * TravelUnit > TravelMax) { TravelMax = count * TravelUnit; }
+        }
+        TravelMilliseconds = clock.Elapsed.TotalMilliseconds;
+        if (reached == 0) { TravelProblem = goal == GoalPoint ? "the goal point holds no open cell of a region the seeds reached" : "the door holds no open cell for this body, which does not fit through it"; }
+    }
+
+    /// <summary>The travel distance at a point, in metres, and the direction that leads down the field from there. False if none of the eight cells round it is reached.</summary>
+    public bool SampleField(float x, float y, float z, out float dx, out float dy, out float dz, out float distance) {
+        var shape = Shape;
+        var field = new TravelField(shape, TravelUnit, _travel);
+        return Travel.Sample(field, x, y, z, out dx, out dy, out dz, out distance);
+    }
+
+    /// <summary>What a cell shows in travel colour: a band 0 to 47 by its distance, 48 if it is open but the field does not reach it, 49 if it is not open.</summary>
+    public int TravelKey(int cellX, int cellY, int cellZ) {
+        var count = _travel[Shape.IndexOf(cellX, cellY, cellZ)];
+        if (count != Travel.Unreached && TravelMax > 0f) { return Math.Min(47, (int)(count * TravelUnit / TravelMax * 48)); }
+        if (count != Travel.Unreached) { return 0; }
+        return RegionAt(cellX, cellY, cellZ) != 0 ? 48 : 49;
+    }
+
+    /// <summary>Follows the field down from a point in steps of a quarter of a metre, as something with no plan of its own would.</summary>
+    public (List<(float x, float y, float z)> Path, string End) FollowField(float x, float y, float z) {
+        var path = new List<(float x, float y, float z)> { (x, y, z) };
+        if (TravelProblem is not null) { return (path, "there is no field"); }
+        const float step = 0.25f;
+        for (var i = 0; i < 800; i++) {
+            if (!SampleField(x, y, z, out var dx, out var dy, out var dz, out var distance)) { return (path, "left the field"); }
+            if (distance < 0.5f) { return (path, "reached the goal"); }
+            if (dx == 0f && dy == 0f && dz == 0f) { return (path, $"found no way down at {distance:0.00} m"); }
+            (x, y, z) = (x + dx * step, y + dy * step, z + dz * step);
+            path.Add((x, y, z));
+        }
+        return (path, "gave up after 800 steps");
+    }
+
+    /// <summary>Where the plane cuts each cost box, as <see cref="Sections"/> does for the solids.</summary>
+    public List<(double U, double V)[]> CostSections(SlicePlane plane, float fixedAt) {
+        var outlines = new List<(double U, double V)[]>();
+        foreach (var box in CostBoxes) {
+            if (SolidSection.Cut(box, plane, fixedAt) is { } outline) { outlines.Add(outline); }
+        }
+        return outlines;
+    }
+
+    /// <summary>Where the plane cuts the solid the field starts in.</summary>
+    public List<(double U, double V)[]> GoalSections(SlicePlane plane, float fixedAt) {
+        var outlines = new List<(double U, double V)[]>();
+        if (GoalSolid is { } goal && SolidSection.Cut(goal, plane, fixedAt) is { } outline) { outlines.Add(outline); }
         return outlines;
     }
 

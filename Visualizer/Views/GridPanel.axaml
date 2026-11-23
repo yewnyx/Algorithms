@@ -29,6 +29,7 @@
                         <ComboBox x:Name="ColourBox" SelectedIndex="1" VerticalAlignment="Center" Width="140">
                             <ComboBoxItem Content="Wall distance" />
                             <ComboBoxItem Content="Regions" />
+                            <ComboBoxItem Content="Travel" />
                         </ComboBox>
                     </StackPanel>
                     <StackPanel Classes="field"><TextBlock Classes="label" Text="Body radius (m)" ToolTip.Tip="The size class: a cell is open when its centre is at least this far from every shape." /><NumericUpDown x:Name="RadiusBox" Minimum="0.05" Maximum="4" Increment="0.05" Value="0.9" FormatString="0.00" Width="90" /></StackPanel>
@@ -36,6 +37,22 @@
                     <StackPanel Classes="field"><TextBlock Classes="label" Text="Reach (m)" ToolTip.Tip="How far the nearest-open query looks from the probe." /><NumericUpDown x:Name="ReachBox" Minimum="0" Maximum="20" Increment="0.5" Value="3" FormatString="0.0" Width="76" /></StackPanel>
                     <CheckBox x:Name="LikeBox" Content="Nearest in the anchor's region" IsChecked="False" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#C8D0DC"
                               ToolTip.Tip="Hold the nearest-open query to the region of the cell holding the pink diamond, the anchor: the nearest place that can be reached from there. Shift or the right button puts the anchor." />
+                </WrapPanel>
+                <WrapPanel Orientation="Horizontal">
+                    <TextBlock Classes="section" Text="TRAVEL" Width="56" />
+                    <StackPanel Classes="field">
+                        <TextBlock Classes="label" Text="Goal" ToolTip.Tip="Where the field starts: a point (the pink diamond, which Shift or the right button moves), or the plane through a door, so the field leads out through it." />
+                        <ComboBox x:Name="GoalBox" SelectedIndex="0" VerticalAlignment="Center" Width="190">
+                            <ComboBoxItem Content="The anchor (a point)" />
+                            <ComboBoxItem Content="First door (a plane)" />
+                            <ComboBoxItem Content="Second door (a plane)" />
+                        </ComboBox>
+                    </StackPanel>
+                    <StackPanel Classes="field"><TextBlock Classes="label" Text="Cost" ToolTip.Tip="What a dropped box costs to cross: 0 is normal, each 16 adds one more crossing's worth, 255 closes the cells, and the regions are flooded again without them." /><NumericUpDown x:Name="CostBox" Minimum="1" Maximum="255" Increment="16" Value="64" FormatString="0" Width="70" /></StackPanel>
+                    <Button x:Name="DropButton" Content="Drop a cost box" Margin="8,0,0,0" VerticalAlignment="Center" ToolTip.Tip="Writes the cost into a 3 m cube about the probe, and the field bends round it." />
+                    <Button x:Name="ClearButton" Content="Clear costs" Margin="8,0,0,0" VerticalAlignment="Center" />
+                    <CheckBox x:Name="StrokesBox" Content="Strokes downhill" IsChecked="True" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#C8D0DC"
+                              ToolTip.Tip="A short stroke on every other cell: the direction the field leads down from there, as far as it lies in the slice." />
                 </WrapPanel>
             </StackPanel>
         </Border>

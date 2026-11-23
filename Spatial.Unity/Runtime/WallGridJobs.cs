@@ -1,6 +1,7 @@
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
+using Unity.Mathematics;
 
 namespace Yewnyx.Spatial {
     /// <summary>The shapes a <see cref="WallGrid"/> owns, as a job reads them. Nothing here is written by a job.</summary>
@@ -46,6 +47,57 @@ namespace Yewnyx.Spatial {
             Result[0] = done ? 1 : 0;
             Result[1] = reached;
             Result[2] = empty;
+        }
+    }
+
+    /// <summary>Builds a travel field over one size class's regions.</summary>
+    [BurstCompile]
+    internal struct FieldJob : IJob {
+        public GridShape Shape;
+        public float Unit;
+        [ReadOnly] public NativeArray<byte> Region, Cost;
+        // The size class's flood: element 0 is 1 if its regions are those of the shapes and costs held.
+        [ReadOnly] public NativeArray<int> Flooded;
+        [ReadOnly, DeallocateOnJobCompletion] public NativeArray<TravelSeed> Seeds;
+        [DeallocateOnJobCompletion] public NativeArray<float> Times;
+        [DeallocateOnJobCompletion] public NativeArray<int> Heap;
+        public NativeArray<ushort> Distance;
+        // Whether the field was built (1 or 0), how many cells it reached, and how many were cut.
+        public NativeArray<int> Result;
+
+        public void Execute() {
+            // A field is only as good as the regions it spreads through.
+            int reached = 0, cut = 0;
+            var built = Flooded[0] != 0 && Travel.Build(Shape, Region.AsReadOnlySpan(), Cost.AsReadOnlySpan(), Seeds.AsReadOnlySpan(), Unit,
+                Distance.AsSpan(), Times.AsSpan(), Heap.AsSpan(), out reached, out cut);
+            if (!built) { Distance.AsSpan().Fill(Travel.Unreached); }
+            Result[0] = built ? 1 : 0;
+            Result[1] = reached;
+            Result[2] = cut;
+        }
+    }
+
+    /// <summary>One sample of a travel field per point.</summary>
+    [BurstCompile]
+    internal struct SampleJob : IJobParallelFor {
+        public GridShape Shape;
+        public float Unit;
+        // The regions the field was built from were no longer the grid's when this was scheduled.
+        public bool Stale;
+        [ReadOnly] public NativeArray<ushort> Distance;
+        // The field's build: element 0 is 1 if it was built.
+        [ReadOnly] public NativeArray<int> Result;
+        [ReadOnly] public NativeArray<float3> Points;
+        public NativeArray<float3> Directions;
+        public NativeArray<float> Distances;
+
+        public void Execute(int index) {
+            var point = Points[index];
+            float x = 0f, y = 0f, z = 0f, distance = 0f;
+            var found = !Stale && Result[0] != 0 &&
+                        Travel.Sample(new TravelField(Shape, Unit, Distance.AsReadOnlySpan()), point.x, point.y, point.z, out x, out y, out z, out distance);
+            Directions[index] = found ? new float3(x, y, z) : float3.zero;
+            Distances[index] = found ? distance : -1f;
         }
     }
 
