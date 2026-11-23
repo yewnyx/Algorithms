@@ -1,5 +1,4 @@
 using System;
-using System.Buffers.Binary;
 
 namespace Yewnyx.Spatial {
     /// <summary>
@@ -25,9 +24,6 @@ namespace Yewnyx.Spatial {
         private const int Record = 4 + WallTrees.BrickCells;
         // What a brick's byte holds when its cells are kept in full. No region has this number.
         private const byte Kept = 255;
-
-        // The cells of a brick that lie in its first and last layers along x and along y.
-        private const ulong X0 = 0x1111111111111111UL, X3 = 0x8888888888888888UL, Y0 = 0x000F000F000F000FUL, Y3 = 0xF000F000F000F000UL;
 
         /// <summary>
         /// The most bytes <see cref="FromSeeds"/> can need for a tree: every brick kept in full.
@@ -129,7 +125,7 @@ namespace Yewnyx.Spatial {
             }
             if (!work.Finish()) { return false; }
             region[0] = work.Need;
-            BinaryPrimitives.WriteInt32LittleEndian(region.Slice(4), work.KeptCount);
+            _put(region, 4, work.KeptCount);
             length = least + work.KeptCount * Record;
             reached = work.Reached;
             empty = without;
@@ -143,8 +139,8 @@ namespace Yewnyx.Spatial {
         /// </summary>
         /// <remarks>It is the cell that is open, not the point: a body at the cell's centre fits, and the point can be most of a cell from there.</remarks>
         public static bool IsOpen(in WallTree tree, ReadOnlySpan<byte> region, float x, float y, float z) =>
-            _view(tree, region, out var view) && tree.Shape.TryCell(x, y, z, out var cellX, out var cellY, out var cellZ) &&
-            _number(tree, region, view, cellX, cellY, cellZ) != 0;
+            TryView(tree, region, out var view) && tree.Shape.TryCell(x, y, z, out var cellX, out var cellY, out var cellZ) &&
+            Number(tree, region, view, cellX, cellY, cellZ) != 0;
 
         /// <summary>
         /// The centre of the nearest cell that is open and was reached by a seed, no farther than
@@ -162,7 +158,7 @@ namespace Yewnyx.Spatial {
         public static bool NearestOpen(in WallTree tree, ReadOnlySpan<byte> region, float x, float y, float z, float reach,
             out float openX, out float openY, out float openZ) {
             openX = 0f; openY = 0f; openZ = 0f;
-            if (!_view(tree, region, out var view) || !(reach >= 0f) || float.IsNaN(x) || float.IsNaN(y) || float.IsNaN(z)) { return false; }
+            if (!TryView(tree, region, out var view) || !(reach >= 0f) || float.IsNaN(x) || float.IsNaN(y) || float.IsNaN(z)) { return false; }
             var shape = tree.Shape;
             double size = shape.CellSize, far = reach;
             // One more cell each way, so that rounding here never leaves out a centre exactly at the reach.
@@ -186,7 +182,7 @@ namespace Yewnyx.Spatial {
                         double dz = (double)centreZ - z;
                         var squared = dx * dx + dy * dy + dz * dz;
                         if (!(found ? squared < best : squared <= best)) { continue; }
-                        if (_number(tree, region, view, cellX, cellY, cellZ) == 0) { continue; }
+                        if (Number(tree, region, view, cellX, cellY, cellZ) == 0) { continue; }
                         best = squared;
                         found = true;
                         openX = centreX; openY = centreY; openZ = centreZ;
@@ -199,26 +195,26 @@ namespace Yewnyx.Spatial {
         // The region of a cell of the grid: 0 for a cell that is not open, that no seed reached, or
         // that is not in the grid, and where the bytes are not a flood's of this tree.
         internal static byte NumberAt(in WallTree tree, ReadOnlySpan<byte> region, int x, int y, int z) =>
-            _view(tree, region, out var view) ? _number(tree, region, view, x, y, z) : (byte)0;
+            TryView(tree, region, out var view) ? Number(tree, region, view, x, y, z) : (byte)0;
 
         // What a flood's bytes say of themselves, once they are known to be long enough for the tree.
-        private readonly struct View {
+        internal readonly struct View {
             public readonly int Bricks, Leaves, Kept;
             public readonly byte Need;
             public View(int bricks, int leaves, int kept, byte need) { Bricks = bricks; Leaves = leaves; Kept = kept; Need = need; }
         }
 
-        private static bool _view(in WallTree tree, ReadOnlySpan<byte> region, out View view) {
+        internal static bool TryView(in WallTree tree, ReadOnlySpan<byte> region, out View view) {
             view = default;
             var least = LeastLength(tree);
             if (least == 0 || region.Length < least || region[0] == 0) { return false; }
-            var kept = BinaryPrimitives.ReadInt32LittleEndian(region.Slice(4));
+            var kept = _int(region, 4);
             if (kept < 0 || (long)least + (long)kept * Record > region.Length) { return false; }
             view = new View(tree.Bricks.Length / WallTrees.BrickBytes, least - Header, kept, region[0]);
             return true;
         }
 
-        private static byte _number(in WallTree tree, ReadOnlySpan<byte> region, in View view, int x, int y, int z) {
+        internal static byte Number(in WallTree tree, ReadOnlySpan<byte> region, in View view, int x, int y, int z) {
             var leaf = WallTrees.LeafOf(tree, x, y, z, out _);
             if ((uint)leaf >= (uint)view.Leaves) { return 0; }
             var number = region[Header + leaf];
@@ -232,7 +228,7 @@ namespace Yewnyx.Spatial {
             int low = 0, high = view.Kept - 1;
             while (low <= high) {
                 var middle = (int)(((long)low + high) >> 1);
-                var brick = BinaryPrimitives.ReadInt32LittleEndian(records.Slice(middle * Record));
+                var brick = _int(records, middle * Record);
                 if (brick == leaf) { return records[middle * Record + 4 + cell]; }
                 if (brick < leaf) { low = middle + 1; } else { high = middle - 1; }
             }
@@ -288,16 +284,11 @@ namespace Yewnyx.Spatial {
                     // A brick: no longer waiting. Its reached cells spread through its open cells,
                     // and from the cells on its faces to what lies across them.
                     Marks[Bricks + (leaf >> 6)] &= ~(1UL << (leaf & 63));
-                    ulong open = _open(leaf), before = _reached(leaf), all = before;
-                    while (true) {
-                        var grown = (all | ((all << 1) & ~X0) | ((all >> 1) & ~X3) | ((all << 4) & ~Y0) | ((all >> 4) & ~Y3) | (all << 16) | (all >> 16)) & open;
-                        if (grown == all) { break; }
-                        all = grown;
-                    }
+                    ulong before = _reached(leaf), all = WallTrees.Joined(before, _open(leaf));
                     if (all != before && !_add(leaf, all & ~before, number, -1)) { return false; }
-                    if (!_across(originX - 1, originY, originZ, 0, 3, _face(all, 0, 0), number) || !_across(originX + 4, originY, originZ, 0, 0, _face(all, 0, 3), number) ||
-                        !_across(originX, originY - 1, originZ, 1, 3, _face(all, 1, 0), number) || !_across(originX, originY + 4, originZ, 1, 0, _face(all, 1, 3), number) ||
-                        !_across(originX, originY, originZ - 1, 2, 3, _face(all, 2, 0), number) || !_across(originX, originY, originZ + 4, 2, 0, _face(all, 2, 3), number)) { return false; }
+                    if (!_across(originX - 1, originY, originZ, 0, 3, WallTrees.Layer(all, 0, 0), number) || !_across(originX + 4, originY, originZ, 0, 0, WallTrees.Layer(all, 0, 3), number) ||
+                        !_across(originX, originY - 1, originZ, 1, 3, WallTrees.Layer(all, 1, 0), number) || !_across(originX, originY + 4, originZ, 1, 0, WallTrees.Layer(all, 1, 3), number) ||
+                        !_across(originX, originY, originZ - 1, 2, 3, WallTrees.Layer(all, 2, 0), number) || !_across(originX, originY, originZ + 4, 2, 0, WallTrees.Layer(all, 2, 3), number)) { return false; }
                 }
                 return true;
             }
@@ -328,7 +319,7 @@ namespace Yewnyx.Spatial {
                     if (Numbers[leaf] == 0) { _cube(leaf, side, number, at); }
                     return true;
                 }
-                var entered = _spread(pattern, axis, layer) & _open(leaf) & ~_reached(leaf);
+                var entered = WallTrees.FromLayer(pattern, axis, layer) & _open(leaf) & ~_reached(leaf);
                 return entered == 0UL || _add(leaf, entered, number, at);
             }
 
@@ -353,7 +344,7 @@ namespace Yewnyx.Spatial {
                         if (((cells >> cell) & 1UL) != 0UL) { record[cell] = number; }
                     }
                 }
-                Reached += _count(cells);
+                Reached += WallTrees.Count(cells);
                 if (at >= 0) {
                     ref var waits = ref Marks[Bricks + (brick >> 6)];
                     var bit = 1UL << (brick & 63);
@@ -370,7 +361,7 @@ namespace Yewnyx.Spatial {
             private bool _keep(int brick, byte number) {
                 if (((long)KeptCount + 1) * Record > Records.Length) { return false; }
                 var record = Records.Slice(KeptCount * Record, Record);
-                BinaryPrimitives.WriteInt32LittleEndian(record, brick);
+                _put(record, 0, brick);
                 var cells = Marks[brick];
                 for (var cell = 0; cell < WallTrees.BrickCells; cell++) { record[4 + cell] = ((cells >> cell) & 1UL) != 0UL ? number : (byte)0; }
                 Numbers[brick] = Kept;
@@ -379,13 +370,7 @@ namespace Yewnyx.Spatial {
             }
 
             // The cells of a brick that are open for the class.
-            private ulong _open(int brick) {
-                var open = 0UL;
-                for (var cell = 0; cell < WallTrees.BrickCells; cell++) {
-                    if (WallTrees.CountIn(Tree, brick, cell) >= Need) { open |= 1UL << cell; }
-                }
-                return open;
-            }
+            private ulong _open(int brick) => WallTrees.CellsAt(Tree, brick, Need);
 
             // The cells of a brick that have been reached, by any region.
             private ulong _reached(int brick) {
@@ -410,7 +395,7 @@ namespace Yewnyx.Spatial {
             }
         }
 
-        private static int _brickOf(Span<byte> records, int record) => BinaryPrimitives.ReadInt32LittleEndian(records.Slice(record * Record));
+        private static int _brickOf(Span<byte> records, int record) => _int(records, record * Record);
 
         private static void _swap(Span<byte> records, int a, int b, Span<byte> spare) {
             Span<byte> first = records.Slice(a * Record, Record), second = records.Slice(b * Record, Record);
@@ -431,34 +416,11 @@ namespace Yewnyx.Spatial {
             }
         }
 
-        // The cells of a brick's layer along an axis, as a pattern of sixteen bits.
-        private static int _face(ulong cells, int axis, int layer) {
-            if (axis == 2) { return (int)((cells >> (16 * layer)) & 0xFFFFUL); }
-            var pattern = 0;
-            for (var k = 0; k < 16; k++) {
-                var cell = axis == 0 ? layer + 4 * k : (k & 3) + 4 * layer + 16 * (k >> 2);
-                pattern |= (int)((cells >> cell) & 1UL) << k;
-            }
-            return pattern;
-        }
+        // An int as four bytes, the lowest first, wherever it is read or written.
+        private static int _int(ReadOnlySpan<byte> bytes, int at) => bytes[at] | (bytes[at + 1] << 8) | (bytes[at + 2] << 16) | (bytes[at + 3] << 24);
 
-        // A pattern of sixteen bits as cells of a brick's layer along an axis.
-        private static ulong _spread(int pattern, int axis, int layer) {
-            if (axis == 2) { return (ulong)pattern << (16 * layer); }
-            var cells = 0UL;
-            for (var k = 0; k < 16; k++) {
-                var cell = axis == 0 ? layer + 4 * k : (k & 3) + 4 * layer + 16 * (k >> 2);
-                cells |= (ulong)((pattern >> k) & 1) << cell;
-            }
-            return cells;
-        }
-
-        // How many bits are set. Written out: the older of the two targets has no call for it.
-        private static int _count(ulong bits) {
-            bits -= (bits >> 1) & 0x5555555555555555UL;
-            bits = (bits & 0x3333333333333333UL) + ((bits >> 2) & 0x3333333333333333UL);
-            bits = (bits + (bits >> 4)) & 0x0F0F0F0F0F0F0F0FUL;
-            return (int)((bits * 0x0101010101010101UL) >> 56);
+        private static void _put(Span<byte> bytes, int at, int value) {
+            bytes[at] = (byte)value; bytes[at + 1] = (byte)(value >> 8); bytes[at + 2] = (byte)(value >> 16); bytes[at + 3] = (byte)(value >> 24);
         }
 
         // The first and last cells along an axis whose centres lie at or beyond a bound, held to the grid.

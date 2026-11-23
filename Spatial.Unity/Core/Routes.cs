@@ -11,6 +11,11 @@ namespace Yewnyx.Spatial {
         Unreachable = 2,
         /// <summary>There is a route, and the buffer is too short for its points. The count is how many it has.</summary>
         BufferTooShort = 3,
+        /// <summary>
+        /// The search held as many places as its arrays have room for before it found a way:
+        /// there may be one. There are no points. Only <see cref="TreeRoutes.Find"/> ends so.
+        /// </summary>
+        SearchFull = 4,
     }
 
     /// <summary>What a route does not promise at its two ends.</summary>
@@ -31,7 +36,7 @@ namespace Yewnyx.Spatial {
         StopsShortOfGoal = 2,
     }
 
-    /// <summary>What <see cref="Routes.Find"/> found. <c>default</c> is a search that was refused.</summary>
+    /// <summary>What <see cref="Routes.Find"/> or <see cref="TreeRoutes.Find"/> found. <c>default</c> is a search that was refused.</summary>
     public readonly struct RouteResult {
         /// <summary>How the search ended.</summary>
         public readonly RouteStatus Status;
@@ -42,7 +47,7 @@ namespace Yewnyx.Spatial {
         /// holds when the status is <see cref="RouteStatus.BufferTooShort"/>.
         /// </summary>
         public readonly int Count;
-        /// <summary>How many cells the search took up; 0 when the straight leg from start to goal was enough.</summary>
+        /// <summary>How many cells the search took up, or how many places over a tree; 0 when the straight leg from start to goal was enough.</summary>
         public readonly int Expanded;
         /// <summary>
         /// What the way costs from cell to cell, before it is pulled straight, from the centre of
