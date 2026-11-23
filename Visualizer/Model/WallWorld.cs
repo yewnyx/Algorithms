@@ -339,6 +339,44 @@ public sealed class WallWorld {
         return outlines;
     }
 
+    // ---- Routes: a way from one point to another for a body of one radius. ----
+
+    private float[]? _sums;
+    private int[]? _links, _routeHeap;
+    private float[] _routePoints = new float[3 * 2048];
+
+    /// <summary>What a search for a route found: how it ended, the points it leads through (the start is not one), and what it took.</summary>
+    public sealed record RouteFound(RouteStatus Status, RouteEnds Ends, int Count, int Expanded, float Cost, List<(float x, float y, float z)> Points, double Milliseconds);
+
+    /// <summary>
+    /// Looks for the way from the start to the goal through the regions and costs as they stand, for the size class of the last flood.
+    /// <paramref name="straighten"/> false gives the cells' way, the centres of the cells it steps through; <paramref name="useShapes"/> false
+    /// gives the library no shapes, so that a leg is proven by the map alone.
+    /// </summary>
+    public RouteFound FindRoute(float fromX, float fromY, float fromZ, float toX, float toY, float toZ, bool straighten, bool useShapes) {
+        var wall = new WallMap(Shape, Unit, Cap, Counts);
+        // The links must be zero the first time and a search leaves them so.
+        _sums ??= new float[Routes.SumsLength(Shape)];
+        _links ??= new int[Routes.LinksLength(Shape)];
+        _routeHeap ??= new int[Routes.HeapLength(Shape)];
+        var clock = Stopwatch.StartNew();
+        var size = Size;
+        var shapes = useShapes ? Set() : default;
+        // No way through the regions enters a cell that costs less than this, which lets the search take a clear straight shot over evenly costed cells at once.
+        var least = Regions.LeastCost(Shape, _region, Cost);
+        var result = Routes.Find(wall, size, shapes, _region, Cost, fromX, fromY, fromZ, toX, toY, toZ, straighten, _sums, _links, _routeHeap, _routePoints, least);
+        if (result.Status == RouteStatus.BufferTooShort) {
+            _routePoints = new float[3 * result.Count];
+            result = Routes.Find(wall, size, shapes, _region, Cost, fromX, fromY, fromZ, toX, toY, toZ, straighten, _sums, _links, _routeHeap, _routePoints, least);
+        }
+        var milliseconds = clock.Elapsed.TotalMilliseconds;
+        var points = new List<(float x, float y, float z)>();
+        if (result.Status == RouteStatus.Found) {
+            for (var i = 0; i < result.Count; i++) { points.Add((_routePoints[3 * i], _routePoints[3 * i + 1], _routePoints[3 * i + 2])); }
+        }
+        return new RouteFound(result.Status, result.Ends, result.Count, result.Expanded, result.Cost, points, milliseconds);
+    }
+
     private static float Range(Random random, float low, float high) => low + (float)random.NextDouble() * (high - low);
 
     // The x range, in a room chosen at random, that a shape reaching this far from its centre may centre in without touching a partition.

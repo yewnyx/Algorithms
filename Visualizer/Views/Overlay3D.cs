@@ -16,6 +16,11 @@ internal static class Overlay3D {
     private static readonly IBrush White = new SolidColorBrush(Colors.White);
     private static readonly IPen CostEdge = new Pen(new SolidColorBrush(Color.FromRgb(0xFF, 0x98, 0x00)), 1.5);
     private static readonly IPen PathLine = new Pen(new SolidColorBrush(Color.FromRgb(0xFF, 0xEB, 0x3B)), 3);
+    private static readonly IPen CellsLine = new Pen(new SolidColorBrush(Color.FromRgb(0x4F, 0xC3, 0xF7)), 2);
+    private static readonly IPen CellsDash = new Pen(new SolidColorBrush(Color.FromRgb(0x4F, 0xC3, 0xF7)), 2, DashStyle.Dot);
+    private static readonly IBrush CellsDot = new SolidColorBrush(Color.FromRgb(0x4F, 0xC3, 0xF7));
+    private static readonly IPen RouteLine = new Pen(new SolidColorBrush(Color.FromRgb(0xFF, 0xEB, 0x3B)), 3.5);
+    private static readonly IPen RouteDash = new Pen(new SolidColorBrush(Color.FromRgb(0xFF, 0xEB, 0x3B)), 3.5, DashStyle.Dot);
 
     /// <summary>The solids as wireframes in one pen.</summary>
     public static void Wire(DrawingContext context, in Projection cam, IEnumerable<Solid> solids, IPen pen) {
@@ -72,5 +77,24 @@ internal static class Overlay3D {
         if (world.GoalSolid is { } goal) { Wire(context, cam, [goal], SeedEdge); }
         if (path is not null) { Polyline(context, cam, path, PathLine); }
         if (anchor is { } a) { Anchor(context, cam.Project(a.x, a.y, a.z)); }
+    }
+
+    /// <summary>Colouring by routes: the cost boxes dropped, the anchor, and the route before it is pulled straight and after.</summary>
+    public static void Routes(DrawingContext context, in Projection cam, WallWorld world, WallSliceView.RouteLine? cells, WallSliceView.RouteLine? straight, (float x, float y, float z)? anchor) {
+        Wire(context, cam, world.CostBoxes, CostEdge);
+        if (cells is not null) { Route(context, cam, cells, CellsLine, CellsDash); }
+        if (straight is not null) { Route(context, cam, straight, RouteLine, RouteDash); }
+        if (anchor is { } a) { Anchor(context, cam.Project(a.x, a.y, a.z)); }
+    }
+
+    // A route as legs of one pen, the first or last leg dotted where the library does not prove it clear.
+    private static void Route(DrawingContext context, in Projection cam, WallSliceView.RouteLine line, IPen solid, IPen dashed) {
+        var points = line.Points;
+        for (var i = 1; i < points.Count; i++) {
+            var unproven = (i == 1 && line.DashFirst) || (i == points.Count - 1 && line.DashLast);
+            context.DrawLine(unproven ? dashed : solid, cam.Project(points[i - 1].x, points[i - 1].y, points[i - 1].z), cam.Project(points[i].x, points[i].y, points[i].z));
+        }
+        if (!line.Dots) { return; }
+        for (var i = 1; i < points.Count; i++) { context.DrawEllipse(CellsDot, null, cam.Project(points[i].x, points[i].y, points[i].z), 2.5, 2.5); }
     }
 }
