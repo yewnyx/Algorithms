@@ -1,7 +1,7 @@
 name: Release
-# A pushed v* tag builds the desktop Visualizer (Windows and Linux) and the library packages, and attaches them to a draft
-# release, to be checked and published by hand. Running it by hand only uploads them as a workflow
-# artifact.
+# A pushed v* tag builds the desktop Visualizer (Windows and Linux), the library packages and the Unity package, and
+# attaches them to a draft release, to be checked and published by hand. A version with a hyphen (v0.2.0-spatial) makes
+# the draft a prerelease. Running it by hand only uploads them as a workflow artifact.
 on:
   push:
     tags:
@@ -56,15 +56,28 @@ jobs:
     - name: Pack the libraries
       shell: bash
       run: |
-        for project in Algorithms/Algorithms.csproj Collections/Collections.csproj Packables/Packables.csproj Packables.Newtonsoft/Packables.Newtonsoft.csproj; do
+        for project in Algorithms/Algorithms.csproj Collections/Collections.csproj Packables/Packables.csproj Packables.Newtonsoft/Packables.Newtonsoft.csproj Spatial/Spatial.csproj; do
           dotnet pack "$project" --configuration Release -p:Version="$PACKAGE_VERSION" --output packages
         done
+    - name: Pack the Unity package
+      # Unity's "Add package from tarball" takes the npm layout: a .tgz with everything under package/. A zip isn't
+      # accepted. The version in package.json is the release's, in place of the 0.0.0 that is checked in.
+      shell: bash
+      run: |
+        mkdir -p unity/package
+        cp -r Spatial.Unity/. unity/package/
+        rm unity/package/.gitignore
+        cp LICENSE unity/package/LICENSE
+        sed -i "s/^  \"version\": \".*\",\$/  \"version\": \"$PACKAGE_VERSION\",/" unity/package/package.json
+        grep -q "^  \"version\": \"$PACKAGE_VERSION\",\$" unity/package/package.json
+        tar -C unity -czf "xyz.yewnyx.spatial-$PACKAGE_VERSION.tgz" package
     - name: Upload
       uses: actions/upload-artifact@v4
       with:
         name: release
         path: |
           AlgorithmsVisualizer-*-win-x64.zip
+          xyz.yewnyx.spatial-*.tgz
           packages/*.nupkg
           packages/*.snupkg
         if-no-files-found: error
@@ -123,4 +136,8 @@ jobs:
     - name: Create the draft release
       env:
         GH_TOKEN: ${{ github.token }}
-      run: gh release create "$GITHUB_REF_NAME" AlgorithmsVisualizer-*-win-x64.zip AlgorithmsVisualizer-*-linux-x64.tar.gz packages/*.nupkg packages/*.snupkg --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --draft --generate-notes
+      run: |
+        # A hyphen in the version (v0.2.0-spatial) marks a prerelease.
+        flags=(--draft --generate-notes)
+        if [[ "$GITHUB_REF_NAME" == *-* ]]; then flags+=(--prerelease); fi
+        gh release create "$GITHUB_REF_NAME" AlgorithmsVisualizer-*-win-x64.zip AlgorithmsVisualizer-*-linux-x64.tar.gz xyz.yewnyx.spatial-*.tgz packages/*.nupkg packages/*.snupkg --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" "${flags[@]}"

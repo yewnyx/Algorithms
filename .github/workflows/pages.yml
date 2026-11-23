@@ -2,7 +2,7 @@ name: Visualizer on GitHub Pages
 on:
   push:
     branches:
-    - main
+    - spatial
     paths:
     - 'Algorithms/**'
     - 'Collections/**'

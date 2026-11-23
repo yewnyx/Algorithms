@@ -1,7 +1,7 @@
 <Project>
-    <!-- NuGet packages for the four libraries. Every other project (tests, tools, the Visualizer) isn't packable. -->
+    <!-- NuGet packages for the five libraries. Every other project (tests, tools, the Visualizer) isn't packable. -->
     <PropertyGroup>
-        <IsLibrary Condition="'$(MSBuildProjectName)' == 'Algorithms' Or '$(MSBuildProjectName)' == 'Collections' Or '$(MSBuildProjectName)' == 'Packables' Or '$(MSBuildProjectName)' == 'Packables.Newtonsoft'">true</IsLibrary>
+        <IsLibrary Condition="'$(MSBuildProjectName)' == 'Algorithms' Or '$(MSBuildProjectName)' == 'Collections' Or '$(MSBuildProjectName)' == 'Packables' Or '$(MSBuildProjectName)' == 'Packables.Newtonsoft' Or '$(MSBuildProjectName)' == 'Spatial'">true</IsLibrary>
         <IsPackable>false</IsPackable>
     </PropertyGroup>
 
