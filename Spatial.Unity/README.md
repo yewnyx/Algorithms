@@ -69,6 +69,13 @@ JobHandle marked = grid.ScheduleMark();   // each cell's distance to the nearest
 grid.TryRoom(point, out float room);                    // proven from eight cells, never more than the true distance
 grid.TryDistance(point, limit: 2f, out float exact);    // exact, from the shapes
 grid.FillCost(Solid.Box(new Box(0, 0, 0, 2, 2, 4)), 32);   // cells whose centre is inside cost three times as much
+
+// Where a body of radius 0.6 can be, flooded from seeds such as the openings into a room.
+int body = grid.AddSizeClass(0.6f);
+grid.ScheduleRegions(body, seeds);
+grid.IsOpen(body, point);                                    // can a body of that size be here?
+grid.TryNearestOpen(body, point, reach: 2f, out float3 open);        // the nearest place it can be
+grid.TryNearestOpen(body, point, reach: 2f, like: from, out open);   // ... that can be reached from another point
 ```
 
 - **One frame, no transform.** Points and shapes are in the grid's own frame. Where that frame sits in the world is the caller's.
@@ -81,7 +88,13 @@ grid.FillCost(Solid.Box(new Box(0, 0, 0, 2, 2, 4)), 32);   // cells whose centre
 - **`TryRoom` and `TryDistance` say how far the nearest surface is,** not whether a point is in open space. A triangle has no inside.
 - **Costs take a byte a cell only once one is written.** Until `FillCost` writes a cost that isn't 0, and again after `ClearCost`, the grid holds none and `Cost` is empty.
 - **Read `Cost` again after `FillCost` or `ClearCost`.** They can put another array in its place. One kept from before is then freed, or is the empty one, which reads every cell as normal, closed ones included.
-- **Main thread only.** `TryRoom`, `IsMarked` and `Wall` wait for the marking jobs first. They do not wait for a job of yours.
+- **Regions follow the wall distance and the closed cells.** A size class has none until `ScheduleRegions` has run, and none again after `SetShapes`, `FillCost` or `ClearCost`: flood again after those. `HasRegions` says.
+- **Mark, then flood.** A flood is refused unless the wall distance was marked from the shapes held, so regions are never newer than the marking they came from.
+- **`IsOpen` is about the point's cell.** A body at that cell's centre fits; the point itself can be most of a cell from there, so nearer a wall than the radius. To ask whether a body fits at a point, compare `TryRoom` or `TryDistance` with its radius.
+- **`TryNearestOpen` is by straight line,** whatever lies between: the cell can be on the other side of a thin wall or under a floor, with either form.
+- **A seed with no open cell inside reaches nothing.** `EmptySeeds` counts them; make the seed larger and flood again.
+- **`AddSizeClass` returns -1** for a radius of half a cell or less, or one that needs more than the grid's cap can say.
+- **Main thread only.** `TryRoom`, `IsMarked` and `Wall` wait for the marking jobs first, and what reads a size class's regions waits for its flood. They do not wait for a job of yours.
 - **A job of yours that reads `Wall` or `Cost`** must be handed to `AddReader`. The next marking then runs after it, and `SetShapes`, cost changes and `Dispose` wait for it. Otherwise those write or free the arrays under your job.
 
 ## Seeing it
@@ -110,6 +123,8 @@ Unity's checks are turned off in these places, each for the reason shown. The jo
 | `InSphereJob`, `NearestJob` | the results | Query q writes only `results[q * stride .. (q + 1) * stride)`, so no two queries write the same place |
 | `NearestJob` | the squared distances | The same slices as the results |
 | `MarkJob` | the wall distance | Layer z writes only `wall[z * layer .. (z + 1) * layer)`, so no two layers write the same place |
+
+The job that floods regions lifts none.
 
 ## Tests
 
