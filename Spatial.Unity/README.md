@@ -4,7 +4,7 @@
 
 Queries over many boxes from Unity jobs: which items are within a radius of a point, and which are nearest. For callers that query many boxes every frame from jobs, where most boxes rest and some move.
 
-- `Core/`: the Spatial library, with no Unity reference. The same files build as the `Yewnyx.Spatial` package for .NET.
+- `Core/`: the Spatial library, with no Unity reference. The same files build as the `Spatial` library for .NET in this repository.
 - `Runtime/`: a `BoxSet` that owns the native arrays, and Burst jobs that update it and answer queries.
 
 ## Use
@@ -63,7 +63,7 @@ With 1,000 items moving every frame in a Windows player on one desktop, the call
 - **Changes wait for `Schedule`.** `Add`, `Remove` and `Move` check the id and note the change. A job applies the changes in order, then reads any poses passed in arrays.
 - **Results are your ids**, not positions in the set's arrays.
 - **Resting items cost nothing.** Only items added or moved since the last `Schedule` are worked out again. With no change, `Schedule` starts no job. While anything changes, the tree is rebuilt whole.
-- **Scan or tree.** `tree: false` tests every box (quicker for few queries over a small set). `tree: true` walks the tree. Both give the same items: the scan in set order, the tree in tree order. `Nearest` gives the same order either way.
+- **Scan or tree.** `tree: false` tests every box. `tree: true` walks the tree. Both give the same items: the scan in set order, the tree in tree order. `Nearest` gives the same order either way.
 - **Job order.** `Schedule` runs after the queries scheduled so far, which see the set as it was. Queries scheduled between two `Schedule`s only read the set, so they run side by side. `Schedule` itself waits only for the previous `Schedule`'s update, normally long done.
 - **A full set refuses.** The capacity is fixed when the set is made. `Add` returns false if the set is full or the id is in use. `Remove` and `Move` return false for an id that is not there.
 - **A query's count is -1 if it was refused.** Then read nothing from its results.

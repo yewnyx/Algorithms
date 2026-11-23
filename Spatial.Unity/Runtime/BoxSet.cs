@@ -178,9 +178,8 @@ namespace Yewnyx.Spatial {
         /// <remarks>
         /// Query q writes its ids to results[q * stride .. q * stride + counts[q]), at most stride of them,
         /// and how many items matched to totals[q]. counts[q] is -1 if the query was refused.
-        /// With <paramref name="tree"/> the tree is walked; without, every box is tested, which is quicker
-        /// for a few queries over a small set. The ids are those of the last Schedule. Queries scheduled
-        /// between two Schedules do not wait for one another.
+        /// With <paramref name="tree"/> the tree is walked; without, every box is tested. The ids are
+        /// those of the last Schedule. Queries scheduled between two Schedules do not wait for one another.
         /// </remarks>
         public JobHandle ScheduleInSphere(NativeArray<float4> spheres, NativeArray<int> results, NativeArray<int> counts,
             NativeArray<int> totals, int stride, bool tree, JobHandle dependsOn = default) {
