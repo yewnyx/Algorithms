@@ -17,6 +17,12 @@
                     <ToggleButton x:Name="ModeRegions" Classes="mode" Content="Regions" />
                     <ToggleButton x:Name="ModeTravel" Classes="mode" Content="Travel" />
                     <ToggleButton x:Name="ModeRoutes" Classes="mode" Content="Routes" />
+                    <ToggleButton x:Name="SceneRooms" Classes="mode" Content="Rooms" IsChecked="True" Margin="24,0,0,0"
+                                  ToolTip.Tip="Three rooms joined by doors, with boxes, balls and capsules in them." />
+                    <ToggleButton x:Name="SceneOutdoors" Classes="mode" Content="Outdoors"
+                                  ToolTip.Tip="Rolling ground with rocks and trees on it: mostly open air, where a tree keeps far less than a count for every cell." />
+                    <CheckBox x:Name="TreeBox" Content="Keep as a tree" Margin="16,0,0,0" VerticalAlignment="Center" Foreground="#C8D0DC"
+                              ToolTip.Tip="Keep the wall distance as a tree: counts only near surfaces, and open air as cubes of one bit. White squares are open cubes; dark squares are bricks of counts." />
                 </StackPanel>
                 <TextBlock x:Name="CaptionText" Foreground="#C8D0DC" FontSize="13" TextWrapping="Wrap" />
                 <WrapPanel Orientation="Horizontal">

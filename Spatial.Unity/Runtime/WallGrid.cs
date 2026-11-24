@@ -27,6 +27,15 @@ namespace Yewnyx.Spatial {
     /// moment new shapes are taken or a cost is changed.
     /// </para>
     /// <para>
+    /// A grid of more than <see cref="DenseMost"/> cells keeps its wall distance as a tree and not
+    /// as a count for every cell (see <see cref="WallTrees"/>): for a part that is mostly open air,
+    /// where a count a cell is tens of megabytes. The tree keeps each count to a fifteenth of the
+    /// cap, so <see cref="TryRoom"/> and <see cref="HasRoom"/> can prove a little less room than
+    /// counts would, never more; <see cref="TryDistance"/> answers the same either way. Costs, size classes, regions, fields
+    /// and routes are for grids that keep a count for every cell: on a tree
+    /// <see cref="AddSizeClass"/> gives -1 and <see cref="FillCost"/> false.
+    /// </para>
+    /// <para>
     /// After <see cref="Dispose"/>, every member that reads or changes the grid throws
     /// <see cref="ObjectDisposedException"/>. <see cref="Complete"/> and the plain values
     /// (<see cref="Shape"/>, <see cref="Unit"/>, <see cref="Cap"/>, <see cref="IsDisposed"/>) are still safe.
@@ -40,6 +49,9 @@ namespace Yewnyx.Spatial {
         private JobHandle _mark, _readers;
 
         private NativeArray<byte> _wall, _cost, _filled;
+        // The wall distance of a grid that keeps it as a tree. Empty until it is built, and in a grid that keeps a count for every cell.
+        private NativeList<WallNode> _treeNodes;
+        private NativeList<byte> _treeBricks;
         private NativeArray<Solid> _solids;
         private NativeArray<float> _corners;
         private NativeArray<int> _triangles, _order;
@@ -67,7 +79,11 @@ namespace Yewnyx.Spatial {
         /// <param name="unit">Metres per count of wall distance.</param>
         /// <param name="cap">The largest count stored: no query can prove more room than cap * unit.</param>
         /// <param name="allocator">How the grid's arrays are allocated.</param>
-        public WallGrid(GridShape shape, float unit = 1f / 128f, byte cap = 128, Allocator allocator = Allocator.Persistent) {
+        public WallGrid(GridShape shape, float unit = 1f / 128f, byte cap = 128, Allocator allocator = Allocator.Persistent)
+            : this(shape, unit, cap, allocator, shape.CellCount > DenseMost) { }
+
+        // With the storage said outright, for tests of a tree over a grid small enough to mark both ways.
+        internal WallGrid(GridShape shape, float unit, byte cap, Allocator allocator, bool tree) {
             if (shape.CellCount == 0) { throw new ArgumentException("The shape cannot be used: see GridShape.CellCount.", nameof(shape)); }
             if (!(unit > 0f) || float.IsInfinity(unit)) { throw new ArgumentOutOfRangeException(nameof(unit), unit, "Must be above 0."); }
             if (cap == 0) { throw new ArgumentOutOfRangeException(nameof(cap), cap, "Must be above 0."); }
@@ -75,11 +91,15 @@ namespace Yewnyx.Spatial {
             Unit = unit;
             Cap = cap;
             _allocator = allocator;
+            IsTree = tree;
             // Until it is marked, the wall distance is 0 everywhere: nothing is proven.
-            _wall = new NativeArray<byte>(shape.CellCount, allocator);
+            _wall = new NativeArray<byte>(tree ? 0 : shape.CellCount, allocator);
+            _treeNodes = new NativeList<WallNode>(1, allocator);
+            _treeBricks = new NativeList<byte>(1, allocator);
             // No byte of cost is held until one is written: an empty array means every cell is normal.
             _cost = new NativeArray<byte>(0, allocator);
-            _filled = new NativeArray<byte>(shape.CountZ, allocator);
+            // One element a layer, or one for the tree.
+            _filled = new NativeArray<byte>(tree ? 1 : shape.CountZ, allocator);
             _allocateShapes(0, 0, 0, 0, 0, 0, 0);
         }
 
@@ -95,19 +115,31 @@ namespace Yewnyx.Spatial {
         /// <summary>Whether <see cref="Dispose"/> has been called.</summary>
         public bool IsDisposed => _disposed;
 
+        /// <summary>The most cells a grid keeps a count for each of: 4 MB of wall distance. A grid of more keeps a tree.</summary>
+        public const int DenseMost = 1 << 22;
+
+        /// <summary>Whether the grid keeps its wall distance as a tree, which is so above <see cref="DenseMost"/> cells.</summary>
+        public bool IsTree { get; }
+
         /// <summary>The number of shapes held.</summary>
         public int ShapeCount { get { _requireAlive(); return _boxes.Length; } }
 
         /// <summary>
         /// The bytes the grid's arrays take, for a caller that keeps grids within a budget: one a
-        /// cell for the wall distance, one a cell for each size class, one a cell for the costs once
-        /// a cost has been written, and the shapes, heightfields among them. Not counted: while a flood of regions runs it
+        /// cell for the wall distance or the tree's nodes and bricks, one a cell for each size class,
+        /// one a cell for the costs once a cost has been written, and the shapes, heightfields among them. Not counted: while a flood of regions runs it
         /// also holds a queue of 4 bytes a cell, which is freed when the flood is done.
         /// </summary>
+        /// <remarks>
+        /// On a grid that keeps a tree this waits for a build that is running, which can be
+        /// seconds: what the tree comes to is not known before. A grid that keeps a count for
+        /// every cell answers at once.
+        /// </remarks>
         public long ByteCount {
             get {
                 _requireAlive();
-                return (long)_wall.Length + _cost.Length + _filled.Length + (long)_solids.Length * 64 + (long)_corners.Length * 4 +
+                if (IsTree) { _mark.Complete(); }
+                return (long)_wall.Length + (long)_treeNodes.Length * 24 + _treeBricks.Length + _cost.Length + _filled.Length + (long)_solids.Length * 64 + (long)_corners.Length * 4 +
                        (long)_triangles.Length * 4 + (long)_heightFields.Length * 92 + (long)_heightBlocks.Length * 4 + (long)_heights.Length * 2 +
                        (long)_order.Length * 4 + (long)_boxes.Length * 24 + (long)_nodes.Length * 32 +
                        (long)_sizes.Count * (_wall.Length + 16);
@@ -204,14 +236,59 @@ namespace Yewnyx.Spatial {
         /// They run after the jobs scheduled so far that read the grid. <see cref="IsMarked"/> says
         /// afterwards whether every layer was filled. A layer that is refused, because the shapes
         /// are found damaged, is left at 0.
+        /// A grid that keeps a tree builds it in one job. That takes seconds for a part of some
+        /// hundreds of metres: build it once where the part is baked, keep what
+        /// <see cref="TryWriteTree"/> gives, and hand it to <see cref="SetTree"/> when the part loads.
         /// </remarks>
         public JobHandle ScheduleMark(JobHandle dependsOn = default) {
             _requireAlive();
-            _mark = new MarkJob {
-                Shape = Shape, Shapes = _shapes(), Unit = Unit, Cap = Cap, Wall = _wall, Filled = _filled,
-            }.Schedule(Shape.CountZ, 1, JobHandle.CombineDependencies(dependsOn, _mark, _readers));
+            var after = JobHandle.CombineDependencies(dependsOn, _mark, _readers);
+            _mark = IsTree
+                ? new TreeJob { Shape = Shape, Shapes = _shapes(), Unit = Unit, Cap = Cap, Nodes = _treeNodes, Bricks = _treeBricks, Filled = _filled }.Schedule(after)
+                : new MarkJob { Shape = Shape, Shapes = _shapes(), Unit = Unit, Cap = Cap, Wall = _wall, Filled = _filled }.Schedule(Shape.CountZ, 1, after);
             _readers = default;
             return _mark;
+        }
+
+        /// <summary>
+        /// The tree of a grid that keeps one, as a block of bytes to store (see
+        /// <see cref="WallTrees.Write"/>). Returns false if the grid keeps a count for every cell,
+        /// or its wall distance is not that of the shapes held (see <see cref="IsMarked"/>).
+        /// </summary>
+        /// <remarks>The block keeps a fingerprint of the shapes the grid holds, which <see cref="SetTree"/> checks.</remarks>
+        public bool TryWriteTree(out byte[] block) {
+            block = Array.Empty<byte>();
+            if (!IsTree || !IsMarked) { return false; }
+            var bytes = new byte[WallTrees.BlockLength(_treeNodes.Length, _treeBricks.Length / WallTrees.BrickBytes)];
+            if (!WallTrees.Write(_tree(), _shapes().Set, bytes, out _)) { return false; }
+            block = bytes;
+            return true;
+        }
+
+        /// <summary>
+        /// Takes the wall distance from a block that <see cref="TryWriteTree"/> made, in place of a
+        /// marking, and copies it. Returns false, keeping what it had, if the grid keeps a count
+        /// for every cell, the block is refused (see <see cref="WallTrees.TryRead"/>), or it is of
+        /// a grid of another shape, unit or cap, or of other shapes than the grid holds.
+        /// </summary>
+        /// <remarks>
+        /// Give the grid its shapes first. The block keeps a fingerprint of the shapes its tree
+        /// was built from, and is refused unless the grid holds the same ones, number for number:
+        /// a tree of other shapes would prove room that is not there. Checking reads every shape
+        /// once, about a millisecond for two megabytes of them.
+        /// </remarks>
+        public bool SetTree(ReadOnlySpan<byte> block) {
+            _settle();
+            if (!IsTree || !WallTrees.TryRead(block, _shapes().Set, out var tree)) { return false; }
+            var shape = tree.Shape;
+            if (shape.OriginX != Shape.OriginX || shape.OriginY != Shape.OriginY || shape.OriginZ != Shape.OriginZ || shape.CellSize != Shape.CellSize ||
+                shape.CountX != Shape.CountX || shape.CountY != Shape.CountY || shape.CountZ != Shape.CountZ || tree.Unit != Unit || tree.Cap != Cap) { return false; }
+            _treeNodes.ResizeUninitialized(tree.Nodes.Length);
+            _treeBricks.ResizeUninitialized(tree.Bricks.Length);
+            tree.Nodes.CopyTo(_treeNodes.AsArray().AsSpan());
+            tree.Bricks.CopyTo(_treeBricks.AsArray().AsSpan());
+            _filled[0] = 1;
+            return true;
         }
 
         /// <summary>
@@ -238,10 +315,34 @@ namespace Yewnyx.Spatial {
         /// <remarks>
         /// It says how far the nearest surface is, not whether the point is in open space: deep
         /// inside a closed shell of triangles there is room.
+        /// A grid that keeps a tree has none until it is built or set, and then proves nothing: 0
+        /// at every point, and a point on one of the grid's three upper faces is refused, where a
+        /// grid of counts not yet marked gives 0 there too.
         /// </remarks>
         public bool TryRoom(float3 point, out float room) {
             _marked();
-            return WallDistance.RoomAt(new WallMap(Shape, Unit, Cap, _wall.AsReadOnlySpan()), point.x, point.y, point.z, out room);
+            if (!IsTree) { return WallDistance.RoomAt(new WallMap(Shape, Unit, Cap, _wall.AsReadOnlySpan()), point.x, point.y, point.z, out room); }
+            // Until a tree is built there is none: nothing is proven, as with counts that are all 0.
+            room = 0f;
+            return _treeNodes.Length == 0 ? Shape.TryCentre(point.x, point.y, point.z, out _, out _, out _) : WallTrees.RoomAt(_tree(), point.x, point.y, point.z, out room);
+        }
+
+        /// <summary>
+        /// Whether the nearest shape is proven to be at least <paramref name="radius"/> from a
+        /// point: what <see cref="TryRoom"/> gives, compared. False if the point is outside the
+        /// grid or not a number.
+        /// </summary>
+        /// <remarks>
+        /// A grid that keeps a tree answers in open air without reading a count. As with TryRoom,
+        /// it says how far the nearest surface is, not whether the point can be reached.
+        /// Until such a grid's tree is built or set the answer is no for every radius, 0 and
+        /// below too, where a grid of counts not yet marked says yes to those.
+        /// </remarks>
+        public bool HasRoom(float3 point, float radius) {
+            _marked();
+            return IsTree
+                ? WallTrees.HasRoom(_tree(), point.x, point.y, point.z, radius)
+                : WallDistance.HasRoom(new WallMap(Shape, Unit, Cap, _wall.AsReadOnlySpan()), point.x, point.y, point.z, radius);
         }
 
         /// <summary>
@@ -285,6 +386,8 @@ namespace Yewnyx.Spatial {
         /// </remarks>
         public bool FillCost(in Solid solid, byte value) {
             _settle();
+            // A grid that keeps a tree keeps no cost for each cell.
+            if (IsTree) { return false; }
             var none = _cost.Length == 0;
             if (none) {
                 _cost.Dispose();
@@ -325,10 +428,12 @@ namespace Yewnyx.Spatial {
         /// Adds a size of body: a radius, in metres, that regions can then be flooded for. Returns the
         /// number to name the class by, counted from 0, or -1 if the class is refused: the radius is
         /// not above half a cell, or it needs more than the grid's cap can say (see
-        /// <see cref="SizeClass.TryMake"/>).
+        /// <see cref="SizeClass.TryMake"/>), or the grid keeps its wall distance as a tree (see <see cref="IsTree"/>).
         /// </summary>
         public int AddSizeClass(float radius) {
             _requireAlive();
+            // Regions are a byte for every cell, which a grid that keeps a tree does not have room for.
+            if (IsTree) { return -1; }
             if (!SizeClass.TryMake(radius, new WallMap(Shape, Unit, Cap, default), out var size)) { return -1; }
             _sizes.Add(new Sized {
                 Size = size,
@@ -492,8 +597,19 @@ namespace Yewnyx.Spatial {
         /// <summary>
         /// The wall distance, one count per cell along x, then y, then z, once the marking is done.
         /// A job of the caller's that reads it must be handed to <see cref="AddReader"/>.
+        /// Empty in a grid that keeps a tree.
         /// </summary>
         public NativeArray<byte>.ReadOnly Wall { get { _marked(); return _wall.AsReadOnly(); } }
+
+        // The nodes of a grid that keeps a tree, once it is built or set: with TreeBricks, what a
+        // job needs to make a WallTree of the grid's shape, unit and cap. A job that reads them
+        // must be handed to AddReader, and they are not to be kept past the next marking or
+        // SetTree. Empty in a grid that keeps a count for every cell. Not public until a caller
+        // outside the package has a job that reads them.
+        internal NativeArray<WallNode>.ReadOnly TreeNodes { get { _marked(); return _treeNodes.AsArray().AsReadOnly(); } }
+
+        // The bricks of a grid that keeps a tree: 64 cells each, at four bits a cell.
+        internal NativeArray<byte>.ReadOnly TreeBricks { get { _marked(); return _treeBricks.AsArray().AsReadOnly(); } }
 
         /// <summary>
         /// The cost per cell, in the same order as <see cref="Wall"/>, or an empty array while
@@ -561,10 +677,13 @@ namespace Yewnyx.Spatial {
             if (_disposed) { return; }
             _disposed = true;
             Complete();
-            _wall.Dispose(); _cost.Dispose(); _filled.Dispose();
+            _wall.Dispose(); _cost.Dispose(); _filled.Dispose(); _treeNodes.Dispose(); _treeBricks.Dispose();
             _disposeShapes();
             foreach (var sized in _sizes) { sized.Region.Dispose(); sized.Result.Dispose(); }
         }
+
+        // The tree as it is now. Only after the marking is done: its job writes these.
+        private WallTree _tree() => new WallTree(Shape, Unit, Cap, _treeNodes.AsArray().AsReadOnlySpan(), _treeBricks.AsArray().AsReadOnlySpan());
 
         private ShapeArrays _shapes() => new ShapeArrays {
             Solids = _solids, Corners = _corners, Triangles = _triangles,
@@ -594,6 +713,8 @@ namespace Yewnyx.Spatial {
         // neither do the regions that were flooded from it.
         private void _forget() {
             _wall.AsSpan().Clear();
+            _treeNodes.Clear();
+            _treeBricks.Clear();
             _filled.AsSpan().Clear();
             _forgetRegions();
         }

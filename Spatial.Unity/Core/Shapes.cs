@@ -34,6 +34,29 @@ namespace Yewnyx.Spatial {
         /// <summary>The version of the block's layout and of the order its tree is in. A block of any other version is refused.</summary>
         public const int Version = 3;
 
+        // A number that is the same for the same shapes and, as good as always, another for
+        // others: what a tree's block keeps of the shapes it was built from. Every number of every
+        // shape goes into it, and how many of each kind there are. The boxes and the tree over
+        // them do not: they follow from the shapes.
+        internal static ulong Fingerprint(in ShapeSet shapes) {
+            var mark = 14695981039346656037UL;
+            mark = _mix(mark, MemoryMarshal.Cast<Solid, uint>(shapes.Solids));
+            mark = _mix(mark, MemoryMarshal.Cast<float, uint>(shapes.Corners));
+            mark = _mix(mark, MemoryMarshal.Cast<int, uint>(shapes.Triangles));
+            mark = _mix(mark, MemoryMarshal.Cast<HeightField, uint>(shapes.HeightFields));
+            mark = _mix(mark, shapes.HeightBlocks);
+            var heights = shapes.Heights;
+            mark = (mark ^ (uint)heights.Length) * 1099511628211UL;
+            for (var i = 0; i < heights.Length; i++) { mark = (mark ^ heights[i]) * 1099511628211UL; }
+            return mark;
+        }
+
+        private static ulong _mix(ulong mark, ReadOnlySpan<uint> words) {
+            mark = (mark ^ (uint)words.Length) * 1099511628211UL;
+            for (var i = 0; i < words.Length; i++) { mark = (mark ^ words[i]) * 1099511628211UL; }
+            return mark;
+        }
+
         /// <summary>Which shapes a distance is taken to: all of them, all but the heightfields, or the heightfields alone.</summary>
         internal const int Every = 0, NoHeightFields = 1, OnlyHeightFields = 2;
 
@@ -252,10 +275,20 @@ namespace Yewnyx.Spatial {
         // The same, to some of the shapes only.
         internal static bool DistanceAmong(in ShapeSet shapes, int which, float x, float y, float z, float limit, out float distance) {
             distance = 0f;
+            if (!(limit >= 0f) || !NearestSquared(shapes, which, x, y, z, (double)limit * limit, out var best)) { return false; }
+            var found = (float)Math.Sqrt(best);
+            distance = found < limit ? found : limit;
+            return true;
+        }
+
+        // The squared distance from a point to the nearest of some of the shapes, where that is
+        // below within, and otherwise within. False, with 0, where Distance would be refused.
+        internal static bool NearestSquared(in ShapeSet shapes, int which, float x, float y, float z, double within, out double best) {
+            best = 0d;
             var count = shapes.Count;
-            if (count < 0 || !(limit >= 0f) || float.IsNaN(x) || float.IsNaN(y) || float.IsNaN(z)) { return false; }
+            if (count < 0 || !(within >= 0d) || float.IsNaN(x) || float.IsNaN(y) || float.IsNaN(z)) { return false; }
             if (count == 0) {
-                distance = limit;
+                best = within;
                 return true;
             }
 
@@ -265,16 +298,16 @@ namespace Yewnyx.Spatial {
             var firstField = count - shapes.HeightFields.Length;
             Span<int> stack = stackalloc int[QueryStack];
             // The best squared distance so far. A node or a shape whose box is no nearer cannot beat it.
-            var best = (double)limit * limit;
+            best = within;
             int top = 0, visits = 0;
             stack[top++] = 0;
             while (top > 0 && best > 0d) {
-                if (++visits > nodes.Length) { return false; }
+                if (++visits > nodes.Length) { best = 0d; return false; }
                 var index = stack[--top];
                 var node = nodes[index];
                 if (!(BoxDistance.Squared(node.MinX, node.MinY, node.MinZ, node.MaxX, node.MaxY, node.MaxZ, x, y, z) < best)) { continue; }
                 if (node.Count <= 0) {
-                    if (!(node.First > index + 1 && node.First < nodes.Length && top + 2 <= QueryStack)) { return false; }
+                    if (!(node.First > index + 1 && node.First < nodes.Length && top + 2 <= QueryStack)) { best = 0d; return false; }
                     // The nearer child is walked first, so the farther one is more often skipped.
                     BoxNode left = nodes[index + 1], right = nodes[node.First];
                     var leftReach = BoxDistance.Squared(left.MinX, left.MinY, left.MinZ, left.MaxX, left.MaxY, left.MaxZ, x, y, z);
@@ -288,19 +321,17 @@ namespace Yewnyx.Spatial {
                     }
                     continue;
                 }
-                if (!(node.First >= 0 && node.Count <= order.Length && node.First <= order.Length - node.Count)) { return false; }
+                if (!(node.First >= 0 && node.Count <= order.Length && node.First <= order.Length - node.Count)) { best = 0d; return false; }
                 for (var j = 0; j < node.Count; j++) {
                     var item = order[node.First + j];
-                    if ((uint)item >= (uint)count) { return false; }
+                    if ((uint)item >= (uint)count) { best = 0d; return false; }
                     if (which != Every && (which == NoHeightFields) == (item >= firstField)) { continue; }
                     var box = boxes[item];
                     if (!(BoxDistance.Squared(box.MinX, box.MinY, box.MinZ, box.MaxX, box.MaxY, box.MaxZ, x, y, z) < best)) { continue; }
-                    if (!TrySquared(shapes, item, x, y, z, best, out var squared)) { return false; }
+                    if (!TrySquared(shapes, item, x, y, z, best, out var squared)) { best = 0d; return false; }
                     if (squared < best) { best = squared; }
                 }
             }
-            var found = (float)Math.Sqrt(best);
-            distance = found < limit ? found : limit;
             return true;
         }
 

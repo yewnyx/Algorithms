@@ -57,6 +57,13 @@ public partial class GridPanel : UserControl {
         ClearButton.Click += (_, _) => { _world.ClearCost(); Flooded(); };
         TopView.AnchorMoved += (x, y) => MoveAnchor(x, y, null);
         SideView.AnchorMoved += (x, z) => MoveAnchor(x, null, z);
+        SceneRooms.Click += (_, _) => SetScene(WallScene.Rooms);
+        SceneOutdoors.Click += (_, _) => SetScene(WallScene.Outdoors);
+        TreeBox.IsCheckedChanged += (_, _) => {
+            _world.AsTree = TreeBox.IsChecked == true;
+            // Only the wall distance is kept as a tree so far: the other views need a count for every cell.
+            SetMode(_world.AsTree ? 0 : _mode);
+        };
 
         Generate();
         _ready = true;
@@ -70,6 +77,21 @@ public partial class GridPanel : UserControl {
         "The route from the probe to the goal (the pink diamond): the cells' way in blue, pulled straight in yellow. Right-click a slice to move the goal; wall off a place to bend it.",
     };
 
+    private const string TreeCaption = "How far each cell is from the nearest shape, as the tree keeps it: counts only in the bricks near surfaces (dark squares), and open air as cubes of one bit (white squares). Click a slice to put the probe there.";
+
+    private WallScene _scene = WallScene.Rooms;
+
+    // The scene is its own choice, so the tree and the counts can be compared on either.
+    private void SetScene(WallScene scene) {
+        _scene = scene;
+        SceneRooms.IsChecked = scene == WallScene.Rooms;
+        SceneOutdoors.IsChecked = scene == WallScene.Outdoors;
+        // Outdoors there are no doors to lead out through.
+        foreach (var (item, index) in GoalBox.Items.OfType<ComboBoxItem>().Select((item, index) => (item, index))) { item.IsEnabled = index == WallWorld.GoalPoint || scene == WallScene.Rooms; }
+        if (scene == WallScene.Outdoors) { GoalBox.SelectedIndex = WallWorld.GoalPoint; }
+        Generate();
+    }
+
     // The four views are one choice. Each shows only the actions that mean something in it.
     private void SetMode(int mode) {
         _mode = mode;
@@ -77,7 +99,9 @@ public partial class GridPanel : UserControl {
         ModeRegions.IsChecked = mode == 1;
         ModeTravel.IsChecked = mode == 2;
         ModeRoutes.IsChecked = mode == 3;
-        CaptionText.Text = Captions[mode];
+        var tree = TreeBox.IsChecked == true;
+        ModeRegions.IsEnabled = ModeTravel.IsEnabled = ModeRoutes.IsEnabled = !tree;
+        CaptionText.Text = mode == 0 && tree ? TreeCaption : Captions[mode];
         BodyPanel.IsVisible = mode > 0;
         CostPanel.IsVisible = mode > 0;
         SlowButton.IsVisible = mode > 1;
@@ -107,7 +131,7 @@ public partial class GridPanel : UserControl {
     private byte Cap => (byte)(CapBox.Value ?? 8);
 
     private void Generate() {
-        _world = new WallWorld((int)(SeedBox.Value ?? 1), Unit, Cap);
+        _world = new WallWorld((int)(SeedBox.Value ?? 1), Unit, Cap, _scene) { AsTree = TreeBox.IsChecked == true };
         _anchorPut = false;
         _travelDirty = true;
         Flooded();
@@ -266,13 +290,24 @@ public partial class GridPanel : UserControl {
             : exact <= 0f ? "the probe is inside a solid"
             : exact >= reach ? $"stops at its cap of {reach:0.###} m, never over"
             : $"{(exact - room) * 1000:0} mm short ({room * 100 / exact:0}% of the truth), never over";
+        if (_world.AsTree) {
+            _world.DenseRoom(x, y, z, out var dense);
+            Table(
+                ("Probe", At(x, y, z)),
+                ("Tree proves free", $"{room:0.000} m"),
+                ("Counts prove free", dense == room ? $"{dense:0.000} m, the same" : $"{dense:0.000} m"),
+                ("Shapes say", $"{exact:0.000} m"),
+                ("Tree size", $"{_world.TreeBytes:N0} bytes, {_world.TreeBytes * 100.0 / _world.DenseBytes:0}% of a count a cell ({_world.DenseBytes:N0})"),
+                ("Tree", $"{Count(_world.TreeNodeCount, "node")}, {Count(_world.TreeBrickCount, "brick")}, {Count(_world.OpenCubeCount, "open cube")}"));
+            return;
+        }
         Table(
             ("Probe", At(x, y, z)),
             ("Grid proves free", $"{room:0.000} m"),
             ("Shapes say", $"{exact:0.000} m"),
             ("Grid is", gap),
             ("Stored count", count >= _world.Cap ? $"{count} (the cap)" : count.ToString()),
-            ("Shapes", $"{_world.Solids.Length} ({Of(SolidKind.Box)} boxes, {Of(SolidKind.Sphere)} spheres, {Of(SolidKind.Capsule)} capsules)"));
+            ("Shapes", $"{_world.Solids.Length} ({Of(SolidKind.Box)} boxes, {Of(SolidKind.Sphere)} spheres, {Of(SolidKind.Capsule)} capsules){(_scene == WallScene.Outdoors ? " and the ground" : "")}"));
     }
 
     private void RouteTable(float x, float y, float z, WallWorld.RouteFound? cells, WallWorld.RouteFound? straight, WallWorld.RouteFound? other) {

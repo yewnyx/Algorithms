@@ -88,6 +88,17 @@ JobHandle upToDate = set.Schedule(movedIds, positions, rotations, posesReady);
 - **Read `Cost` again after `FillCost` or `ClearCost`.** They can put another array in its place. One kept from before is then freed, or is the empty one, which reads every cell as normal, closed ones included.
 - **Costs:** 0 is normal, `CellCost.Closed` (255) closes a cell, and anything else scales a step into the cell by 1 + cost / 16. A cost of 32 makes a step cost three times as much.
 - **`FillCost` writes the cells whose centre is inside the solid.** A solid thinner than a cell can hold no centre and write none, so make it at least a cell thick.
+- **`HasRoom(point, radius)` is the cheaper question in open air** on a grid that keeps a tree: it answers without reading a count.
+
+### A large grid keeps a tree
+
+- **Above `WallGrid.DenseMost` cells (4 million) a grid keeps its wall distance as a tree:** counts only near surfaces, open air as cubes of one bit. `IsTree` says which.
+- **On a tree `TryRoom` and `HasRoom` prove less room near surfaces than counts would, never more:** the tree keeps each count to a fifteenth of the cap.
+- **How much less:** at a cell's centre under a fifteenth of the cap (6.7 cm at the defaults); at a point between cells, which is proven from eight, more. Measured at points within 0.9 m of a surface on a large outdoor part: 3 cm on the whole, under 12 cm for 99 in 100, 20 cm at the worst.
+- **`TryDistance` answers the same either way.**
+- **Building the tree takes seconds** for a part of some hundreds of metres. Build it where the part is baked and store what `TryWriteTree` gives.
+- **`SetTree` takes a stored tree back** in place of a marking. Give the grid its shapes first: a tree built from other shapes is refused.
+- **Costs, size classes, regions, fields and routes need a count for every cell.** On a tree `AddSizeClass` gives -1 and `FillCost` false.
 
 ## WallGrid: body sizes and regions
 

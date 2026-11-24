@@ -70,7 +70,7 @@ For geometry that does not move: a grid over it answers four questions, each bui
 
 | Layer | It answers | Calls | Memory |
 |---|---|---|---|
-| Room | How far is the nearest wall from this point? | `TryRoom`, `TryDistance` | 1 byte a cell |
+| Room | How far is the nearest wall from this point? | `TryRoom`, `HasRoom`, `TryDistance` | 1 byte a cell, or above 4 million cells a tree that keeps counts only near surfaces |
 | Fit | Can a body of this radius be here? Where is the nearest place it can be? | `AddSizeClass`, `ScheduleRegions`, `IsOpen`, `TryNearestOpen` | 1 byte a cell for each body size |
 | Travel field | How far is each cell from a goal, going round what is in the way, and which way is down? | `ScheduleField`, `TrySample` | 2 bytes a cell, for each field |
 | Route | A few straight legs from here to there | `WallGridRoute.Schedule` | 16 bytes a cell of the largest grid, for each route object |

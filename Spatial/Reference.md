@@ -36,6 +36,19 @@ Every rule and limit of the `Yewnyx.Spatial` library, grouped by the type it bel
 - **A cell's count times the `unit`** is never more than the true distance from its centre.
 - **A cell at the `cap` is that far or more.**
 - **`RoomAt` answers from the grid alone,** in constant time.
+- **`HasRoom` asks "is there at least this much room here?"** and gives what `RoomAt` gives, compared.
+
+### Wall distance as a tree
+
+- **`WallTrees` keeps a grid's counts as a tree,** for a grid that is mostly open air: counts only near surfaces.
+- **A cube that is all open or all inside a solid is one bit.** An open cube is never more than 16 cells a side.
+- **A brick keeps four bits a cell:** each count put down to a fifteenth of the cap. With a cap of 15 or less nothing is lost.
+- **`WallTrees.RoomAt` gives what the grid gives with its counts put down the same way,** to the bit, for shapes that are whole: a little less room near surfaces, never more.
+- **In open air `WallTrees.HasRoom` answers without reading a count.**
+- **`Measure` says how much room `Build` needs;** a build that runs out of room is refused.
+- **A side of more than 2^30 cells is refused.**
+- **A tree's block is read only beside the shapes it was built from:** it keeps their fingerprint.
+- **A block that passes `TryRead` sends no query outside its nodes or bricks.** A tree that is not whole claims no room.
 
 ## Size classes and regions
 

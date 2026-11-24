@@ -6,11 +6,15 @@ namespace Yewnyx.Algorithms.Visualizer.Model;
 /// <summary>Which two axes a slice shows: x and y at one height, or x and z at one y.</summary>
 public enum SlicePlane { Xy, Xz }
 
+/// <summary>What the world holds: three rooms with things in them, or rolling ground with rocks and trees.</summary>
+public enum WallScene { Rooms, Outdoors }
+
 /// <summary>
 /// A few boxes, spheres and capsules in a grid of cubic cells, with the wall distance of every cell marked by
 /// <see cref="WallDistance.MarkLayer"/>, so a view can show what the grid holds beside the exact distance
 /// <see cref="Shapes.Distance"/> gives from the shapes themselves. Metres throughout. Nothing here moves: the grid is
-/// marked once, and again only when the unit or the cap changes.
+/// marked once, and again only when the unit or the cap changes. The same counts are kept as a <see cref="WallTree"/>
+/// too, so a view can show either.
 /// </summary>
 public sealed class WallWorld {
     public const float CellSize = 0.5f;
@@ -40,35 +44,60 @@ public sealed class WallWorld {
     /// <summary>How long marking every layer took, in milliseconds.</summary>
     public double MarkMilliseconds { get; private set; }
 
-    public WallWorld(int seed, float unit, byte cap) {
+    public WallScene Scene { get; }
+
+    // The ground of the outdoor scene: its heights as given, one every half metre along x and y, and the heightfield
+    // the library packed from them. Empty in the rooms.
+    private readonly float[] _ground = [];
+    private readonly HeightField[] _fields = [];
+    private readonly uint[] _blocks = [];
+    private readonly ushort[] _kept = [];
+    private const int GroundX = CountX, GroundY = CountY;
+
+    public WallWorld(int seed, float unit, byte cap, WallScene scene = WallScene.Rooms) {
+        Scene = scene;
         var random = new Random(seed);
         var solids = new List<Solid>();
-        // Two partitions, 0.5 m thick, make three rooms. Each door has a lintel above it: the first is 2.5 m wide, the
-        // second 1.5 m, so a body of radius 0.9 m gets through the first and not the second, and a smaller one through both.
-        solids.Add(Solid.Box(new Box(PartitionA, 0, 0, PartitionA + 0.5f, 8, Depth)));
-        solids.Add(Solid.Box(new Box(PartitionA, 10.5f, 0, PartitionA + 0.5f, Height, Depth)));
-        solids.Add(Solid.Box(new Box(PartitionA, 8, DoorHeight, PartitionA + 0.5f, 10.5f, Depth)));
-        solids.Add(Solid.Box(new Box(PartitionB, 0, 0, PartitionB + 0.5f, 4.5f, Depth)));
-        solids.Add(Solid.Box(new Box(PartitionB, 6, 0, PartitionB + 0.5f, Height, Depth)));
-        solids.Add(Solid.Box(new Box(PartitionB, 4.5f, DoorHeight, PartitionB + 0.5f, 6, Depth)));
-        // Big enough to read at a glance and few enough to leave room between them.
-        for (var i = 0; i < 5; i++) { AddBox(random, i < 2, solids); }
-        for (var i = 0; i < 4; i++) { AddSphere(random, solids); }
-        for (var i = 0; i < 3; i++) { AddCapsule(random, solids); }
+        if (scene == WallScene.Outdoors) {
+            _ground = MakeGround(random);
+            _blocks = new uint[HeightFields.BlocksLength(GroundY, GroundX)];
+            var kept = new ushort[HeightFields.HeightsLength(GroundY, GroundX)];
+            if (!HeightFields.Pack(_ground, GroundY, GroundX, CellSize, CellSize, 0.1f, _blocks, kept, out var packed, out var keptCount)) {
+                throw new InvalidOperationException("HeightFields.Pack refused the ground.");
+            }
+            _kept = kept[..keptCount];
+            // Its heights run along y and then x, and stand up along z: U is y, V is z, W is x.
+            _fields = [packed.Placed(0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, packed.Lowest - 2)];
+            for (var i = 0; i < 6; i++) { AddRock(random, solids); }
+            for (var i = 0; i < 5; i++) { AddTree(random, solids); }
+        } else {
+            // Two partitions, 0.5 m thick, make three rooms. Each door has a lintel above it: the first is 2.5 m wide, the
+            // second 1.5 m, so a body of radius 0.9 m gets through the first and not the second, and a smaller one through both.
+            solids.Add(Solid.Box(new Box(PartitionA, 0, 0, PartitionA + 0.5f, 8, Depth)));
+            solids.Add(Solid.Box(new Box(PartitionA, 10.5f, 0, PartitionA + 0.5f, Height, Depth)));
+            solids.Add(Solid.Box(new Box(PartitionA, 8, DoorHeight, PartitionA + 0.5f, 10.5f, Depth)));
+            solids.Add(Solid.Box(new Box(PartitionB, 0, 0, PartitionB + 0.5f, 4.5f, Depth)));
+            solids.Add(Solid.Box(new Box(PartitionB, 6, 0, PartitionB + 0.5f, Height, Depth)));
+            solids.Add(Solid.Box(new Box(PartitionB, 4.5f, DoorHeight, PartitionB + 0.5f, 6, Depth)));
+            // Big enough to read at a glance and few enough to leave room between them.
+            for (var i = 0; i < 5; i++) { AddBox(random, i < 2, solids); }
+            for (var i = 0; i < 4; i++) { AddSphere(random, solids); }
+            for (var i = 0; i < 3; i++) { AddCapsule(random, solids); }
+        }
         Solids = solids.ToArray();
 
-        var count = Solids.Length;
+        var count = Solids.Length + _fields.Length;
         _boxes = new Box[count];
         _nodes = new BoxNode[Shapes.NodesLength(count)];
         _order = new int[count];
         _workspace = new int[Shapes.WorkspaceLength(count)];
-        if (!Shapes.Build(Solids, ReadOnlySpan<float>.Empty, ReadOnlySpan<int>.Empty, _boxes, _nodes, _order, _workspace, out _nodeCount)) {
-            throw new InvalidOperationException("Shapes.Build rejected the solids.");
+        if (!Shapes.Build(Solids, ReadOnlySpan<float>.Empty, ReadOnlySpan<int>.Empty, _fields, _blocks, _kept, _boxes, _nodes, _order, _workspace, out _nodeCount)) {
+            throw new InvalidOperationException("Shapes.Build rejected the shapes.");
         }
         Mark(unit, cap);
     }
 
-    /// <summary>Marks every z layer again with a new unit and cap.</summary>
+    /// <summary>Marks every z layer again with a new unit and cap, and builds the tree of the same counts.</summary>
     public void Mark(float unit, byte cap) {
         var clock = Stopwatch.StartNew();
         var set = Set();
@@ -80,9 +109,84 @@ public sealed class WallWorld {
         }
         MarkMilliseconds = clock.Elapsed.TotalMilliseconds;
         (Unit, Cap) = (unit, cap);
+        BuildTree();
     }
 
-    private ShapeSet Set() => new(Solids, ReadOnlySpan<float>.Empty, ReadOnlySpan<int>.Empty, _boxes, _nodes.AsSpan(0, _nodeCount), _order);
+    private ShapeSet Set() => new(Solids, ReadOnlySpan<float>.Empty, ReadOnlySpan<int>.Empty, _fields, _blocks, _kept, _boxes, _nodes.AsSpan(0, _nodeCount), _order);
+
+    // ---- The tree: the same counts kept only near the shapes' surfaces. ----
+
+    private WallNode[] _treeNodes = [];
+    private byte[] _treeBricks = [];
+
+    /// <summary>Whether the queries and the colours come from the tree and not from a count for every cell.</summary>
+    public bool AsTree { get; set; }
+
+    /// <summary>The count the tree gives back for every cell, in the same order as <see cref="Counts"/>.</summary>
+    public byte[] TreeCounts { get; } = new byte[CountX * CountY * CountZ];
+
+    /// <summary>A cube of cells the tree keeps as one child: all open, or a brick of 4 by 4 by 4 counts. Cell numbers, and the side in cells.</summary>
+    public readonly record struct TreeLeaf(int X, int Y, int Z, int Side, bool Open);
+
+    /// <summary>The open cubes and the bricks, as the tree's nodes lay them out. Cubes of zeros are left out.</summary>
+    public List<TreeLeaf> Leaves { get; } = [];
+
+    public int TreeNodeCount => _treeNodes.Length;
+    public int TreeBrickCount => _treeBricks.Length / WallTrees.BrickBytes;
+    public int OpenCubeCount { get; private set; }
+
+    /// <summary>What the tree takes: its nodes and its bricks, as a block would store them less the header.</summary>
+    public long TreeBytes => (long)_treeNodes.Length * 24 + _treeBricks.Length;
+
+    /// <summary>What a count for every cell takes.</summary>
+    public long DenseBytes => Counts.Length;
+
+    private WallTree Tree() => new(Shape, Unit, Cap, _treeNodes, _treeBricks);
+
+    private void BuildTree() {
+        var set = Set();
+        if (!WallTrees.Measure(Shape, set, Unit, Cap, out var mostNodes, out var mostBricks)) { throw new InvalidOperationException("WallTrees.Measure refused the grid."); }
+        var nodes = new WallNode[mostNodes];
+        var bricks = new byte[mostBricks * WallTrees.BrickBytes];
+        if (!WallTrees.Build(Shape, set, Unit, Cap, nodes, bricks, out var nodeCount, out var brickCount)) { throw new InvalidOperationException("WallTrees.Build refused the grid."); }
+        _treeNodes = nodes[..nodeCount];
+        _treeBricks = bricks[..(brickCount * WallTrees.BrickBytes)];
+
+        // At a cell's centre the tree proves the cell's count times the unit, less the slack: the count, read back.
+        var tree = Tree();
+        for (var z = 0; z < CountZ; z++) {
+            for (var y = 0; y < CountY; y++) {
+                for (var x = 0; x < CountX; x++) {
+                    Shape.CentreOf(x, y, z, out var cx, out var cy, out var cz);
+                    WallTrees.RoomAt(tree, cx, cy, cz, out var room);
+                    TreeCounts[Shape.IndexOf(x, y, z)] = (byte)Math.Clamp((int)Math.Round((room + Shapes.Slack) / Unit), 0, Cap);
+                }
+            }
+        }
+
+        Leaves.Clear();
+        OpenCubeCount = 0;
+        Walk(0, WallTrees.Levels(Shape) - 1, 0, 0, 0);
+    }
+
+    // A node's 64 children along x, then y, then z, each a cube of 4 times 4 to the power of the level cells along a side.
+    // Its mixed children follow one another from First, among the nodes of the next level down or, under the lowest, among the bricks.
+    private void Walk(int at, int level, int x, int y, int z) {
+        var node = _treeNodes[at];
+        var side = 4 << (2 * level);
+        var rank = 0;
+        for (var child = 0; child < 64; child++) {
+            int cx = x + (child & 3) * side, cy = y + ((child >> 2) & 3) * side, cz = z + (child >> 4) * side;
+            var bit = 1UL << child;
+            if ((node.Mixed & bit) != 0) {
+                if (level == 0) { Leaves.Add(new TreeLeaf(cx, cy, cz, 4, false)); } else { Walk(node.First + rank, level - 1, cx, cy, cz); }
+                rank++;
+            } else if ((node.Open & bit) != 0) {
+                Leaves.Add(new TreeLeaf(cx, cy, cz, side, true));
+                OpenCubeCount++;
+            }
+        }
+    }
 
     /// <summary>The cell holding a coordinate on an axis; a point on the upper face belongs to the last cell.</summary>
     public static int CellOf(float value, int count) => Math.Clamp((int)Math.Floor(value / CellSize), 0, count - 1);
@@ -90,10 +194,15 @@ public sealed class WallWorld {
     /// <summary>A point in the grid's box, faces included.</summary>
     public static float Clamp(float value, float extent) => Math.Clamp(value, 0f, extent);
 
-    public byte CountAt(int cellX, int cellY, int cellZ) => Counts[Shape.IndexOf(cellX, cellY, cellZ)];
+    /// <summary>A cell's count, from the tree or from the count for every cell.</summary>
+    public byte CountAt(int cellX, int cellY, int cellZ) => (AsTree ? TreeCounts : Counts)[Shape.IndexOf(cellX, cellY, cellZ)];
 
-    /// <summary>What the grid alone proves: no shape is nearer than this. False outside the grid.</summary>
+    /// <summary>What the grid alone proves, from the tree or from the counts: no shape is nearer than this. False outside the grid.</summary>
     public bool Room(float x, float y, float z, out float room) =>
+        AsTree ? WallTrees.RoomAt(Tree(), x, y, z, out room) : DenseRoom(x, y, z, out room);
+
+    /// <summary>What the count for every cell proves, whichever is shown.</summary>
+    public bool DenseRoom(float x, float y, float z, out float room) =>
         WallDistance.RoomAt(new WallMap(Shape, Unit, Cap, Counts), x, y, z, out room);
 
     /// <summary>The distance to the nearest shape from the shapes themselves, 0 inside one.</summary>
@@ -108,7 +217,58 @@ public sealed class WallWorld {
         foreach (var solid in Solids) {
             if (SolidSection.Cut(solid, plane, fixedAt) is { } outline) { outlines.Add(outline); }
         }
+        // The ground is drawn where a side slice cuts it: its surface as given, and down to the grid's floor.
+        if (_ground.Length > 0 && plane == SlicePlane.Xz) {
+            var row = Math.Clamp((int)Math.Round(fixedAt / CellSize), 0, GroundY);
+            var outline = new List<(double U, double V)> { (0, 0) };
+            for (var i = 0; i <= GroundX; i++) { outline.Add((i * CellSize, _ground[i * (GroundY + 1) + row])); }
+            outline.Add((Width, 0));
+            outlines.Add(outline.ToArray());
+        }
         return outlines;
+    }
+
+    // Rolling ground between about half a metre and three metres up, with a rise along one side. Its heights run along y
+    // first: the one at (x, y) is at x * (rows + 1) + y, as HeightFields.Pack takes them with U along y.
+    private static float[] MakeGround(Random random) {
+        double phaseA = random.NextDouble() * 6.3, phaseB = random.NextDouble() * 6.3;
+        var heights = new float[(GroundX + 1) * (GroundY + 1)];
+        for (var i = 0; i <= GroundX; i++) {
+            for (var j = 0; j <= GroundY; j++) {
+                double x = i * CellSize, y = j * CellSize;
+                heights[i * (GroundY + 1) + j] = (float)(1.5 + 0.8 * Math.Sin(0.33 * x + phaseA) * Math.Cos(0.41 * y + phaseB) + 0.5 * Math.Sin(0.13 * x + 0.21 * y) + 0.04 * y);
+            }
+        }
+        return heights;
+    }
+
+    /// <summary>The ground's height as given at a point, 0 where there is no ground.</summary>
+    public float GroundAt(float x, float y) {
+        if (_ground.Length == 0) { return 0f; }
+        int i = Math.Clamp((int)Math.Round(x / CellSize), 0, GroundX), j = Math.Clamp((int)Math.Round(y / CellSize), 0, GroundY);
+        return _ground[i * (GroundY + 1) + j];
+    }
+
+    // A rock: a ball half sunk in the ground, or a box turned and tipped as if it had settled there.
+    private void AddRock(Random random, List<Solid> solids) {
+        float x = Range(random, 2, Width - 2), y = Range(random, 2, Height - 2), ground = GroundAt(x, y);
+        if (random.Next(2) == 0) {
+            var radius = Range(random, 0.7f, 1.5f);
+            solids.Add(Solid.Sphere(x, y, ground + 0.3f * radius, radius));
+            return;
+        }
+        double yaw = random.NextDouble() * Math.PI, tilt = (random.NextDouble() - 0.5) * 0.6;
+        double cy1 = Math.Cos(yaw), sy1 = Math.Sin(yaw), ct = Math.Cos(tilt), st = Math.Sin(tilt);
+        float hx = Range(random, 0.6f, 1.4f), hy = Range(random, 0.5f, 1.1f), hz = Range(random, 0.4f, 0.9f);
+        solids.Add(Solid.Box(x, y, ground + 0.5f * hz, (float)cy1, (float)sy1, 0, (float)(-sy1 * ct), (float)(cy1 * ct), (float)st, (float)(sy1 * st), (float)(-cy1 * st), (float)ct, hx, hy, hz));
+    }
+
+    // A tree: a trunk standing from under the ground, with a crown of one ball at its top.
+    private void AddTree(Random random, List<Solid> solids) {
+        float x = Range(random, 2.5f, Width - 2.5f), y = Range(random, 2.5f, Height - 2.5f), ground = GroundAt(x, y);
+        float top = ground + Range(random, 4.5f, 7f), crown = Range(random, 1.4f, 2.2f);
+        solids.Add(Solid.Capsule(x, y, ground - 0.5f, x, y, top, Range(random, 0.2f, 0.35f)));
+        solids.Add(Solid.Sphere(x, y, Math.Min(top + 0.6f * crown, Depth - 0.5f), crown));
     }
 
     // ---- Regions: where a body of one radius can be, flooded from seeds. ----
@@ -158,9 +318,10 @@ public sealed class WallWorld {
         var random = new Random(seedKey);
         var seeds = new List<Solid>();
         for (var tries = 0; tries < 400 && seeds.Count < seedCount; tries++) {
-            // One in each room in turn, so the seeds show which rooms a body of this size can pass between.
+            // Indoors one in each room in turn, so the seeds show which rooms a body of this size can pass between; outdoors anywhere.
             var which = seeds.Count % 3;
             float lowX = which == 0 ? 0 : which == 1 ? PartitionA + 0.5f : PartitionB + 0.5f, highX = which == 0 ? PartitionA : which == 1 ? PartitionB : Width;
+            if (Scene == WallScene.Outdoors) { (lowX, highX) = (0, Width); }
             float x = Range(random, lowX + 1.5f, highX - 1.5f), y = Range(random, 2, Height - 2), z = Range(random, 1.5f, Depth - 1.5f);
             if (Exact(x, y, z, out var room) && room >= radius + 0.6f) { seeds.Add(Solid.Box(new Box(x - 0.3f, y - 0.3f, z - 0.3f, x + 0.3f, y + 0.3f, z + 0.3f))); }
         }
