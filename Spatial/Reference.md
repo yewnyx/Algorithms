@@ -83,6 +83,23 @@ Every rule and limit of the `Yewnyx.Spatial` library, grouped by the type it bel
 - **At a goal the direction never settles:** a follower has arrived when the distance falls below about a cell.
 - **It promises nothing about what lies between cells:** whatever follows it still needs its own way of not hitting things.
 
+### Travel fields over a tree
+
+- **`TreeFields.Build` keeps a travel for each place, not each cell:** an open cube, a brick whose open cells are joined and plain, and each open cell of any other brick. 2 bytes a place, under a megabyte for a part of 450 x 50 x 450 m.
+- **`Measure` says how long the field's bytes and the build's scratch are,** exactly, for the tree, the regions and the seeds.
+- **Seeds start as a dense field's do,** and the field keeps the cells they started.
+- **A place's travel is the straight line where it can be:** taken from the place before last when every cell the line between their points touches is open.
+- **Every place a seed did not start has a neighbour lower than itself,** so a follower that goes downhill from place to place always arrives.
+- **`TravelAt` is the cheap question:** how far a point is along the field, from its place and the places beside it. Ask it of every field at every step.
+- **Asking many fields at one point: `Around` once, then `TravelNear` for each field.** The places round a point are the same for every field over one tree and regions; `TravelNear` gives what `TravelAt` does.
+- **Keep `Around`'s places while `PlaceAt` gives the same place,** and ask again on a new one. `PlaceAt` is the cheapest call: the place alone. Room for 32 places is enough at about 96 points in 100; where a point has more, `Around` says how many, and is asked again each step with room for them.
+- **`Next` gives a point to fly to,** not a direction. Fly straight to it, and ask again on entering another place or on reaching it; both calls say which place a point is in.
+- **The point given is in sight:** every cell the straight line to it touches, at a face, an edge or a corner, is open.
+- **A point belongs to the cell `GridShape.TryCentre` finds it in,** as over a dense map: a point on the face between two cells is in the higher one.
+- **A point whose cell is not open is refused.** A dense field may still answer there, from the eight cells round it.
+- **`Next` is refused at the seed's own point,** or as near it as open cells let a point be: there is nowhere lower. A follower has arrived when `TravelAt` is under about a cell.
+- **No costs:** a tree has none.
+
 ## Routes
 
 A route is the points to go to in turn; the start isn't among them.

@@ -235,6 +235,29 @@ namespace Yewnyx.Spatial {
             return 0;
         }
 
+        // The open cells of a brick that a seed reached, a bit a cell.
+        internal static ulong CellsOf(in WallTree tree, ReadOnlySpan<byte> region, in View view, int brick) {
+            var number = region[Header + brick];
+            if (number == 0) { return 0UL; }
+            if (number != Kept) { return WallTrees.CellsAt(tree, brick, view.Need); }
+            var records = region.Slice(Header + view.Leaves);
+            int low = 0, high = view.Kept - 1;
+            while (low <= high) {
+                var middle = (int)(((long)low + high) >> 1);
+                var other = _int(records, middle * Record);
+                if (other == brick) {
+                    var cells = 0UL;
+                    for (var cell = 0; cell < WallTrees.BrickCells; cell++) { if (records[middle * Record + 4 + cell] != 0) { cells |= 1UL << cell; } }
+                    return cells;
+                }
+                if (other < brick) { low = middle + 1; } else { high = middle - 1; }
+            }
+            return 0UL;
+        }
+
+        // Whether a seed reached a leaf: an open cube all through, or some open cells of a brick.
+        internal static bool Reached(ReadOnlySpan<byte> region, int leaf) => region[Header + leaf] != 0;
+
         // A flood as it goes. Numbers is a byte a brick and then a byte an open cube. A brick's
         // mark is the cells of it reached so far, or, once the brick is kept in full, which record
         // is its own. After the bricks' marks come the bits that say which bricks wait in the queue.
