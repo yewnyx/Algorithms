@@ -2,3 +2,5 @@
 !*.meta
 # Samples live in a folder Unity does not import until asked.
 !Samples~/
+# The documentation folder is skipped by Unity's import too, and ships in the package.
+!Documentation~/
