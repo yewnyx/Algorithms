@@ -287,7 +287,7 @@ public class GroupedDiffTest {
         }
 
         var count = 0;
-        Allocation.Fewest(() => count = Run()).Should().Be(0);
+        Allocation.AssertNone(() => count = Run());
         count.Should().BePositive();
     }
 }

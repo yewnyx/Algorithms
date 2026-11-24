@@ -59,7 +59,7 @@ public class TwoWayDictionaryTest {
         enumerator.Dispose();
 
         long sum = 0;
-        Allocation.Fewest(() => sum = Sum()).Should().Be(0);
+        Allocation.AssertNone(() => sum = Sum());
         sum.Should().Be(10 * 2 + 1045);
     }
 

@@ -138,7 +138,7 @@ public class PackedDocumentTest {
             document.Canonicalize();
         }
 
-        Allocation.Fewest(Fill).Should().Be(0);
+        Allocation.AssertNone(Fill);
     }
 
     [Fact]
