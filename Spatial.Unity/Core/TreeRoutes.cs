@@ -523,7 +523,7 @@ namespace Yewnyx.Spatial {
                     // A brick: by the dense search's steps between its open cells, the cheapest
                     // way there is inside it from the cell it was come into at.
                     int first = (x & 3) | ((y & 3) << 2) | ((z & 3) << 4), last = (leaveX & 3) | ((leaveY & 3) << 2) | ((leaveZ & 3) << 4);
-                    _through(place / PerBrick, first, last);
+                    _throughExact(place / PerBrick, first, last);
                     if (float.IsInfinity(Near[last])) { return 0; }
                     length += Near[last] * _times(own);
                     for (var at = last; at != first;) {
@@ -535,11 +535,36 @@ namespace Yewnyx.Spatial {
                 return steps;
             }
 
-            // What the way to each cell of a brick costs from one of its open cells, in cells, by
+            // What the way to each cell of a brick costs from one of its open cells, in steps across the
+            // faces between open cells: a ring of cells at a time. A cell with no way to it is left at
+            // infinity. The way written out goes by _throughExact instead, through the dense search's
+            // steps: both reach the same cells, since a diagonal step needs the cells beside it open.
+            private void _through(int brick, int first) {
+                var open = WallTrees.CellsAt(Tree, brick, Need);
+                Near.Fill(float.PositiveInfinity);
+                Near[first] = 0f;
+                ulong reached = 1UL << first, ring = reached;
+                for (var step = 1; ring != 0UL; step++) {
+                    var next = _faces(ring) & open & ~reached;
+                    for (var left = next; left != 0UL; left &= left - 1UL) {
+                        var cell = _lowest(left);
+                        Near[cell] = step;
+                    }
+                    reached |= next;
+                    ring = next;
+                }
+            }
+
+            // The cells of a brick that share a face with some of the cells given.
+            private static ulong _faces(ulong cells) =>
+                ((cells << 1) & ~0x1111111111111111UL) | ((cells >> 1) & ~0x8888888888888888UL) | ((cells << 4) & ~0x000F000F000F000FUL) |
+                ((cells >> 4) & ~0xF000F000F000F000UL) | (cells << 16) | (cells >> 16);
+
+            // For the way written out: what the way to each cell of a brick costs from one of its open cells, in cells, by
             // steps to the cells round a cell under the dense search's rules; and the cell each
             // was reached from. A cell with no way to it is left at infinity. With a last cell
             // given it stops when that one's way is known.
-            private void _through(int brick, int first, int last) {
+            private void _throughExact(int brick, int first, int last) {
                 Span<byte> levels = stackalloc byte[WallTrees.BrickCells];
                 WallTrees.LevelsIn(Tree, brick, levels);
                 var open = WallTrees.CellsAt(Tree, brick, Need);
@@ -636,7 +661,7 @@ namespace Yewnyx.Spatial {
                 var first = (x & 3) | ((y & 3) << 2) | ((z & 3) << 4);
                 var cells = WallTrees.Joined(1UL << first, WallTrees.CellsAt(Tree, brick, Need));
                 var exact = !WallTrees.Plain(cells);
-                if (exact) { _through(brick, first, -1); }
+                if (exact) { _through(brick, first); }
                 int originX = x & ~3, originY = y & ~3, originZ = z & ~3;
                 if ((GoalX & ~3) == originX && (GoalY & ~3) == originY && (GoalZ & ~3) == originZ) {
                     var goal = (GoalX & 3) | ((GoalY & 3) << 2) | ((GoalZ & 3) << 4);
