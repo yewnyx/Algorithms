@@ -41,6 +41,14 @@
             <Setter Property="MinHeight" Value="34" />
             <Setter Property="Padding" Value="12,4" />
         </Style>
+        <!-- A tab of the Spatial family (class "spatial") wears a teal tint, so it reads apart from the main-line tabs. -->
+        <Style Selector="TabItem.spatial /template/ Border#PART_LayoutRoot"><Setter Property="Background" Value="#121B1B" /></Style>
+        <Style Selector="TabItem.spatial /template/ ContentPresenter#PART_ContentPresenter"><Setter Property="Foreground" Value="#8DB9B3" /></Style>
+        <Style Selector="TabItem.spatial:pointerover /template/ Border#PART_LayoutRoot"><Setter Property="Background" Value="#173030" /></Style>
+        <Style Selector="TabItem.spatial:pointerover /template/ ContentPresenter#PART_ContentPresenter"><Setter Property="Foreground" Value="#D6F7F1" /></Style>
+        <Style Selector="TabItem.spatial:selected /template/ Border#PART_LayoutRoot"><Setter Property="Background" Value="#122220" /></Style>
+        <Style Selector="TabItem.spatial:selected /template/ ContentPresenter#PART_ContentPresenter"><Setter Property="Foreground" Value="#E4FBF7" /></Style>
+        <Style Selector="TabItem.spatial:selected /template/ Border#PART_SelectedPipe"><Setter Property="Background" Value="#2FC4B0" /></Style>
         <Style Selector="GridSplitter">
             <Setter Property="Background" Value="#262B33" />
         </Style>
@@ -147,10 +155,10 @@
         <TabItem Header="Diffing">
             <views:DiffingPanel />
         </TabItem>
-        <TabItem Header="Spatial">
+        <TabItem Header="Spatial" Classes="spatial">
             <views:SpatialPanel />
         </TabItem>
-        <TabItem Header="Spatial grid">
+        <TabItem Header="Spatial grid" Classes="spatial">
             <views:GridPanel />
         </TabItem>
     </TabControl>
