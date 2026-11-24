@@ -12,12 +12,18 @@ namespace Yewnyx.Spatial {
     /// </remarks>
     [AddComponentMenu("Spatial/Box Set Gizmo")]
     public sealed class BoxSetGizmo : MonoBehaviour {
+        /// <summary>Draw each item's box.</summary>
         public bool drawBoxes = true;
+        /// <summary>Draw the tree's nodes.</summary>
         public bool drawTree = true;
+        /// <summary>The deepest level of the tree's nodes that is drawn.</summary>
         [Tooltip("Tree nodes deeper than this are not drawn.")]
         [Min(0)] public int deepestNode = 6;
+        /// <summary>The colour of a box the last Schedule left resting.</summary>
         public Color resting = new Color(0.25f, 0.6f, 1f, 0.9f);
+        /// <summary>The colour of a box the last Schedule worked out again.</summary>
         public Color awake = new Color(1f, 0.35f, 0.35f, 0.95f);
+        /// <summary>The colour of the tree's nodes. The deeper a node, the fainter it is drawn.</summary>
         public Color node = new Color(1f, 1f, 1f, 0.35f);
 
         private bool[] _isAwake = new bool[0];

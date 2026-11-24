@@ -11,6 +11,7 @@ namespace Yewnyx.Spatial {
     /// <see cref="Cap"/> is that far or more.
     /// </remarks>
     public readonly ref struct WallMap {
+        /// <summary>The grid the map is over.</summary>
         public readonly GridShape Shape;
         /// <summary>Metres per count.</summary>
         public readonly float Unit;
@@ -19,6 +20,7 @@ namespace Yewnyx.Spatial {
         /// <summary>One count per cell, along x, then y, then z.</summary>
         public readonly ReadOnlySpan<byte> Distance;
 
+        /// <summary>Views an array of counts as a wall map. Nothing is copied or checked: <see cref="IsValid"/> says whether it can be used.</summary>
         public WallMap(in GridShape shape, float unit, byte cap, ReadOnlySpan<byte> distance) {
             Shape = shape; Unit = unit; Cap = cap; Distance = distance;
         }

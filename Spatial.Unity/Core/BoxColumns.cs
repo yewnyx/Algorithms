@@ -9,8 +9,12 @@ namespace Yewnyx.Spatial {
     /// Each span is cut to the number of boxes, not to the capacity of what it views.
     /// </remarks>
     public readonly ref struct BoxColumns {
-        public readonly ReadOnlySpan<float> MinX, MinY, MinZ, MaxX, MaxY, MaxZ;
+        /// <summary>The lowest x, y and z of each box, one value per box.</summary>
+        public readonly ReadOnlySpan<float> MinX, MinY, MinZ;
+        /// <summary>The highest x, y and z of each box, one value per box.</summary>
+        public readonly ReadOnlySpan<float> MaxX, MaxY, MaxZ;
 
+        /// <summary>Views six spans as columns. Nothing is copied or checked: <see cref="Count"/> says whether they are the same length.</summary>
         public BoxColumns(ReadOnlySpan<float> minX, ReadOnlySpan<float> minY, ReadOnlySpan<float> minZ,
             ReadOnlySpan<float> maxX, ReadOnlySpan<float> maxY, ReadOnlySpan<float> maxZ) {
             MinX = minX; MinY = minY; MinZ = minZ;

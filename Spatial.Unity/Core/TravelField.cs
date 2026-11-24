@@ -11,12 +11,14 @@ namespace Yewnyx.Spatial {
     /// with no goal of its own follows a field downhill: see <see cref="Travel.Sample"/>.
     /// </remarks>
     public readonly ref struct TravelField {
+        /// <summary>The grid the field is over.</summary>
         public readonly GridShape Shape;
         /// <summary>Metres of travel per count.</summary>
         public readonly float Unit;
         /// <summary>One count per cell, along x, then y, then z.</summary>
         public readonly ReadOnlySpan<ushort> Distance;
 
+        /// <summary>Views an array of counts as a field. Nothing is copied or checked: <see cref="IsValid"/> says whether it can be used.</summary>
         public TravelField(in GridShape shape, float unit, ReadOnlySpan<ushort> distance) {
             Shape = shape; Unit = unit; Distance = distance;
         }
@@ -48,7 +50,9 @@ namespace Yewnyx.Spatial {
     /// as it is.
     /// </remarks>
     public readonly struct TravelSeed {
+        /// <summary>The solid whose cells the seed starts.</summary>
         public readonly Solid Solid;
+        /// <summary>What those cells start at: their distance from a point, or how far they are in front of a plane.</summary>
         public readonly TravelStart Start;
         /// <summary>The point, or a point of the plane.</summary>
         public readonly float X, Y, Z;

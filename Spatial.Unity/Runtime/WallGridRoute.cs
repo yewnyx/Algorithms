@@ -35,6 +35,7 @@ namespace Yewnyx.Spatial {
         public const float DefaultLeeway = 0.1f;
 
         /// <param name="points">The most points a route can have. A route with more is not lost: its status says so, and how many it has.</param>
+        /// <param name="allocator">How the route's arrays are allocated.</param>
         public WallGridRoute(int points = 128, Allocator allocator = Allocator.Persistent) {
             if (points < 1) { throw new ArgumentOutOfRangeException(nameof(points), points, "Must be at least 1."); }
             _allocator = allocator;
@@ -45,6 +46,7 @@ namespace Yewnyx.Spatial {
             _heap = new NativeArray<int>(0, allocator);
         }
 
+        /// <summary>Whether <see cref="Dispose"/> has been called.</summary>
         public bool IsDisposed => _disposed;
 
         /// <summary>
@@ -162,6 +164,7 @@ namespace Yewnyx.Spatial {
         /// <summary>Waits for the search.</summary>
         public void Complete() => _search.Complete();
 
+        /// <summary>Waits for the search, then frees the route's arrays. Calling it again does nothing.</summary>
         public void Dispose() {
             if (_disposed) { return; }
             _disposed = true;

@@ -66,6 +66,7 @@ namespace Yewnyx.Spatial {
         /// <param name="shape">Where the grid sits in its own frame.</param>
         /// <param name="unit">Metres per count of wall distance.</param>
         /// <param name="cap">The largest count stored: no query can prove more room than cap * unit.</param>
+        /// <param name="allocator">How the grid's arrays are allocated.</param>
         public WallGrid(GridShape shape, float unit = 1f / 128f, byte cap = 128, Allocator allocator = Allocator.Persistent) {
             if (shape.CellCount == 0) { throw new ArgumentException("The shape cannot be used: see GridShape.CellCount.", nameof(shape)); }
             if (!(unit > 0f) || float.IsInfinity(unit)) { throw new ArgumentOutOfRangeException(nameof(unit), unit, "Must be above 0."); }
@@ -82,6 +83,7 @@ namespace Yewnyx.Spatial {
             _allocateShapes(0, 0, 0, 0, 0, 0, 0);
         }
 
+        /// <summary>Where the grid sits in its own frame.</summary>
         public GridShape Shape { get; }
 
         /// <summary>Metres per count of wall distance.</summary>
@@ -90,6 +92,7 @@ namespace Yewnyx.Spatial {
         /// <summary>The largest count of wall distance stored.</summary>
         public byte Cap { get; }
 
+        /// <summary>Whether <see cref="Dispose"/> has been called.</summary>
         public bool IsDisposed => _disposed;
 
         /// <summary>The number of shapes held.</summary>
