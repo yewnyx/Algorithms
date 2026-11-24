@@ -31,9 +31,9 @@ namespace Yewnyx.Spatial {
     /// as a count for every cell (see <see cref="WallTrees"/>): for a part that is mostly open air,
     /// where a count a cell is tens of megabytes. The tree keeps each count to a fifteenth of the
     /// cap, so <see cref="TryRoom"/> and <see cref="HasRoom"/> can prove a little less room than
-    /// counts would, never more; <see cref="TryDistance"/> answers the same either way. Costs, size classes, regions, fields
-    /// and routes are for grids that keep a count for every cell: on a tree
-    /// <see cref="AddSizeClass"/> gives -1 and <see cref="FillCost"/> false.
+    /// counts would, never more; <see cref="TryDistance"/> answers the same either way. Size
+    /// classes, regions, travel fields and routes work over the tree too. Costs need a count for
+    /// every cell: on a tree <see cref="FillCost"/> gives false.
     /// </para>
     /// <para>
     /// After <see cref="Dispose"/>, every member that reads or changes the grid throws
@@ -503,17 +503,29 @@ namespace Yewnyx.Spatial {
         /// not be used (see <see cref="Travel.Build"/>). A step pays for the cell it enters, at the
         /// grid's costs as they are when the build runs.
         /// The field is of the regions as they are now: when they are next forgotten or flooded
-        /// again it stops answering, and a new one must be built. A field outlives the grid: after
-        /// <see cref="Dispose"/> it answers as it was built, and the caller must drop it if the
-        /// way changes (see <see cref="WallGridField"/>).
-        /// A field is a number for every cell, so a grid that keeps a tree has none. It is
-        /// refused as a field over a class with no regions is: what comes back is a field that
-        /// is not built, reaches nothing and holds no array, and nothing is scheduled.
+        /// again it stops answering, and a new one must be built. A field over counts outlives the
+        /// grid: after <see cref="Dispose"/> it answers as it was built, and the caller must drop
+        /// it if the way changes (see <see cref="WallGridField"/>).
+        /// On a grid that keeps a tree the field is kept for places, not cells (see
+        /// <see cref="TreeFields"/>): under a megabyte for a part of some hundreds of metres. It
+        /// reads the grid's tree as it is asked, so it does not outlive the grid. Its scratch, while
+        /// it builds, is about 30 bytes a place, and is freed when the build is done.
         /// </remarks>
         public WallGridField ScheduleField(int sizeClass, ReadOnlySpan<TravelSeed> seeds, float unit = 0.01f, JobHandle dependsOn = default) {
             var sized = _sized(sizeClass);
             if (!(unit > 0f) || !(unit <= Shape.CellSize * 0.25f)) { throw new ArgumentOutOfRangeException(nameof(unit), unit, "Must be above 0 and no more than a quarter of a cell."); }
-            if (IsTree) { return new WallGridField(this, sizeClass, sized.Stamp, unit, new NativeArray<ushort>(0, _allocator), new NativeArray<int>(3, _allocator), default); }
+            if (IsTree) {
+                var seedsKept = new NativeArray<TravelSeed>(seeds.Length, _allocator, NativeArrayOptions.UninitializedMemory);
+                seeds.CopyTo(seedsKept.AsSpan());
+                var bytes = new NativeList<byte>(1, _allocator);
+                var built = new NativeArray<int>(3, _allocator);
+                var treeBuild = new TreeFieldJob {
+                    Shape = Shape, Unit = Unit, Cap = Cap, FieldUnit = unit, Nodes = _treeNodes, Bricks = _treeBricks, Region = sized.TreeRegion,
+                    Flooded = sized.Result, Seeds = seedsKept, Field = bytes, Result = built,
+                }.Schedule(JobHandle.CombineDependencies(dependsOn, TreeWriters(sizeClass)));
+                _read(treeBuild);
+                return new WallGridField(this, sizeClass, sized.Stamp, unit, bytes, seedsKept, built, treeBuild);
+            }
             var heapLength = Travel.HeapLength(Shape);
             if (heapLength == 0) { throw new InvalidOperationException("The grid has too many cells for a travel field."); }
             var copy = new NativeArray<TravelSeed>(seeds.Length, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
@@ -561,6 +573,14 @@ namespace Yewnyx.Spatial {
 
         // What a size class's regions are stamped with: it changes whenever they do.
         internal int RegionStamp(int sizeClass) => _sizes[sizeClass].Stamp;
+
+        // What a field over the grid's tree reads as it is asked: the tree's nodes and bricks, and a
+        // size class's regions. A job of the field's that reads them is handed to AddReader.
+        internal NativeList<WallNode> TreeNodeList => _treeNodes;
+        internal NativeList<byte> TreeBrickList => _treeBricks;
+        internal NativeList<byte> TreeRegionOf(int sizeClass) => _sizes[sizeClass].TreeRegion;
+        // What a job that reads them must wait for: the marking that writes the tree, and the size class's flood.
+        internal JobHandle TreeWriters(int sizeClass) => JobHandle.CombineDependencies(_mark, _sizes[sizeClass].Flood);
 
         /// <summary>
         /// Whether a size class's regions are those of the shapes and costs held: its last flood,

@@ -208,22 +208,143 @@ namespace Yewnyx.Spatial.Tests {
         private static readonly Solid[] Seeds = { Solid.Sphere(2, 2, 3, 0.5f) };
 
         [Test]
-        public void ATreeKeepsNoCostsAndNoFields() {
+        public void ATreeKeepsNoCosts() {
             using var tree = Marked(true);
             Assert.That(tree.FillCost(Solid.Box(new Box(0, 0, 0, 2, 2, 2)), 32), Is.False);
             Assert.That(tree.TryCost(new float3(1, 1, 1), out var cost), Is.True);
             Assert.That(cost, Is.EqualTo(0));
             Assert.That(tree.AddSizeClass(0.51f), Is.EqualTo(0));
-            // A field is refused as one over a class with no regions is: not built, and with no array a cell.
-            tree.ScheduleRegions(0, Seeds);
-            using var field = tree.ScheduleField(0, new[] { TravelSeed.FromPoint(Solid.Sphere(2, 2, 3, 0.5f), 2, 2, 3) });
-            Assert.That(field.IsBuilt, Is.False);
-            Assert.That(field.Reached, Is.EqualTo(0));
-            Assert.That(field.ByteCount, Is.LessThan(100));
-            Assert.That(field.TrySample(new float3(2, 2, 3), out _, out _), Is.False);
             Assert.That(() => tree.ScheduleField(0, Array.Empty<TravelSeed>(), unit: 0f), Throws.InstanceOf<ArgumentOutOfRangeException>());
             using var dense = Marked(false);
             Assert.That(dense.FillCost(Solid.Box(new Box(0, 0, 0, 2, 2, 2)), 32), Is.True);
+        }
+
+        [Test]
+        public void AFieldOverATreeLeadsFollowersAsTheOneOverCountsDoes() {
+            using var tree = Marked(true);
+            using var dense = Marked(false);
+            tree.AddSizeClass(0.51f);
+            dense.AddSizeClass(0.51f);
+            tree.ScheduleRegions(0, Seeds);
+            dense.ScheduleRegions(0, Seeds);
+            var seeds = new[] { TravelSeed.FromPoint(Solid.Sphere(2, 2, 3, 0.8f), 2, 2, 3) };
+            using var field = tree.ScheduleField(0, seeds, 0.02f);
+            using var counts = dense.ScheduleField(0, seeds, 0.02f);
+            Assert.That(field.IsBuilt, Is.True);
+            Assert.That(field.Reached, Is.GreaterThan(100));
+            Assert.That(field.ByteCount, Is.LessThan(counts.ByteCount / 4), "two bytes a place, not a cell");
+            Assert.That(field.Distance.Length, Is.EqualTo(0));
+            Assert.That((field.KeepsCells, counts.KeepsCells), Is.EqualTo((false, true)), "a field over a tree keeps no count a cell");
+
+            // Followers that fly to the point TryNext gives, asking again on entering another place or reaching it.
+            int tried = 0, arrived = 0;
+            var asked = new System.Collections.Generic.List<float3>();
+            foreach (var start in Points()) {
+                if (tried >= 60) { break; }
+                if (!field.TryTravel(start, out var travel, out _) || !counts.TrySample(start, out _, out var denseTravel) || denseTravel < 4f) { continue; }
+                tried++;
+                asked.Add(start);
+                Assert.That(travel / denseTravel, Is.InRange(0.8f, 1.25f), $"the travel at {start}");
+                var at = start;
+                var to = start;
+                var place = -1;
+                for (var step = 0; step < 4000; step++) {
+                    Assert.That(field.TryTravel(at, out var left, out var here), Is.True, $"from {start}, at {at}");
+                    if (left < Grid.CellSize) { arrived++; break; }
+                    if (here != place || math.distance(at, to) < 0.01f) {
+                        Assert.That(field.TryNext(at, out to, out _, out _), Is.True);
+                        place = here;
+                    }
+                    at += math.normalize(to - at) * math.min(0.125f, math.distance(at, to));
+                }
+            }
+            Assert.That(tried, Is.GreaterThan(20));
+            Assert.That(arrived, Is.EqualTo(tried));
+
+            // Over a tree TrySample's direction is of length 1, towards the point to fly to.
+            Assert.That(field.TrySample(asked[0], out var direction, out var sampled), Is.True);
+            Assert.That(math.length(direction), Is.EqualTo(1f).Within(1e-4f));
+            field.TryNext(asked[0], out var next, out _, out _);
+            Assert.That(math.dot(direction, math.normalize(next - asked[0])), Is.GreaterThan(0.9999f));
+            field.TryTravel(asked[0], out var travelled, out _);
+            Assert.That(sampled, Is.EqualTo(travelled));
+
+            // The jobs give what the calls give.
+            var points = new NativeArray<float3>(asked.ToArray(), Allocator.TempJob);
+            var nexts = new NativeArray<float3>(points.Length, Allocator.TempJob);
+            var travels = new NativeArray<float>(points.Length, Allocator.TempJob);
+            var places = new NativeArray<int>(points.Length, Allocator.TempJob);
+            field.ScheduleNext(points, nexts, travels, places).Complete();
+            for (var i = 0; i < points.Length; i++) {
+                field.TryNext(points[i], out var one, out var oneTravel, out var onePlace);
+                Assert.That((nexts[i], travels[i], places[i]), Is.EqualTo((one, oneTravel, onePlace)));
+            }
+            field.ScheduleTravel(points, travels, places).Complete();
+            for (var i = 0; i < points.Length; i++) {
+                field.TryTravel(points[i], out var oneTravel, out var onePlace);
+                Assert.That((travels[i], places[i]), Is.EqualTo((oneTravel, onePlace)));
+            }
+            points.Dispose(); nexts.Dispose(); travels.Dispose(); places.Dispose();
+
+            // New shapes: the regions are forgotten, and the field answers no more.
+            Assert.That(tree.SetShapes(Solids, Corners, Triangles), Is.True);
+            Assert.That(field.IsBuilt, Is.False);
+            Assert.That(field.TryTravel(asked[0], out _, out _), Is.False);
+        }
+
+        [Test]
+        public void AFieldOverATreeIsWaitedForAndAnswersOnlyWhileItsGridAndRegionsAre() {
+            var tree = Marked(true);
+            tree.AddSizeClass(0.51f);
+            tree.ScheduleRegions(0, Seeds);
+            var seeds = new[] { TravelSeed.FromPoint(Solid.Sphere(2, 2, 3, 0.8f), 2, 2, 3) };
+            var points = new NativeArray<float3>(new[] { new float3(6, 3, 3), new float3(2.5f, 7, 3) }, Allocator.TempJob);
+            var travels = new NativeArray<float>(points.Length, Allocator.TempJob);
+            var places = new NativeArray<int>(points.Length, Allocator.TempJob);
+
+            // New shapes while a field is being built, and while a job asks one: the grid waits for both before it writes.
+            using (var building = tree.ScheduleField(0, seeds, 0.02f)) {
+                Assert.DoesNotThrow(() => tree.SetShapes(Solids, Corners, Triangles));
+            }
+            tree.ScheduleMark();
+            tree.ScheduleRegions(0, Seeds);
+            var field = tree.ScheduleField(0, seeds, 0.02f);
+            using (var refused = tree.ScheduleField(0, new[] { TravelSeed.FromPoint(Solid.Sphere(2, 2, 3, 0.8f), float.NaN, 2, 3) }, 0.02f)) {
+                Assert.That(refused.IsBuilt, Is.False, "a build the library refuses");
+            }
+            Assert.That(field.IsBuilt, Is.True);
+            Assert.That(field.ByteCount, Is.GreaterThan(16 + 2 * field.Reached), "the field's own bytes are counted");
+            // Marked again with the same shapes, the field is still the grid's: asking it waits for the marking.
+            tree.ScheduleMark();
+            Assert.DoesNotThrow(() => field.TryNext(points[0], out _, out _, out _));
+            // A field scheduled while the grid marks again is built after the marking.
+            tree.ScheduleMark();
+            using (var during = tree.ScheduleField(0, seeds, 0.02f)) { Assert.That(during.IsBuilt, Is.True); }
+            Assert.That(field.TryTravel(points[0], out _, out _), Is.True);
+            var asking = field.ScheduleTravel(points, travels, places);
+            Assert.DoesNotThrow(() => tree.SetShapes(Solids, Corners, Triangles));
+            asking.Complete();
+
+            // Marked and flooded again, the same as before: the field is still of the regions it was built from, and answers nothing.
+            tree.ScheduleMark();
+            tree.ScheduleRegions(0, Seeds);
+            Assert.That(field.TryTravel(points[0], out _, out _), Is.False);
+            field.ScheduleTravel(points, travels, places).Complete();
+            Assert.That(travels.ToArray(), Is.All.EqualTo(-1f));
+            field.Dispose();
+
+            // A field whose grid is disposed answers nothing, and its bytes are freed with it.
+            var last = tree.ScheduleField(0, seeds, 0.02f);
+            Assert.That(last.TryTravel(points[0], out _, out _), Is.True);
+            tree.Dispose();
+            Assert.That(last.IsBuilt, Is.False);
+            Assert.That(last.TryTravel(points[0], out _, out _), Is.False);
+            last.ScheduleTravel(points, travels, places).Complete();
+            Assert.That(travels.ToArray(), Is.All.EqualTo(-1f));
+            last.Dispose();
+            var bytes = (NativeList<byte>)typeof(WallGridField).GetField("_bytes", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(last);
+            Assert.That(bytes.IsCreated, Is.False);
+            points.Dispose(); travels.Dispose(); places.Dispose();
         }
 
         [Test]
