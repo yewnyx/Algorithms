@@ -84,6 +84,69 @@ namespace Yewnyx.Spatial {
         }
 
         /// <summary>
+        /// Whether a ball of the radius can move from a to b, asked of a tree: the same test, at
+        /// the same points, as over the grid with its counts put down as the tree keeps them, so it
+        /// gives the same answer.
+        /// A tree keeps no costs, so the leg is held to none.
+        /// </summary>
+        /// <remarks>
+        /// Where a point is found among the cells of one open cube, the points that follow it
+        /// inside that cube are not asked: all of them have the cube's cells round them, which
+        /// prove more than any class that fits the map needs. A leg through open air is then a
+        /// few cubes and not hundreds of points.
+        /// </remarks>
+        public static bool Clear(in WallTree tree, in ShapeSet shapes, float radius, float need,
+            double ax, double ay, double az, double bx, double by, double bz) {
+            var shape = tree.Shape;
+            if (!tree.IsValid || !shape.Holds((float)ax, (float)ay, (float)az) || !shape.Holds((float)bx, (float)by, (float)bz)) { return false; }
+            double size = shape.CellSize, dx = bx - ax, dy = by - ay, dz = bz - az;
+            var length = Math.Sqrt(dx * dx + dy * dy + dz * dz);
+            var stretches = (int)Math.Ceiling(length / (0.25d * size));
+            var exact = shapes.Count > 0;
+            var limit = (float)(radius + size);
+            var covered = -1d;
+            var before = false;
+            for (var k = 0; k <= stretches; k++) {
+                var along = stretches == 0 ? 0d : (double)k / stretches;
+                float x = (float)(ax + dx * along), y = (float)(ay + dy * along), z = (float)(az + dz * along);
+                var proven = WallTrees.HasRoom(tree, x, y, z, need, out var cubeX, out var cubeY, out var cubeZ, out var side);
+                if (k > 0 && !(proven && before)) {
+                    double from = (k - 1) * length / stretches, to = k * length / stretches;
+                    if (covered < to) {
+                        if (!exact) { return false; }
+                        if (!_march(shapes, Shapes.Every, ax, ay, az, dx / length, dy / length, dz / length, radius, limit, from > covered ? from : covered, to, ref covered)) { return false; }
+                    }
+                }
+                before = proven;
+                if (side > 0) {
+                    // How far along the leg it stays among this cube's cells: a point is among them
+                    // while it is half a cell or more inside each of the cube's faces. The points up
+                    // to one short of there are passed over, so that rounding cannot matter.
+                    var leaves = 1d;
+                    leaves = _within(leaves, ax, dx, shape.OriginX, size, cubeX, side);
+                    leaves = _within(leaves, ay, dy, shape.OriginY, size, cubeY, side);
+                    leaves = _within(leaves, az, dz, shape.OriginZ, size, cubeZ, side);
+                    var last = (int)Math.Floor(leaves * stretches) - 1;
+                    if (last > k) { k = last; }
+                }
+            }
+            if (stretches == 0 && !before) {
+                // A leg with no length is one point.
+                return exact && Shapes.Distance(shapes, (float)ax, (float)ay, (float)az, limit, out var distance) && distance >= (double)radius + Margin;
+            }
+            return true;
+        }
+
+        // How far along a leg, from 0 to 1 and no farther than so far, it stays half a cell or more
+        // inside the two faces of a cube of cells that are square to one axis.
+        private static double _within(double sofar, double a, double d, float origin, double size, int cube, int side) {
+            if (d == 0d) { return sofar; }
+            var bound = d > 0d ? origin + (cube + side - 0.5d) * size : origin + (cube + 0.5d) * size;
+            var at = (bound - a) / d;
+            return at < sofar ? at : sofar;
+        }
+
+        /// <summary>
         /// Whether the straight line from an end to a point meets no shape, not counting the first
         /// <see cref="Allowance"/> of it.
         /// </summary>

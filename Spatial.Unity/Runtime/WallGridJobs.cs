@@ -117,6 +117,79 @@ namespace Yewnyx.Spatial {
         }
     }
 
+    /// <summary>Floods the regions of one size class over a grid's tree.</summary>
+    [BurstCompile]
+    internal struct TreeFloodJob : IJob {
+        public GridShape Shape;
+        public float Unit;
+        public byte Cap;
+        public SizeClass Size;
+        [ReadOnly] public NativeList<WallNode> Nodes;
+        [ReadOnly] public NativeList<byte> Bricks;
+        // One element: 1 if the tree is that of the shapes held.
+        [ReadOnly] public NativeArray<byte> Filled;
+        [ReadOnly, DeallocateOnJobCompletion] public NativeArray<Solid> Seeds;
+        // What TreeRegions.FromSeeds makes, cut to what it used: empty after a flood that was refused.
+        public NativeList<byte> Region;
+        // Whether the flood was done (1 or 0), how many cells it reached, how many seeds held no
+        // open cell, and 0 for the least cost: a tree keeps no costs.
+        public NativeArray<int> Result;
+
+        public void Execute() {
+            Result[0] = 0; Result[1] = 0; Result[2] = 0; Result[3] = 0;
+            Region.Clear();
+            if (Filled[0] == 0) { return; }
+            var tree = new WallTree(Shape, Unit, Cap, Nodes.AsArray().AsReadOnlySpan(), Bricks.AsArray().AsReadOnlySpan());
+            var most = TreeRegions.MostLength(tree);
+            if (most == 0) { return; }
+            Region.ResizeUninitialized(most);
+            var marks = new NativeArray<ulong>(TreeRegions.MarksLength(tree), Allocator.Temp, NativeArrayOptions.UninitializedMemory);
+            var queue = new NativeArray<int>(TreeRegions.QueueLength(tree), Allocator.Temp, NativeArrayOptions.UninitializedMemory);
+            var done = TreeRegions.FromSeeds(tree, Size, Seeds.AsReadOnlySpan(), Region.AsArray().AsSpan(), marks.AsSpan(), queue.AsSpan(), out var length, out var reached, out var empty);
+            marks.Dispose();
+            queue.Dispose();
+            // What was not needed is given back: the bytes follow the shapes' surface.
+            Region.ResizeUninitialized(done ? length : 0);
+            Region.TrimExcess();
+            Result[0] = done ? 1 : 0;
+            Result[1] = reached;
+            Result[2] = empty;
+        }
+    }
+
+    /// <summary>Finds a route for one size class over a grid's tree.</summary>
+    [BurstCompile]
+    internal struct TreeRouteJob : IJob {
+        public GridShape Shape;
+        public float Unit;
+        public byte Cap;
+        public SizeClass Size;
+        public ShapeArrays Shapes;
+        public bool Straighten;
+        public float Leeway;
+        [ReadOnly] public NativeList<WallNode> Nodes;
+        [ReadOnly] public NativeList<byte> Bricks;
+        [ReadOnly] public NativeList<byte> Region;
+        // The size class's flood: element 0 is 1 if its regions are those of the shapes held.
+        [ReadOnly] public NativeArray<int> Flooded;
+        public float3 From, To;
+        // The search's own.
+        public NativeArray<float> Sums;
+        public NativeArray<int> Links;
+        public NativeArray<float3> Points;
+        public NativeArray<RouteResult> Result;
+
+        public void Execute() {
+            if (Flooded[0] == 0) {
+                Result[0] = default;
+                return;
+            }
+            var tree = new WallTree(Shape, Unit, Cap, Nodes.AsArray().AsReadOnlySpan(), Bricks.AsArray().AsReadOnlySpan());
+            Result[0] = TreeRoutes.Find(tree, Size, Shapes.Set, Region.AsArray().AsReadOnlySpan(), From.x, From.y, From.z, To.x, To.y, To.z, Straighten,
+                Sums.AsSpan(), Links.AsSpan(), Points.Reinterpret<float>(12).AsSpan(), Leeway);
+        }
+    }
+
     /// <summary>One sample of a travel field per point.</summary>
     [BurstCompile]
     internal struct SampleJob : IJobParallelFor {

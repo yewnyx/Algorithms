@@ -132,7 +132,7 @@ namespace Yewnyx.Spatial {
                 for (var i = 0; i < used[level]; i++) {
                     var node = nodes[starts[level] + i];
                     nodes[begins[level] + i] = new WallNode(node.Mixed, node.Open, level > 0 ? begins[level - 1] + node.First : node.First, leaves);
-                    leaves += _count(node.Open);
+                    leaves += Count(node.Open);
                 }
             }
             nodeCount = at; brickCount = kept;
@@ -228,8 +228,8 @@ namespace Yewnyx.Spatial {
                     var node = nodes[at + i];
                     if ((node.Mixed & node.Open) != 0UL || node.First != below + children || node.FirstLeaf != leaves) { return false; }
                     if (node.Open != 0UL && (4L << (2 * level)) > MostOpen) { return false; }
-                    children += _count(node.Mixed);
-                    leaves += _count(node.Open);
+                    children += Count(node.Mixed);
+                    leaves += Count(node.Open);
                 }
                 at += inLevel;
                 if (level > 0) {
@@ -251,7 +251,7 @@ namespace Yewnyx.Spatial {
         /// its counts put down as the tree keeps them.
         /// </summary>
         /// <remarks>Returns false if the tree cannot be used or the point is outside the grid or not a number.</remarks>
-        public static bool RoomAt(in WallTree tree, float x, float y, float z, out float room) => _room(tree, x, y, z, false, 0f, out room, out _);
+        public static bool RoomAt(in WallTree tree, float x, float y, float z, out float room) => _room(tree, x, y, z, false, 0f, out room, out _, out _, out _, out _, out _);
 
         /// <summary>
         /// Whether the nearest shape is proven to be at least <paramref name="radius"/> from a
@@ -265,7 +265,14 @@ namespace Yewnyx.Spatial {
         /// read and nothing is worked out.
         /// </remarks>
         public static bool HasRoom(in WallTree tree, float x, float y, float z, float radius) {
-            if (!_room(tree, x, y, z, true, radius, out var room, out var known)) { return false; }
+            if (!_room(tree, x, y, z, true, radius, out var room, out var known, out _, out _, out _, out _)) { return false; }
+            return known != 0 ? known > 0 : room >= radius;
+        }
+
+        // The same, and where the yes came from one open cube that holds all eight cells round the
+        // point, that cube: its first cell and its side in cells. The side is 0 otherwise.
+        internal static bool HasRoom(in WallTree tree, float x, float y, float z, float radius, out int cubeX, out int cubeY, out int cubeZ, out int side) {
+            if (!_room(tree, x, y, z, true, radius, out var room, out var known, out cubeX, out cubeY, out cubeZ, out side)) { return false; }
             return known != 0 ? known > 0 : room >= radius;
         }
 
@@ -276,10 +283,51 @@ namespace Yewnyx.Spatial {
             return _from(tree, 0, tree.Levels - 1, x, y, z);
         }
 
+        // How many open cubes a tree has: the last node's are the last of them.
+        internal static int OpenCubes(in WallTree tree) {
+            if (tree.Nodes.Length == 0) { return 0; }
+            var last = tree.Nodes[tree.Nodes.Length - 1];
+            var cubes = (long)last.FirstLeaf + Count(last.Open);
+            return last.FirstLeaf >= 0 && cubes <= int.MaxValue ? (int)cubes : 0;
+        }
+
+        // The leaf that holds a cell of the grid, and how many cells it has along a side: a
+        // brick's number, or the number of bricks plus an open cube's number. -1 for a cell in a
+        // cube of zeros, a cell that is not in the grid, and where the tree is not whole. The
+        // tree must be one that can be used.
+        internal static int LeafOf(in WallTree tree, int x, int y, int z, out int side) {
+            side = 0;
+            var shape = tree.Shape;
+            if ((uint)x >= (uint)shape.CountX || (uint)y >= (uint)shape.CountY || (uint)z >= (uint)shape.CountZ) { return -1; }
+            ReadOnlySpan<WallNode> nodes = tree.Nodes;
+            var node = 0;
+            for (var level = tree.Levels - 1; ; level--) {
+                var shift = 2 * (level + 1);
+                var child = ((x >> shift) & 3) | (((y >> shift) & 3) << 2) | (((z >> shift) & 3) << 4);
+                var bit = 1UL << child;
+                var here = nodes[node];
+                if ((here.Mixed & bit) == 0UL) {
+                    if ((here.Open & bit) == 0UL) { return -1; }
+                    side = 1 << shift;
+                    var cube = (long)tree.Bricks.Length / BrickBytes + here.FirstLeaf + Count(here.Open & (bit - 1UL));
+                    return here.FirstLeaf >= 0 && cube <= int.MaxValue ? (int)cube : -1;
+                }
+                var at = here.First + Count(here.Mixed & (bit - 1UL));
+                if (level == 0) {
+                    side = 4;
+                    return at >= 0 && ((long)at + 1) * BrickBytes <= tree.Bricks.Length ? at : -1;
+                }
+                if ((uint)at >= (uint)nodes.Length || at <= node) { return -1; }
+                node = at;
+            }
+        }
+
         // RoomAt's arithmetic over the tree. When asking, known says where the answer to "at least
         // the radius?" is sure without the room being worked out: 1 for yes, -1 for no.
-        private static bool _room(in WallTree tree, float x, float y, float z, bool asking, float radius, out float room, out int known) {
+        private static bool _room(in WallTree tree, float x, float y, float z, bool asking, float radius, out float room, out int known,
+            out int cubeX, out int cubeY, out int cubeZ, out int side) {
             room = 0f; known = 0;
+            cubeX = 0; cubeY = 0; cubeZ = 0; side = 0;
             var shape = tree.Shape;
             if (!tree.IsValid || !shape.Holds(x, y, z)) { return false; }
             double size = shape.CellSize;
@@ -310,11 +358,16 @@ namespace Yewnyx.Spatial {
                     // One cube holds all eight, and one count: the answer may need no arithmetic.
                     var open = (here.Open & bit) != 0UL;
                     if (asking && !open && radius > 0f) { known = -1; return true; }
-                    if (asking && open && radius <= tree.OpenRoom && offX == 0d && offY == 0d && offZ == 0d) { known = 1; return true; }
+                    if (asking && open && radius <= tree.OpenRoom && offX == 0d && offY == 0d && offZ == 0d) {
+                        known = 1;
+                        side = 1 << shift;
+                        cubeX = lowX & ~(side - 1); cubeY = lowY & ~(side - 1); cubeZ = lowZ & ~(side - 1);
+                        return true;
+                    }
                     d000 = d100 = d010 = d110 = d001 = d101 = d011 = d111 = open ? tree.Cap * unit : 0d;
                     break;
                 }
-                var at = here.First + _count(here.Mixed & (bit - 1UL));
+                var at = here.First + Count(here.Mixed & (bit - 1UL));
                 if (level == 0) {
                     // One brick holds all eight.
                     ReadOnlySpan<byte> bricks = tree.Bricks;
@@ -360,7 +413,7 @@ namespace Yewnyx.Spatial {
                 var bit = 1UL << child;
                 var here = nodes[node];
                 if ((here.Mixed & bit) == 0UL) { return (here.Open & bit) != 0UL ? tree.Cap : (byte)0; }
-                var at = here.First + _count(here.Mixed & (bit - 1UL));
+                var at = here.First + Count(here.Mixed & (bit - 1UL));
                 if (level == 0) {
                     var first = (long)at * BrickBytes;
                     if (at < 0 || first + BrickBytes > tree.Bricks.Length) { return 0; }
@@ -371,6 +424,22 @@ namespace Yewnyx.Spatial {
             }
         }
 
+        // The count a brick of a tree gives back for one of its cells.
+        internal static byte CountIn(in WallTree tree, int brick, int cell) => _kept(tree.Bricks.Slice(brick * BrickBytes, BrickBytes), cell, tree.Cap);
+
+        // The four bits of each cell of a brick of a tree, a byte a cell.
+        internal static void LevelsIn(in WallTree tree, int brick, Span<byte> levels) {
+            var kept = tree.Bricks.Slice(brick * BrickBytes, BrickBytes);
+            for (var i = 0; i < BrickBytes; i++) {
+                levels[2 * i] = (byte)(kept[i] & 15);
+                levels[2 * i + 1] = (byte)(kept[i] >> 4);
+            }
+        }
+
+        // The least four bits that read back as a count or more: 16 where none does. A cell's
+        // count is that much or more exactly when its four bits are this much or more.
+        internal static byte LevelFor(byte need, byte cap) => need == 0 ? (byte)0 : (byte)Math.Min(16, (Steps * need - (Steps - 1) + cap - 1) / cap);
+
         // The count a brick gives back for one of its cells: the least count that is kept as the
         // cell's four bits. The cap is kept as itself, and so is 0.
         private static byte _kept(ReadOnlySpan<byte> brick, int cell, byte cap) {
@@ -378,8 +447,81 @@ namespace Yewnyx.Spatial {
             return (byte)((level * cap + Steps - 1) / Steps);
         }
 
+        // The cells of a brick that lie in its first and last layers along x and along y. A cell's
+        // bit is its place in the brick: along x, then y, then z.
+        private const ulong X0 = 0x1111111111111111UL, X3 = 0x8888888888888888UL, Y0 = 0x000F000F000F000FUL, Y3 = 0xF000F000F000F000UL;
+
+        // The cells of a brick that hold a count or more, as a bit a cell.
+        internal static ulong CellsAt(in WallTree tree, int brick, byte need) {
+            var kept = tree.Bricks.Slice(brick * BrickBytes, BrickBytes);
+            var level = LevelFor(need, tree.Cap);
+            var cells = 0UL;
+            for (var i = 0; i < BrickBytes; i++) {
+                if ((kept[i] & 15) >= level) { cells |= 1UL << (2 * i); }
+                if ((kept[i] >> 4) >= level) { cells |= 1UL << (2 * i + 1); }
+            }
+            return cells;
+        }
+
+        // Cells of a brick, and with them every open cell that steps through faces, from open cell
+        // to open cell inside the brick, join to one of them. The cells given must be open.
+        internal static ulong Joined(ulong cells, ulong open) {
+            while (true) {
+                var grown = (cells | ((cells << 1) & ~X0) | ((cells >> 1) & ~X3) | ((cells << 4) & ~Y0) | ((cells >> 4) & ~Y3) | (cells << 16) | (cells >> 16)) & open;
+                if (grown == cells) { return cells; }
+                cells = grown;
+            }
+        }
+
+        // Whether cells of a brick have no gap along any line of four: wherever two of them lie
+        // in one line along an axis, the cells between them are among them too. Through cells
+        // that are joined and have no such gap the way from one to another never goes round
+        // anything: it is no longer than along the axes one after another.
+        internal static bool Plain(ulong cells) {
+            const ulong x1 = X0 << 1, x2 = X0 << 2, y1 = Y0 << 4, y2 = Y0 << 8;
+            var below = ((cells << 1) & ~X0) | ((cells << 2) & (x2 | X3)) | ((cells << 3) & X3);
+            var above = ((cells >> 1) & ~X3) | ((cells >> 2) & (X0 | x1)) | ((cells >> 3) & X0);
+            if ((~cells & below & above) != 0UL) { return false; }
+            below = ((cells << 4) & ~Y0) | ((cells << 8) & (y2 | Y3)) | ((cells << 12) & Y3);
+            above = ((cells >> 4) & ~Y3) | ((cells >> 8) & (Y0 | y1)) | ((cells >> 12) & Y0);
+            if ((~cells & below & above) != 0UL) { return false; }
+            below = (cells << 16) | (cells << 32) | (cells << 48);
+            above = (cells >> 16) | (cells >> 32) | (cells >> 48);
+            return (~cells & below & above) == 0UL;
+        }
+
+        // The cells of a brick that touch a cell of it, by a face, an edge or a corner.
+        internal static ulong Around(ulong cell) {
+            var row = cell | ((cell << 1) & ~X0) | ((cell >> 1) & ~X3);
+            var layer = row | ((row << 4) & ~Y0) | ((row >> 4) & ~Y3);
+            return (layer | (layer << 16) | (layer >> 16)) & ~cell;
+        }
+
+        // The cells of one layer of a brick along an axis, as a pattern of sixteen bits: along the
+        // lower of the two other axes first.
+        internal static int Layer(ulong cells, int axis, int layer) {
+            if (axis == 2) { return (int)((cells >> (16 * layer)) & 0xFFFFUL); }
+            var pattern = 0;
+            for (var k = 0; k < 16; k++) {
+                var cell = axis == 0 ? layer + 4 * k : (k & 3) + 4 * layer + 16 * (k >> 2);
+                pattern |= (int)((cells >> cell) & 1UL) << k;
+            }
+            return pattern;
+        }
+
+        // A pattern of sixteen bits as cells of one layer of a brick along an axis.
+        internal static ulong FromLayer(int pattern, int axis, int layer) {
+            if (axis == 2) { return (ulong)pattern << (16 * layer); }
+            var cells = 0UL;
+            for (var k = 0; k < 16; k++) {
+                var cell = axis == 0 ? layer + 4 * k : (k & 3) + 4 * layer + 16 * (k >> 2);
+                cells |= (ulong)((pattern >> k) & 1) << cell;
+            }
+            return cells;
+        }
+
         // How many bits are set. Written out: the older of the two targets has no call for it.
-        private static int _count(ulong bits) {
+        internal static int Count(ulong bits) {
             bits -= (bits >> 1) & 0x5555555555555555UL;
             bits = (bits & 0x3333333333333333UL) + ((bits >> 2) & 0x3333333333333333UL);
             bits = (bits + (bits >> 4)) & 0x0F0F0F0F0F0F0F0FUL;

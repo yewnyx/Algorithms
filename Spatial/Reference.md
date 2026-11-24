@@ -62,6 +62,13 @@ Every rule and limit of the `Yewnyx.Spatial` library, grouped by the type it bel
 - **`NearestOpen` is by straight line,** whatever lies between: the cell can be on the other side of a thin wall.
 - **`NearestOpen` can also be asked for the nearest open cell in the same region as another point.** That cell can still be across a wall when both sides are joined some other way.
 
+### Regions over a tree
+
+- **`SizeClass.TryMake` takes a tree as well as a grid.**
+- **`TreeRegions.FromSeeds` gives the same cells the same region numbers** as `Regions.FromSeeds` over the grid's counts put down as the tree keeps them.
+- **It keeps a byte a brick and a byte an open cube.** A brick whose open cells are not all in one region is kept in full, 68 bytes more.
+- **`TreeRegions.IsOpen` and `TreeRegions.NearestOpen` answer as `Regions`' do.** `NearestOpen` over a tree has no form for the same region.
+
 ## Travel fields
 
 - **A field spreads from its seeds** through the cells of a region array, by steps between cells that share a face.
@@ -88,6 +95,7 @@ A route is the points to go to in turn; the start isn't among them.
 | `Unreachable` | There is no way for a body of that size. |
 | `BufferTooShort` | There is a route with more points than the buffer holds. Its `Count` says how many. |
 | `Refused` | Something given cannot be used. |
+| `SearchFull` | Over a tree only: the search filled its arrays before it ended. |
 
 ### Legs
 
@@ -135,3 +143,13 @@ The way is searched cell by cell, cheapest first by the cells' costs, and then p
 
 - **A search's own arrays take 16 bytes a cell,** and can be used again without clearing, for grids of any size they are long enough for.
 - **The links must be all zero the first time;** every search leaves them so.
+
+### Routes over a tree
+
+- **`TreeRoutes.Find` gives legs of the same two kinds,** proven the same way, and ends as `Routes.Find` does.
+- **It searches places, not cells:** an open cube whole, crossed by one straight cut, and the joined open cells of a brick.
+- **Its arrays are sized to the search, not the grid:** `LinksLength` and `SumsLength` for a number of places, 28 bytes a slot.
+- **A search that fills them ends `SearchFull`.** Give it larger ones.
+- **A tree has no costs,** so every cell costs the same.
+- **`leeway` is 0.25 unless given.**
+- **The way is not the cheapest there is.** Pulled straight, routes come out as long as the grid's on the whole, and up to a quarter longer among shapes set close together.

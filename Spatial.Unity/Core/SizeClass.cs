@@ -58,22 +58,34 @@ namespace Yewnyx.Spatial {
         /// least the map proves, at the middle of four centres in a plane, is
         /// sqrt(cap * cap - s * s / 2).
         /// </remarks>
-        public static bool TryMake(float radius, in WallMap wall, out SizeClass size) {
+        public static bool TryMake(float radius, in WallMap wall, out SizeClass size) => _make(radius, wall.Shape.CellSize, wall.Unit, wall.Cap, out size);
+
+        /// <summary>
+        /// Makes the class of a radius for a wall tree: the class that
+        /// <see cref="TryMake(float, in WallMap, out SizeClass)"/> makes for a map of the same cell
+        /// size, unit and cap, and false where that is. Only those three are read.
+        /// </summary>
+        public static bool TryMake(float radius, in WallTree tree, out SizeClass size) => _make(radius, tree.Shape.CellSize, tree.Unit, tree.Cap, out size);
+
+        private static bool _make(float radius, float cellSize, float mapUnit, byte mapCap, out SizeClass size) {
             size = default;
-            double s = wall.Shape.CellSize, unit = wall.Unit, r = radius;
-            if (!WallDistance.Usable(wall.Unit, wall.Cap) || !(s > 0d) || double.IsInfinity(s) || !(r > 0.5d * s) || double.IsInfinity(r)) { return false; }
+            double s = cellSize, unit = mapUnit, r = radius;
+            if (!WallDistance.Usable(mapUnit, mapCap) || !(s > 0d) || double.IsInfinity(s) || !(r > 0.5d * s) || double.IsInfinity(r)) { return false; }
             double plane = Math.Sqrt(r * r + 0.25d * s * s), space = Math.Sqrt(r * r + 0.5d * s * s);
             var legNeed = Math.Sqrt(r * r + s * s / 64d) + Shapes.Slack;
             // The room at a point is what the cells prove less the slack, so the cap must cover that too.
             var open = Math.Sqrt((legNeed + Shapes.Slack) * (legNeed + Shapes.Slack) + 0.5d * s * s);
             var cap = Math.Ceiling((space > open ? space : open) / unit);
-            if (!(cap <= wall.Cap)) { return false; }
-            size = new SizeClass(radius, (float)Math.Sqrt(r * r - 0.25d * s * s), (float)legNeed, wall.Shape.CellSize, wall.Unit,
+            if (!(cap <= mapCap)) { return false; }
+            size = new SizeClass(radius, (float)Math.Sqrt(r * r - 0.25d * s * s), (float)legNeed, cellSize, mapUnit,
                 (byte)Math.Ceiling(r / unit), (byte)Math.Ceiling(plane / unit), (byte)Math.Ceiling(space / unit), (byte)cap);
             return true;
         }
 
         /// <summary>Whether the class can be used with a map: it was made for the same cell size and unit, and the map's cap is enough.</summary>
         public bool Fits(in WallMap wall) => Cell > 0 && CellSize == wall.Shape.CellSize && Unit == wall.Unit && Cap <= wall.Cap;
+
+        /// <summary>Whether the class can be used with a tree: it was made for the same cell size and unit, and the tree's cap is enough.</summary>
+        public bool Fits(in WallTree tree) => Cell > 0 && CellSize == tree.Shape.CellSize && Unit == tree.Unit && Cap <= tree.Cap;
     }
 }

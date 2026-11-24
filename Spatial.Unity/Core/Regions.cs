@@ -39,7 +39,7 @@ namespace Yewnyx.Spatial {
         /// <paramref name="region"/> needs one byte per cell and <paramref name="queue"/>
         /// <see cref="QueueLength"/> ints.
         /// Returns false if the map cannot be used, the class does not fit it (see
-        /// <see cref="SizeClass.Fits"/>), a buffer is too short, the cost array is neither empty nor
+        /// <see cref="SizeClass.Fits(in WallMap)"/>), a buffer is too short, the cost array is neither empty nor
         /// one byte per cell, a seed may not be stored (see <see cref="Shapes.Build(ReadOnlySpan{Solid}, ReadOnlySpan{float}, ReadOnlySpan{int}, Span{Box}, Span{BoxNode}, Span{int}, Span{int}, out int)"/>), or the
         /// seeds reach more than <see cref="Most"/> regions. The grid's cells in the region array
         /// are then 0. (If the number of cells is not known, because the map cannot be used, or the
