@@ -15,17 +15,31 @@ namespace Yewnyx.Spatial {
     /// fills the boxes, the nodes and the order. <c>default</c> is a set with no shapes.
     /// </remarks>
     public readonly ref struct ShapeSet {
+        /// <summary>The solids. Shape i is solid i while i is below their number.</summary>
         public readonly ReadOnlySpan<Solid> Solids;
+        /// <summary>The triangles' corner coordinates, three for each corner.</summary>
         public readonly ReadOnlySpan<float> Corners;
+        /// <summary>Three corner numbers for each triangle.</summary>
         public readonly ReadOnlySpan<int> Triangles;
+        /// <summary>The heightfields, which come after the triangles among the shapes.</summary>
         public readonly ReadOnlySpan<HeightField> HeightFields;
+        /// <summary>The blocks of all the heightfields together. Each heightfield's begin at its <see cref="HeightField.FirstBlock"/>.</summary>
         public readonly ReadOnlySpan<uint> HeightBlocks;
+        /// <summary>The kept heights of all the heightfields together. Each heightfield's begin at its <see cref="HeightField.FirstHeight"/>.</summary>
         public readonly ReadOnlySpan<ushort> Heights;
+        /// <summary>The box around each shape: the solids first, then the triangles, then the heightfields.</summary>
         public readonly ReadOnlySpan<Box> Boxes;
+        /// <summary>The nodes of the <see cref="BoxTree"/> over the boxes.</summary>
         public readonly ReadOnlySpan<BoxNode> Nodes;
+        /// <summary>The tree's order: the shape numbers, as the tree's leaves hold them.</summary>
         public readonly ReadOnlySpan<int> Order;
 
-        /// <summary>A set with no heightfields.</summary>
+        /// <summary>Views spans as a set with no heightfields. Nothing is copied or checked: <see cref="Count"/> says whether they belong together.</summary>
+        /// <param name="solids">The solids.</param>
+        /// <param name="corners">The triangles' corner coordinates, three for each corner.</param>
+        /// <param name="triangles">Three corner numbers for each triangle.</param>
+        /// <param name="boxes">The box around each shape: the solids first, then the triangles.</param>
+        /// <param name="order">The tree's order, as the build gave it.</param>
         /// <param name="nodes">Cut to the node count that <see cref="Shapes.Build(ReadOnlySpan{Solid}, ReadOnlySpan{float}, ReadOnlySpan{int}, Span{Box}, Span{BoxNode}, Span{int}, Span{int}, out int)"/> gave.</param>
         public ShapeSet(ReadOnlySpan<Solid> solids, ReadOnlySpan<float> corners, ReadOnlySpan<int> triangles,
             ReadOnlySpan<Box> boxes, ReadOnlySpan<BoxNode> nodes, ReadOnlySpan<int> order) {
@@ -34,6 +48,15 @@ namespace Yewnyx.Spatial {
             Boxes = boxes; Nodes = nodes; Order = order;
         }
 
+        /// <summary>Views spans as a set with heightfields. Nothing is copied or checked: <see cref="Count"/> says whether they belong together.</summary>
+        /// <param name="solids">The solids.</param>
+        /// <param name="corners">The triangles' corner coordinates, three for each corner.</param>
+        /// <param name="triangles">Three corner numbers for each triangle.</param>
+        /// <param name="heightFields">The heightfields.</param>
+        /// <param name="heightBlocks">The blocks of all the heightfields together.</param>
+        /// <param name="heights">The kept heights of all the heightfields together.</param>
+        /// <param name="boxes">The box around each shape: the solids first, then the triangles, then the heightfields.</param>
+        /// <param name="order">The tree's order, as the build gave it.</param>
         /// <param name="nodes">Cut to the node count that the build gave.</param>
         public ShapeSet(ReadOnlySpan<Solid> solids, ReadOnlySpan<float> corners, ReadOnlySpan<int> triangles,
             ReadOnlySpan<HeightField> heightFields, ReadOnlySpan<uint> heightBlocks, ReadOnlySpan<ushort> heights,

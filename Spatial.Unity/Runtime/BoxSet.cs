@@ -66,8 +66,10 @@ namespace Yewnyx.Spatial {
         private NativeArray<float3> _noPositions;
         private NativeArray<quaternion> _noRotations;
 
+        /// <summary>Makes an empty set. It holds its arrays until it is disposed.</summary>
         /// <param name="capacity">The most items the set can hold.</param>
         /// <param name="extent">The region the items lie in. One outside it costs the tree speed, not correctness.</param>
+        /// <param name="allocator">How the set's arrays are allocated.</param>
         public BoxSet(int capacity, Box extent, Allocator allocator = Allocator.Persistent) {
             if (capacity < 0) { throw new ArgumentOutOfRangeException(nameof(capacity), capacity, "Must be 0 or more."); }
             _capacity = capacity;
@@ -98,6 +100,7 @@ namespace Yewnyx.Spatial {
             _noRotations = new NativeArray<quaternion>(0, allocator);
         }
 
+        /// <summary>The most items the set can hold, fixed when the set is made.</summary>
         public int Capacity => _capacity;
 
         /// <summary>The number of items as of the last Schedule.</summary>
@@ -106,6 +109,7 @@ namespace Yewnyx.Spatial {
         /// <summary>The region the items lie in. A change takes effect at the next rebuild.</summary>
         public Box Extent { get; set; }
 
+        /// <summary>Whether <see cref="Dispose"/> has been called.</summary>
         public bool IsDisposed => _disposed;
 
         /// <summary>How many times a rebuild of the tree has been scheduled.</summary>
@@ -244,6 +248,7 @@ namespace Yewnyx.Spatial {
             }
         }
 
+        /// <summary>Waits for every job of the set, then frees its arrays. Calling it again does nothing.</summary>
         public void Dispose() {
             if (_disposed) { return; }
             _disposed = true;

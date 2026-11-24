@@ -1,8 +1,11 @@
 namespace Yewnyx.Spatial {
     /// <summary>What a <see cref="Solid"/> is.</summary>
     public enum SolidKind {
+        /// <summary>A box at any angle.</summary>
         Box = 0,
+        /// <summary>A sphere.</summary>
         Sphere = 1,
+        /// <summary>A capsule: every point within a radius of a segment.</summary>
         Capsule = 2,
     }
 
@@ -18,6 +21,7 @@ namespace Yewnyx.Spatial {
     /// finite, never reads as farther than it is.
     /// </remarks>
     public readonly struct Solid {
+        /// <summary>What the solid is. It says what the other fields hold.</summary>
         public readonly SolidKind Kind;
         /// <summary>A box's centre, a sphere's centre, or a capsule's first end.</summary>
         public readonly float X, Y, Z;
@@ -54,6 +58,7 @@ namespace Yewnyx.Spatial {
                 1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f,
                 (float)((float)(box.MaxX - box.MinX) * 0.5f), (float)((float)(box.MaxY - box.MinY) * 0.5f), (float)((float)(box.MaxZ - box.MinZ) * 0.5f));
 
+        /// <summary>A sphere from its centre and its radius.</summary>
         public static Solid Sphere(float centreX, float centreY, float centreZ, float radius) =>
             new Solid(SolidKind.Sphere, centreX, centreY, centreZ, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, radius, 0f, 0f);
 

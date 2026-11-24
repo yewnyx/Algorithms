@@ -4,7 +4,7 @@ Small .NET libraries for graph algorithms, diffing, saving object graphs and que
 - **Diffing** (`Algorithms`): `MyersDiff`, `HistogramDiff`, `HeckelDiff` (moved blocks), diffs of items in groups (lines, then the characters in them), `Patch`, and an optional edit budget for all but `HistogramDiff`.
 - **Packables** (`Packables`, `Packables.Newtonsoft`): versioned saving and loading of object graphs, with JSON text.
 - **Collections**: `TwoWayDictionary`, a dictionary with one-to-one pairs that looks up in both directions.
-- **Spatial** (`Spatial`, experimental): the boxes within a radius of a point, and the nearest boxes, by scan or tree. Also the distance to fixed shapes, exact or from a grid. Includes a Unity package.
+- **Spatial** (`Spatial`, experimental): the boxes within a radius of a point, and the nearest boxes, by scan or tree. Also, for geometry that does not move, the room at a point, where a body of a given size fits, travel fields to a goal and routes, on a grid. Includes a Unity package.
 - **Visualizer**: a desktop and browser app that shows the graph algorithms on random graphs, opens Packables documents, diffs two texts you edit (with moved lines and the characters changed inside lines), and finds boxes near a sphere that follows the pointer in 3D, or a circle in a plane, by scan and by tree, and the distance to fixed shapes on a grid. [Try it in the browser](https://yewnyx.github.io/Algorithms/).
 
 ## Graphs
@@ -281,25 +281,33 @@ count = BoxTree.Nearest(tree, order, boxes, 4.5f, 0.5f, 0.5f, 100f, nearest, dis
 - Cut the columns and `order` to the number of boxes, and `nodes` to `nodeCount`. A box outside the `extent` given to `Build` is still found, but queries may be slower.
 - A box that touches the sphere matches. A NaN coordinate leaves that side of the box open (unlimited). A negative or NaN radius, or a NaN point, matches nothing.
 
-### Shapes and wall distance
+### Room, fit and routes on a grid
 
-For callers that ask "how much room is there here?" of geometry that doesn't move, many times a frame.
+For callers that ask "how much room is there here?" of geometry that doesn't move, many times a frame. A grid over the shapes answers four questions, each built on the one before:
 
-- `Shapes` holds what nothing may pass through: boxes at any angle, spheres, capsules, triangles and heightfields, with a `BoxTree` over them.
-- `HeightFields.Pack` makes a heightfield from a grid of heights: ground that is solid from its surface down. It keeps every 8th, 4th or 2nd height where that stays within a bound of the ground, and every height where it does not.
-- `Shapes.Distance` is the exact distance from a point to the nearest shape.
-- `Shapes.Write` stores the shapes as one block of bytes, and `Shapes.TryRead` views a block as shapes again. A tool can read meshes once and ship the block.
-- `WallDistance.MarkLayer` fills a grid with each cell's distance to the nearest shape, one byte a cell.
-- `WallDistance.RoomAt` answers from the grid alone, in constant time: a distance the nearest shape is proven to be at least.
-- `CellCost` is one more byte a cell that the caller writes: 0 is normal, 255 is closed.
-- `SizeClass` is what a body of one radius needs of the grid, and `Regions` floods where it can be: which cells are open for it, and which of them join.
-- `Travel` builds a field of how far each open cell is from a goal, going round what is in the way, and says at any point which way leads down it. Many bodies with no plan of their own can follow one field.
-- `Routes` finds the way for one body from a point to a goal: a few straight legs, each proven clear for the body's full radius.
+| Layer | It answers | Calls | Memory |
+|---|---|---|---|
+| Room | How far is the nearest shape from this point? | `Shapes.Distance` (exact), `WallDistance.RoomAt` (from the grid) | 1 byte a cell |
+| Fit | Can a body of this radius be here? Which cells can it reach? | `SizeClass.TryMake`, `Regions.FromSeeds`, `Regions.IsOpen`, `Regions.NearestOpen` | 1 byte a cell for each body size |
+| Travel field | How far is each cell from a goal, going round what is in the way, and which way is down? | `Travel.Build`, `Travel.Sample` | 2 bytes a cell, for each field |
+| Route | A few straight legs from here to there | `Routes.Find` | 16 bytes a cell, for the search's arrays |
+
+`CellCost` is one more byte a cell that you write: 0 is normal, 255 is closed, and anything else makes a cell cost more to cross. `Shapes` holds what nothing may pass through (boxes at any angle, spheres, capsules, triangles and heightfields, with a `BoxTree` over them), and `Shapes.Write` stores them as one block of bytes, so a tool can read meshes once and ship the block. `HeightFields.Pack` makes a heightfield from a grid of heights: ground that is solid from its surface down. It keeps every 8th, 4th or 2nd height where that stays within a bound of the ground, and every height where it does not.
+
+The samples below run one after another, in a room of 8 x 8 x 4 m.
+
+#### Room at a point
+
+![The wall distance in a slice of the grid, with a probe point](https://raw.githubusercontent.com/yewnyx/Algorithms/spatial/Spatial.Unity/Documentation~/images/grid-wall-distance.png)
+
+*The Visualizer's Spatial grid tab, coloured by wall distance. The dashed circle is the exact distance from the probe to the nearest shape, and the green circle is the room the grid alone proves.*
+
+`Shapes.Distance` is exact. `WallDistance.RoomAt` reads eight cells of the grid and gives a distance the nearest shape is proven to be at least.
 
 ```csharp
 using Yewnyx.Spatial;
 
-// A floor, a pillar and one slanted triangle, in a room of 8 x 8 x 4 m.
+// A floor, a pillar and one slanted triangle.
 Solid[] solids = { Solid.Box(new Box(0, 0, -1, 8, 8, 0)), Solid.Capsule(4, 4, 0, 4, 4, 4, 0.25f) };
 float[] corners = { 0, 6, 0,   8, 6, 0,   4, 8, 3 };
 int[] triangles = { 0, 1, 2 };   // one triangle: corners 0, 1 and 2
@@ -311,25 +319,42 @@ Shapes.TryRead(block.AsSpan(0, length), out ShapeSet shapes);
 
 Shapes.Distance(shapes, 2f, 4f, 1f, limit: 5f, out float exact);
 // exact 1: the floor is nearest
+```
 
-// A grid of half-metre cells over the room, one z layer at a time (layers can run side by side).
+A grid of half-metre cells over the room is filled one z layer at a time (layers can run side by side):
+
+```csharp
 var grid = new GridShape(0, 0, 0, 0.5f, 16, 16, 8);
 var map = new byte[grid.CellCount];
-for (int z = 0; z < grid.CountZ; z++) {
-    WallDistance.MarkLayer(grid, shapes, unit: 1f / 128f, cap: 128, z, map.AsSpan(z * grid.LayerLength, grid.LayerLength));
+for (int layer = 0; layer < grid.CountZ; layer++) {
+    WallDistance.MarkLayer(grid, shapes, unit: 1f / 128f, cap: 128, layer, map.AsSpan(layer * grid.LayerLength, grid.LayerLength));
 }
 
 var wall = new WallMap(grid, 1f / 128f, 128, map);
 WallDistance.RoomAt(wall, 2f, 4f, 1f, out float room);
 // room 0.90: proven from the eight cells around the point, and never more than the exact 1
+```
 
-// Cells whose centre is inside a box cost three times as much to cross.
+#### Cost
+
+A cost of c makes a cell 1 + c / 16 times as far to cross, so 32 is three times. Cells whose centre is inside the solid you fill get the cost.
+
+```csharp
 var cost = new byte[grid.CellCount];
 CellCost.Fill(grid, Solid.Box(new Box(0, 0, 0, 2, 2, 4)), 32, cost);
 CellCost.At(grid, cost, 1f, 1f, 1f, out byte value);
 // value 32
+```
 
-// Where a body of radius 0.6 can be, flooded from a seed in the room.
+#### Where a body fits
+
+![Regions for a small body and a big one](https://raw.githubusercontent.com/yewnyx/Algorithms/spatial/Spatial.Unity/Documentation~/images/grid-regions.png)
+
+*Left: a body of radius 0.6 m, and the whole floor is one region. Right: radius 0.9 m, where the narrow doorway is too tight, so the room beyond it is a second region (blue).*
+
+A size class is what a body of one radius needs of the grid. `Regions.FromSeeds` floods the cells that body can be in, from seeds such as the openings into a room.
+
+```csharp
 SizeClass.TryMake(0.6f, wall, out SizeClass size);
 var region = new byte[grid.CellCount];
 Solid[] seeds = { Solid.Sphere(2, 2, 2, 0.5f) };
@@ -340,7 +365,17 @@ bool open = Regions.IsOpen(grid, region, 2f, 4f, 2f);          // true
 bool low = Regions.IsOpen(grid, region, 2f, 4f, 0.3f);         // false: too near the floor
 Regions.NearestOpen(grid, region, 2f, 4f, 0.1f, reach: 2f, out float x, out float y, out float z);
 // 1.75, 3.75, 0.75: the centre of the nearest open cell, up off the floor
+```
 
+#### A travel field to a goal
+
+![A travel field bending round a costly box on the way to the goal](https://raw.githubusercontent.com/yewnyx/Algorithms/spatial/Spatial.Unity/Documentation~/images/grid-travel.png)
+
+*A travel field with a costly box (orange) dropped in the way. The yellow line is the path the field leads the probe along; in the side view it dips under the box, which is only 3 m tall, because that is cheaper than going round.*
+
+For bodies with no plan of their own: one field per goal, and any number of followers ask it which way to go.
+
+```csharp
 // How far every open cell is from a goal at 6, 6, 2, in centimetres, through the cells that body can be in.
 var field = new ushort[grid.CellCount];
 TravelSeed[] goal = { TravelSeed.FromPoint(Solid.Sphere(6, 6, 2, 0.8f), 6, 6, 2) };
@@ -351,40 +386,39 @@ Travel.Build(grid, region, cost, goal, unit: 0.01f, field, new float[Travel.Time
 Travel.Sample(new TravelField(grid, 0.01f, field), 2f, 2f, 2f, out float wayX, out float wayY, out float wayZ, out float travel);
 // travel 6.91 m: the straight line is 5.66, but the pillar stands in it and the costly corner is beside it
 // way 0.71, 0.71, 0: the direction that leads down the field from here
+```
 
-// The way for that body from 2, 2, 2 to the same goal, in straight legs. The arrays are the search's own.
+#### A route
+
+![A route: the cells' way and the same way pulled straight](https://raw.githubusercontent.com/yewnyx/Algorithms/spatial/Spatial.Unity/Documentation~/images/grid-route.png)
+
+*A route from the white dot (the start) to the pink diamond (the goal). The dotted blue line is the way the search stepped through the cells, with a dot at each cell centre, and the yellow line is the same way pulled straight into a few legs. The last legs, into the diamond, are thin and dashed because the goal lies off both slices: a leg that leaves a slice is drawn flattened onto it.*
+
+The way for one body from a point to a goal, as a few straight legs, each proven clear for the body's full radius. The arrays are the search's own.
+
+```csharp
 var points = new float[3 * 16];
 RouteResult route = Routes.Find(wall, size, shapes, region, cost, 2f, 2f, 2f, 6f, 6f, 2f, straighten: true,
     new float[Routes.SumsLength(grid)], new int[Routes.LinksLength(grid)], new int[Routes.HeapLength(grid)], points);
 // route.Status Found, route.Count 2: to 5.75, 3.75, 2.25, which clears the pillar, and from there to 6, 6, 2
 ```
 
-- Queries take and return points, never cell numbers. `GridShape.TryCentre` gives the centre of the cell that holds a point. To walk an array you own, `IndexOf` and `CentreOf` give a cell's place and centre.
-- A solid's fields can be read back, to draw it for instance. What each holds depends on its `Kind`.
-- A cell's count times the `unit` is never more than the true distance from its centre. A cell at the `cap` is that far or more.
-- A distance is within `Shapes.Slack` (a quarter of a millimetre) of the true one, for shapes within `Shapes.Reach` (1,024 m) of the origin, and for a box or a heightfield whose axes are as exact as single precision gives.
-- A triangle has no inside, so the middle of a closed shell of triangles reads as room. A solid's inside reads 0.
-- A heightfield's surface is never below the ground it was made from, and never more than its `Gap` above it. So room is proven from the ground itself, and what is given up is reach: a body cannot come quite as near the ground as it truly could. An end of a route that rests on the ground may look out from under the surface.
-- The same shapes give the same block on every runtime. A block of another `Shapes.Version` is refused: make it again.
-- A damaged block reads nothing out of bounds, but it can give wrong answers. A solid of an unknown kind, or one that holds a number that isn't finite, never reads as farther than it is.
-- "Open" is said of cells: `IsOpen` at a point says its cell is open, so a body at the cell's centre fits. The point itself can be most of a cell from there. To ask whether a body fits at a point, compare `RoomAt` or `Shapes.Distance` with its radius.
-- A cell is open for a size class when its centre is at least the radius from every shape and its cost isn't closed. Between two open cells that share a face, every point is at least `SizeClass.Guarantee` from every shape.
-- A region is the open cells joined by steps between cells that share a face, never across a diagonal: so a sheet with no thickness is never crossed. A radius of half a cell or less has no guarantee and is refused.
-- A seed reaches from the open cells whose centres are inside it. One with none reaches nothing and is counted, not moved.
-- `NearestOpen` is by straight line, whatever lies between: the cell can be on the other side of a thin wall. It can also be asked for the nearest open cell in the same region as another point, which can still be across a wall when both sides are joined some other way.
-- A field spreads from its seeds through the cells of a region array, by steps between cells that share a face, and a step pays for the cell it enters: a cost of c makes a cell 1 + c / 16 times as far to cross. A seed's cells start at their distance from a point (a goal), or at their distance in front of a plane, which makes the field lead out through an opening. A cell is started only if the straight way from it to the point, or square to the plane, lies through cells the field can enter: so a seed never starts a cell behind a wall, and one across an opening too narrow to pass starts nothing in front of it.
-- Distances are found by fast marching, from a cell's neighbours on all three axes at once. Through open space they are a little over the straight line: about 5 parts in 100 far from the start.
-- A distance of more than 65,534 counts doesn't fit. Such a cell is left unreached and counted, never held at the largest count.
-- `Travel.Sample` blends the distance between the eight cells round a point. Its direction is down that slope where the slope truly leads down, and otherwise towards the lowest cell that shares a face with the nearest reached one, or, if none of those six is lower, the lowest of the 26 round it. At a goal the direction never settles: a follower has arrived when the distance falls below about a cell. It promises nothing about what lies between cells: whatever follows it still needs its own way of not hitting things.
-- A route is the points to go to in turn; the start isn't among them. `RouteResult.Status` says whether there is one: `Found`, `Unreachable`, `BufferTooShort` (its `Count` then says how many points it has) or `Refused`.
-- Every leg of a route is one of two kinds. A straight leg is proven clear along its whole length for the class's full radius: from the grid where the grid can say, and from the shapes where it can't. Where no straight leg is clear, the route steps between the centres of two open cells that touch, which keeps `SizeClass.Guarantee`. With a `ShapeSet` of no shapes a straight leg is proven from the grid alone, which needs more room: for a radius of 0.51 m on half-metre cells, up to 0.64 m from a wall.
-- An end need not be in an open cell. It then takes the nearest open cell whose centre it can see, no farther than 1.73 times the radius and a cell. A start nearer a shape than the radius gives `RouteEnds.FirstLegUnproven`, and the route's first point is that centre. A goal like that gives `StopsShortOfGoal`, and the route ends at one. Ends in two regions are `Unreachable` at once, with nothing searched.
-- The way is searched cell by cell, cheapest first by the cells' costs, and then pulled straight. A straight leg takes the place of part of the way only if it is clear and no worse than that part in two things: it passes through no cell that costs more than the costliest cell of that part, and it costs no more as flown, which is its length in each cell times 1 + cost / 16 for that cell. So a route never costs more as flown than its way left as cells, it goes round an area that its way went round, and it crosses one only where that costs no more than what its way did.
-- No leg passes through a closed cell, or nearer one than half a cell. That is less than a body's radius: to keep a body off something shut by cost alone, close the cells out to the radius beyond it.
-- The straight leg from start to goal is taken with nothing searched where it is sure to cost no more than any way: no way between the centres of the two ends' cells costs less than the straight line between them at the least cost of any cell. `Regions.LeastCost` gives that least, and `Routes.Find` takes it as `leastCost`; with 0, which is always right, the leg is taken at once only where no cell under it has a cost. The search reckons what is left to go at the same least cost, so where every cell costs something it takes up about as many cells as with no costs. Both save work only where the least is above 0: where a whole grid is meant to cost more, give every cell with a region that cost.
-- `Routes.Find` takes a `leeway`: how much more than the cheapest the way may cost, as a share of it. With 0.1 the way costs up to a tenth more, and the search takes up about a tenth as many cells where the grid has no costs or one cost all through. Where much of a room costs more than the rest it saves little unless it is as large as that cost is: what is left to go is reckoned at the least cost of any cell. With 0, the default, the way is the cheapest. The legs are held to the way that was found either way.
-- Pulling straight takes, from each point, the farthest cell of the way that a straight leg reaches. That gives few legs, not always the shortest route: now and then a nearer turning point would have made the next leg shorter.
-- A search's own arrays take 16 bytes a cell, and can be used again without clearing, for grids of any size they are long enough for. The links must be all zero the first time; every search leaves them so.
-- Every call returns false if it is refused (a point outside the grid, spans that don't belong together, a shape that may not be stored). Then read nothing from its outputs. A refused `MarkLayer`, `FromSeeds` or `Build` leaves its array saying nothing: no room, no open cell, no cell reached.
+#### In 3D
 
-`Spatial.Unity/` is a Unity package (`xyz.yewnyx.spatial`) around the same source: a `BoxSet` that recomputes only the boxes that moved, Burst jobs that rebuild the tree and answer batches of queries, a gizmo and a sample scene. See [Spatial.Unity/README.md](Spatial.Unity/README.md).
+![The grid in 3D](https://raw.githubusercontent.com/yewnyx/Algorithms/spatial/Spatial.Unity/Documentation~/images/grid-3d.png)
+
+*The same grid in the Visualizer's 3D view, with the wall distance on two slices.*
+
+The Visualizer's Spatial grid tab shows these layers in slices and in 3D.
+
+#### What to know
+
+- Queries take and return points, never cell numbers. `GridShape.TryCentre` gives the centre of the cell that holds a point.
+- Every call returns false if it is refused (a point outside the grid, spans that don't belong together, a shape that may not be stored). Then read nothing from its outputs.
+- A triangle has no inside, so the middle of a closed shell of triangles reads as room. A solid's inside reads 0.
+- "Open" is said of cells: `IsOpen` at a point says its cell is open. To ask whether a body fits at a point, compare `RoomAt` or `Shapes.Distance` with its radius.
+- A route is the points to go to in turn; the start isn't among them. Read `RouteResult.Status` first.
+
+The rest, one line each and grouped by type, is in [Spatial/Reference.md](Spatial/Reference.md).
+
+`Spatial.Unity/` is a Unity package (`xyz.yewnyx.spatial`) around the same source. For boxes it has a `BoxSet` that recomputes only the boxes that moved, Burst jobs that rebuild the tree and answer batches of queries, a gizmo and a sample scene. For the grid it has a `WallGrid` that is marked, flooded and searched in jobs, `ColliderShapes` to fill it from colliders (a part of a larger level at a time, with terrains as heightfields), travel fields and routes. To install it, download the `.tgz` of a release from the repository's Releases page and add it in Unity with Package Manager's **Add package from tarball**. See [Spatial.Unity/README.md](Spatial.Unity/README.md) and its [reference](Spatial.Unity/Documentation~/Reference.md).

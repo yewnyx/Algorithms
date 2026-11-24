@@ -12,10 +12,14 @@ namespace Yewnyx.Spatial {
     /// <see cref="IndexOf"/> and its centre with <see cref="CentreOf"/>.
     /// </remarks>
     public readonly struct GridShape {
+        /// <summary>The lowest corner of the grid, in its frame.</summary>
         public readonly float OriginX, OriginY, OriginZ;
+        /// <summary>The length of a cell's side. Every cell is a cube.</summary>
         public readonly float CellSize;
+        /// <summary>How many cells lie along x, y and z.</summary>
         public readonly int CountX, CountY, CountZ;
 
+        /// <summary>Makes a shape from its lowest corner, the size of a cell and the number of cells along each axis. Nothing is checked: <see cref="CellCount"/> is 0 if the shape cannot be used.</summary>
         public GridShape(float originX, float originY, float originZ, float cellSize, int countX, int countY, int countZ) {
             OriginX = originX; OriginY = originY; OriginZ = originZ;
             CellSize = cellSize;

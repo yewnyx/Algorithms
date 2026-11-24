@@ -9,8 +9,13 @@ namespace Yewnyx.Spatial {
     /// at its own index + 1 and its right child at First. A child's index is always above its parent's.
     /// </remarks>
     public struct BoxNode {
-        public float MinX, MinY, MinZ, MaxX, MaxY, MaxZ;
+        /// <summary>The lowest corner of the box around everything beneath the node.</summary>
+        public float MinX, MinY, MinZ;
+        /// <summary>The highest corner of the box around everything beneath the node.</summary>
+        public float MaxX, MaxY, MaxZ;
+        /// <summary>For a leaf, where its boxes start in the order. For any other node, the index of its right child.</summary>
         public int First;
+        /// <summary>For a leaf, how many boxes it holds, which is above 0. 0 for any other node.</summary>
         public int Count;
     }
 

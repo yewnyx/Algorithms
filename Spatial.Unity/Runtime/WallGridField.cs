@@ -49,6 +49,7 @@ namespace Yewnyx.Spatial {
         /// <summary>Metres of travel per count.</summary>
         public float Unit { get; }
 
+        /// <summary>Whether <see cref="Dispose"/> has been called.</summary>
         public bool IsDisposed => _disposed;
 
         /// <summary>The handle of the job that builds the field.</summary>
@@ -155,6 +156,7 @@ namespace Yewnyx.Spatial {
             _samples.Complete();
         }
 
+        /// <summary>Waits for the build and for every job of the field's, then frees its arrays. Calling it again does nothing.</summary>
         public void Dispose() {
             if (_disposed) { return; }
             _disposed = true;

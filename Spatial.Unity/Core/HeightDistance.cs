@@ -132,7 +132,11 @@ namespace Yewnyx.Spatial {
         /// from the block's first corner. The place must be inside the block.
         /// </summary>
         /// <param name="kept">The block's kept heights, <paramref name="acrossU"/> to a row.</param>
+        /// <param name="acrossU">How many kept heights there are in a row.</param>
+        /// <param name="acrossW">How many rows of kept heights there are.</param>
         /// <param name="spacing">How many squares lie between one kept height and the next.</param>
+        /// <param name="atU">The place along U, in squares from the block's first corner.</param>
+        /// <param name="atW">The place along W, in squares from the block's first corner.</param>
         public static double Level(ReadOnlySpan<ushort> kept, int acrossU, int acrossW, int spacing, double atU, double atW) {
             double coarseU = atU / spacing, coarseW = atW / spacing;
             int i = coarseU >= 0d ? (coarseU < acrossU - 1 ? (int)coarseU : acrossU - 2) : 0;

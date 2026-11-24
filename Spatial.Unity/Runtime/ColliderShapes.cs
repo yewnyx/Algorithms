@@ -45,7 +45,9 @@ namespace Yewnyx.Spatial {
         public readonly List<int> Triangles = new List<int>();
         /// <summary>Terrains, with their blocks and kept heights in the two lists after (see <see cref="ShapeSet"/>).</summary>
         public readonly List<HeightField> HeightFields = new List<HeightField>();
+        /// <summary>The blocks of all the terrains together. Each terrain's begin at its <see cref="HeightField.FirstBlock"/>.</summary>
         public readonly List<uint> HeightBlocks = new List<uint>();
+        /// <summary>The kept heights of all the terrains together. Each terrain's begin at its <see cref="HeightField.FirstHeight"/>.</summary>
         public readonly List<ushort> Heights = new List<ushort>();
 
         /// <summary>The number of shapes.</summary>
@@ -103,6 +105,7 @@ namespace Yewnyx.Spatial {
         /// Appends each collider's shape to the lists, in the frame that <paramref name="worldToFrame"/> leads to.
         /// A terrain goes in as a box around it.
         /// </summary>
+        /// <param name="colliders">The colliders to take shapes from.</param>
         /// <param name="worldToFrame">
         /// From world space to the grid's frame, such as a root transform's worldToLocalMatrix. It
         /// should turn and move only. If it also scales, sizes follow it; if it shears, a box goes in
@@ -123,6 +126,7 @@ namespace Yewnyx.Spatial {
         /// Appends the shape of each collider that reaches into a box of the frame, and leaves the
         /// others out. A terrain goes in as a heightfield.
         /// </summary>
+        /// <param name="colliders">The colliders to take shapes from.</param>
         /// <param name="worldToFrame">As for the other Collect.</param>
         /// <param name="within">
         /// The box, in the frame. For a grid, give <see cref="Within"/>. Of a mesh that reaches into

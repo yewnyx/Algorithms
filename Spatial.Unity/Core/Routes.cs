@@ -16,6 +16,7 @@ namespace Yewnyx.Spatial {
     /// <summary>What a route does not promise at its two ends.</summary>
     [Flags]
     public enum RouteEnds {
+        /// <summary>Neither of the two below: nothing is left unproven at either end.</summary>
         None = 0,
         /// <summary>
         /// The way from the start to the route's first point is not proven clear: the start is
@@ -32,7 +33,9 @@ namespace Yewnyx.Spatial {
 
     /// <summary>What <see cref="Routes.Find"/> found. <c>default</c> is a search that was refused.</summary>
     public readonly struct RouteResult {
+        /// <summary>How the search ended.</summary>
         public readonly RouteStatus Status;
+        /// <summary>What the route does not promise at its two ends.</summary>
         public readonly RouteEnds Ends;
         /// <summary>
         /// How many points the route has: at least one when there is a route. More than the buffer
