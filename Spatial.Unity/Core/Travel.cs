@@ -49,19 +49,21 @@ namespace Yewnyx.Spatial {
         /// <paramref name="heap"/> <see cref="HeapLength"/>; the last two are only scratch.
         /// Returns false if the shape cannot be used, the unit is not above zero or is more than a
         /// quarter of a cell (a coarser one could give two neighbours the same count), a buffer is
-        /// too short, the cost array is neither empty nor one byte per cell, or a seed may not be
+        /// too short, the cost array is neither empty nor one byte per cell, <paramref name="table"/>
+        /// cannot be used (see <see cref="CellCost.IsTable"/>), or a seed may not be
         /// used: its solid may not be stored (see <see cref="Shapes.Build(ReadOnlySpan{Solid}, ReadOnlySpan{float}, ReadOnlySpan{int}, Span{Box}, Span{BoxNode}, Span{int}, Span{int}, out int)"/>), or its point or its
         /// plane's normal is not finite, or the normal has no length. The grid's cells in
         /// <paramref name="distance"/> are then all <see cref="Unreached"/>.
         /// </remarks>
         public static bool Build(in GridShape shape, ReadOnlySpan<byte> region, ReadOnlySpan<byte> cost, ReadOnlySpan<TravelSeed> seeds, float unit,
-            Span<ushort> distance, Span<float> times, Span<int> heap, out int reached, out int cut) {
+            Span<ushort> distance, Span<float> times, Span<int> heap, out int reached, out int cut, ReadOnlySpan<byte> table = default) {
+            var costs = new Priced(cost, table);
             reached = 0;
             cut = 0;
             var cells = shape.CellCount;
             var heapLength = HeapLength(shape);
             if (cells == 0 || heapLength == 0 || !(unit > 0f) || !(unit <= (float)(shape.CellSize * 0.25f)) || region.Length < cells ||
-                (cost.Length != 0 && cost.Length < cells) || distance.Length < cells || times.Length < cells || heap.Length < heapLength) {
+                (costs.Length != 0 && costs.Length < cells) || !CellCost.IsTable(table) || distance.Length < cells || times.Length < cells || heap.Length < heapLength) {
                 (cells > 0 && distance.Length > cells ? distance.Slice(0, cells) : distance).Fill(Unreached);
                 return false;
             }
@@ -90,10 +92,10 @@ namespace Yewnyx.Spatial {
                         var centreY = shape.Centre(shape.OriginY, cellY);
                         for (var cellX = fromX; cellX <= toX; cellX++) {
                             var cell = shape.Index(cellX, cellY, cellZ);
-                            if (!_passable(region, cost, cell)) { continue; }
+                            if (!_passable(region, costs, cell)) { continue; }
                             var centreX = shape.Centre(shape.OriginX, cellX);
                             if (ShapeDistance.SolidSquared(from.Solid, centreX, centreY, centreZ) != 0d) { continue; }
-                            if (!_clearWay(shape, region, cost, from, centreX, centreY, centreZ)) { continue; }
+                            if (!_clearWay(shape, region, costs, from, centreX, centreY, centreZ)) { continue; }
                             var start = _start(from, centreX, centreY, centreZ);
                             if (start < times[cell]) { held = _lower(times, queue, place, held, cell, start); }
                         }
@@ -106,12 +108,12 @@ namespace Yewnyx.Spatial {
             while (held > 0) {
                 var cell = _pop(times, queue, place, ref held);
                 int cellX = cell % countX, cellY = cell / countX % countY, cellZ = cell / layer;
-                if (cellX > 0) { held = _reach(shape, region, cost, times, queue, place, held, cell - 1, cellX - 1, cellY, cellZ, layer); }
-                if (cellX < countX - 1) { held = _reach(shape, region, cost, times, queue, place, held, cell + 1, cellX + 1, cellY, cellZ, layer); }
-                if (cellY > 0) { held = _reach(shape, region, cost, times, queue, place, held, cell - countX, cellX, cellY - 1, cellZ, layer); }
-                if (cellY < countY - 1) { held = _reach(shape, region, cost, times, queue, place, held, cell + countX, cellX, cellY + 1, cellZ, layer); }
-                if (cellZ > 0) { held = _reach(shape, region, cost, times, queue, place, held, cell - layer, cellX, cellY, cellZ - 1, layer); }
-                if (cellZ < countZ - 1) { held = _reach(shape, region, cost, times, queue, place, held, cell + layer, cellX, cellY, cellZ + 1, layer); }
+                if (cellX > 0) { held = _reach(shape, region, costs, times, queue, place, held, cell - 1, cellX - 1, cellY, cellZ, layer); }
+                if (cellX < countX - 1) { held = _reach(shape, region, costs, times, queue, place, held, cell + 1, cellX + 1, cellY, cellZ, layer); }
+                if (cellY > 0) { held = _reach(shape, region, costs, times, queue, place, held, cell - countX, cellX, cellY - 1, cellZ, layer); }
+                if (cellY < countY - 1) { held = _reach(shape, region, costs, times, queue, place, held, cell + countX, cellX, cellY + 1, cellZ, layer); }
+                if (cellZ > 0) { held = _reach(shape, region, costs, times, queue, place, held, cell - layer, cellX, cellY, cellZ - 1, layer); }
+                if (cellZ < countZ - 1) { held = _reach(shape, region, costs, times, queue, place, held, cell + layer, cellX, cellY, cellZ + 1, layer); }
             }
 
             int stored = 0, over = 0;
@@ -195,7 +197,7 @@ namespace Yewnyx.Spatial {
         // A slope below this, squared, is no slope.
         private const double Flat = 1e-12;
 
-        private static bool _passable(ReadOnlySpan<byte> region, ReadOnlySpan<byte> cost, int cell) =>
+        private static bool _passable(ReadOnlySpan<byte> region, in Priced cost, int cell) =>
             region[cell] != 0 && (cost.Length == 0 || cost[cell] != CellCost.Closed);
 
         private static bool _usable(in TravelSeed seed) {
@@ -221,7 +223,7 @@ namespace Yewnyx.Spatial {
         // quarter of a cell. Before a point the last cell's length is let off, since the point may
         // be nearer a wall than a cell can be; before a plane, only the last quarter of a cell.
         // A cell behind the plane has no way to go and always passes.
-        private static bool _clearWay(in GridShape shape, ReadOnlySpan<byte> region, ReadOnlySpan<byte> cost, in TravelSeed seed, double x, double y, double z) {
+        private static bool _clearWay(in GridShape shape, ReadOnlySpan<byte> region, in Priced cost, in TravelSeed seed, double x, double y, double z) {
             double size = shape.CellSize, toX = seed.X - x, toY = seed.Y - y, toZ = seed.Z - z, letOff = size;
             if (seed.Start == TravelStart.FromPlane) {
                 double nx = seed.NormalX, ny = seed.NormalY, nz = seed.NormalZ;
@@ -245,7 +247,7 @@ namespace Yewnyx.Spatial {
         }
 
         // Works a cell out again from the settled cells beside it, and takes the time if it is lower.
-        private static int _reach(in GridShape shape, ReadOnlySpan<byte> region, ReadOnlySpan<byte> cost, Span<float> times, Span<int> queue, Span<int> place,
+        private static int _reach(in GridShape shape, ReadOnlySpan<byte> region, in Priced cost, Span<float> times, Span<int> queue, Span<int> place,
             int held, int cell, int cellX, int cellY, int cellZ, int layer) {
             if (place[cell] == Settled || !_passable(region, cost, cell)) { return held; }
             // The least settled time on each axis, or infinity where neither neighbour is settled.

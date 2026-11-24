@@ -11,7 +11,7 @@ namespace Yewnyx.Spatial {
     /// proven the same way: a straight leg is clear along its whole length for the class's full
     /// <see cref="SizeClass.Radius"/>, a step between the centres of two open cells that touch
     /// keeps the class's <see cref="SizeClass.Guarantee"/>, and the two ends are the exception,
-    /// as <see cref="RouteEnds"/> says. A tree keeps no costs, so no leg is held to any.
+    /// as <see cref="RouteEnds"/> says. With costs over the tree, legs are held to them as over counts.
     /// The way is found among places, not cells. In open air a place is an open cube whole: the
     /// way comes into it at one cell and cuts straight across to the cell it leaves by, which
     /// every cell of the cube being open proves clear. Near shapes a place is the open cells of
@@ -22,7 +22,7 @@ namespace Yewnyx.Spatial {
     /// to the grid.
     /// What that gives up: the way is not the cheapest there is. The first way found into a
     /// place is the one kept, a way leaves a place only across a face, and the search heads for
-    /// the goal harder than a cheapest way allows (see the leeway of <see cref="Find"/>). Pulled
+    /// the goal harder than a cheapest way allows (see the leeway of <see cref="Find(in WallTree, in SizeClass, in ShapeSet, ReadOnlySpan{byte}, ReadOnlySpan{byte}, float, float, float, float, float, float, bool, Span{float}, Span{int}, Span{float}, byte, float, ReadOnlySpan{byte})"/>). Pulled
     /// straight, the route is as a rule the length of the dense search's: among shapes set
     /// close together, the worst seen is a quarter longer. And a search can fill its arrays
     /// before it finds a way, which it says with <see cref="RouteStatus.SearchFull"/>.
@@ -39,13 +39,13 @@ namespace Yewnyx.Spatial {
         private const int PerBrick = 256, ByFace = 64;
 
         /// <summary>
-        /// The length of the links <see cref="Find"/> needs for a search that may hold so many
+        /// The length of the links <see cref="Find(in WallTree, in SizeClass, in ShapeSet, ReadOnlySpan{byte}, ReadOnlySpan{byte}, float, float, float, float, float, float, bool, Span{float}, Span{int}, Span{float}, byte, float, ReadOnlySpan{byte})"/> needs for a search that may hold so many
         /// places, taken up or waiting: five ints a slot, for a number of slots that is a power of
         /// two and a third more than the places. 0 if that is below 1 or too many.
         /// </summary>
         public static int LinksLength(int places) => 5 * _slotsFor(places);
 
-        /// <summary>The length of the sums <see cref="Find"/> needs for a search that may hold so many places: two floats a slot.</summary>
+        /// <summary>The length of the sums <see cref="Find(in WallTree, in SizeClass, in ShapeSet, ReadOnlySpan{byte}, ReadOnlySpan{byte}, float, float, float, float, float, float, bool, Span{float}, Span{int}, Span{float}, byte, float, ReadOnlySpan{byte})"/> needs for a search that may hold so many places: two floats a slot.</summary>
         public static int SumsLength(int places) => 2 * _slotsFor(places);
 
         private static int _slotsFor(int places) {
@@ -77,7 +77,7 @@ namespace Yewnyx.Spatial {
         /// the straight leg are left out, and the points are centres of cells of the way: every
         /// cell it steps through in a brick, and of an open cube the cell it comes in at and the
         /// cell it leaves by.
-        /// <paramref name="region"/> is what <see cref="TreeRegions.FromSeeds"/> made for this
+        /// <paramref name="region"/> is what <see cref="TreeRegions.FromSeeds(in WallTree, in SizeClass, ReadOnlySpan{byte}, ReadOnlySpan{Solid}, Span{byte}, Span{ulong}, Span{int}, out int, out int, out int)"/> made for this
         /// tree and this class. An end in an open cell is in that cell's region. Any other end
         /// takes the nearest open centre it can see, as over a dense map. Ends in two regions, or
         /// an end with no such centre, are <see cref="RouteStatus.Unreachable"/>, and nothing is
@@ -100,12 +100,37 @@ namespace Yewnyx.Spatial {
         /// </remarks>
         public static RouteResult Find(in WallTree tree, in SizeClass size, in ShapeSet shapes, ReadOnlySpan<byte> region,
             float fromX, float fromY, float fromZ, float toX, float toY, float toZ, bool straighten,
-            Span<float> sums, Span<int> links, Span<float> points, float leeway = 0.25f) {
+            Span<float> sums, Span<int> links, Span<float> points, float leeway = 0.25f) =>
+            Find(tree, size, shapes, region, default, fromX, fromY, fromZ, toX, toY, toZ, straighten, sums, links, points, 0, leeway);
+
+        /// <summary>
+        /// The same through costs over the tree (see <see cref="TreeCosts"/>), priced for one kind of
+        /// agent by <paramref name="table"/> if one is given (see <see cref="CellCost.IsTable"/>).
+        /// </summary>
+        /// <remarks>
+        /// A step pays for the leaf it enters, as over counts it pays for the cell, and the way inside a
+        /// place for the place's leaf. No way enters a leaf the table closes, and no leg passes through
+        /// one. A leg takes the place of part of the way only where no leaf it passes through costs more
+        /// than the costliest of that part. The straight leg from start to goal is taken with nothing
+        /// searched only where every leaf under it costs no more than <paramref name="leastCost"/>, which
+        /// is what <see cref="CellCost.Least"/> gives for the leaves reached (0 is always right).
+        /// As over counts, a start in a leaf the costs close is routed out of it where its cell is beside
+        /// an open cell whose leaf they do not close, and is unreachable where it is not; a goal in one
+        /// is unreachable.
+        /// <paramref name="cost"/> may be empty, meaning every leaf is normal whatever the table. The
+        /// status is also <see cref="RouteStatus.Refused"/> if <paramref name="cost"/> is neither empty
+        /// nor <see cref="TreeCosts.LayerLength"/> bytes, or the table cannot be used.
+        /// </remarks>
+        public static RouteResult Find(in WallTree tree, in SizeClass size, in ShapeSet shapes, ReadOnlySpan<byte> region, ReadOnlySpan<byte> cost,
+            float fromX, float fromY, float fromZ, float toX, float toY, float toZ, bool straighten,
+            Span<float> sums, Span<int> links, Span<float> points, byte leastCost, float leeway, ReadOnlySpan<byte> table = default) {
+            var costs = new Priced(cost, table);
             var count = 0;
             var ends = RouteEnds.None;
             var shape = tree.Shape;
             var slots = _slotsOf(links.Length, sums.Length);
-            if (!tree.IsValid || !size.Fits(tree) || slots == 0 || shapes.Count < 0 || !TreeRegions.TryView(tree, region, out var view)) { return default; }
+            if (!tree.IsValid || !size.Fits(tree) || slots == 0 || shapes.Count < 0 || !TreeRegions.TryView(tree, region, out var view) ||
+                (cost.Length != 0 && cost.Length != TreeCosts.LayerLength(tree)) || !CellCost.IsTable(table)) { return default; }
             // Every place has a number: the bricks' first, then the open cubes, then the goal.
             long firstCube = (long)tree.Bricks.Length / WallTrees.BrickBytes * PerBrick, goalPlace = firstCube + WallTrees.OpenCubes(tree);
             if (goalPlace >= int.MaxValue) { return default; }
@@ -118,7 +143,7 @@ namespace Yewnyx.Spatial {
                 !_end(tree, shapes, region, view, toX, toY, toZ, reach, out var goal, out var goalRegion) || startRegion != goalRegion) {
                 return new RouteResult(RouteStatus.Unreachable, RouteEnds.None, 0, 0, 0f);
             }
-            if (straighten && Legs.Clear(tree, shapes, size.Radius, size.LegNeed, fromX, fromY, fromZ, toX, toY, toZ)) {
+            if (straighten && _clear(tree, shapes, size, costs, leastCost, double.PositiveInfinity, fromX, fromY, fromZ, toX, toY, toZ)) {
                 _add(points, ref count, toX, toY, toZ);
                 return new RouteResult(_fits(points, count), ends, count, 0, 0f);
             }
@@ -138,11 +163,12 @@ namespace Yewnyx.Spatial {
                 Spent = sums.Slice(0, slots), Rank = sums.Slice(slots, slots),
                 Block = block, Leaves = leaves, Sides = sides, Near = near, Back = back,
                 Slots = slots, Shift = shift, Most = slots / 4 * 3,
-                Bricks = tree.Bricks.Length / WallTrees.BrickBytes, FirstCube = (int)firstCube, GoalPlace = (int)goalPlace,
+                Bricks = tree.Bricks.Length / WallTrees.BrickBytes, FirstCube = (int)firstCube, GoalPlace = (int)goalPlace, Costs = costs,
                 CountX = countX, CountY = countY, CountZ = shape.CountZ, Layer = layer,
                 BlocksX = (countX + 3) >> 2, BlocksY = (countY + 3) >> 2,
                 GoalX = goal % countX, GoalY = goal / countX % countY, GoalZ = goal / layer, CellSize = shape.CellSize,
-                Ahead = (1d + leeway) * shape.CellSize,
+                // What is left to go is reckoned at the least a step can cost.
+                Ahead = leastCost == 0 ? (1d + leeway) * shape.CellSize : (1d + leeway) * shape.CellSize * (1d + leastCost / 16d),
             };
             search.Keys.Clear();
             var goalSlot = search.Run(start);
@@ -158,14 +184,14 @@ namespace Yewnyx.Spatial {
             float atX, atY, atZ;
             if (!straighten) {
                 _centre(shape, way[steps - 1], out atX, out atY, out atZ);
-                if (!Legs.Clear(tree, shapes, size.Radius, size.LegNeed, fromX, fromY, fromZ, atX, atY, atZ)) { ends |= RouteEnds.FirstLegUnproven; }
+                if (!_clear(tree, shapes, size, costs, Open, double.PositiveInfinity, fromX, fromY, fromZ, atX, atY, atZ)) { ends |= RouteEnds.FirstLegUnproven; }
                 for (var j = steps - 1; j >= 0; j--) {
                     _centre(shape, way[j], out atX, out atY, out atZ);
                     _add(points, ref count, atX, atY, atZ);
                 }
                 if (atX == toX && atY == toY && atZ == toZ) {
                     // The goal is the last centre.
-                } else if (Legs.Clear(tree, shapes, size.Radius, size.LegNeed, atX, atY, atZ, toX, toY, toZ)) {
+                } else if (_clear(tree, shapes, size, costs, Open, double.PositiveInfinity, atX, atY, atZ, toX, toY, toZ)) {
                     _add(points, ref count, toX, toY, toZ);
                 } else {
                     ends |= RouteEnds.StopsShortOfGoal;
@@ -174,11 +200,17 @@ namespace Yewnyx.Spatial {
             }
 
             // The first leg: straight from the start to the farthest cell of the way it is clear to.
-            var index = _farthest(tree, shapes, size, way, steps, fromX, fromY, fromZ);
+            // With costs, for each cell of the way: the costliest leaf of the way from the point pulled from to it, and what
+            // that part of the way costs. The search's arrays are done with: the links before the way, and the sums.
+            Span<int> high = links.Slice(0, 2 * slots);
+            Span<float> worth = sums;
+            _centre(shape, way[steps - 1], out atX, out atY, out atZ);
+            _spans(tree, costs, way, high, worth, steps - 1, _flown(tree, costs, fromX, fromY, fromZ, atX, atY, atZ));
+            var index = _farthest(tree, shapes, size, costs, way, steps, high, worth, fromX, fromY, fromZ);
             // Not one of those tried: every cell is, before the leg is said to be unproven.
             for (var j = 0; index < 0 && j < steps; j++) {
                 _centre(shape, way[j], out atX, out atY, out atZ);
-                if (Legs.Clear(tree, shapes, size.Radius, size.LegNeed, fromX, fromY, fromZ, atX, atY, atZ)) { index = j; }
+                if (_clear(tree, shapes, size, costs, costs.Length == 0 ? Open : high[j], costs.Length == 0 ? double.PositiveInfinity : worth[j] * Spare, fromX, fromY, fromZ, atX, atY, atZ)) { index = j; }
             }
             if (index < 0) {
                 index = steps - 1;
@@ -191,7 +223,11 @@ namespace Yewnyx.Spatial {
             while (true) {
                 // A goal that is the centre reached is the route's last point already.
                 if (atX == toX && atY == toY && atZ == toZ) { break; }
-                if (Legs.Clear(tree, shapes, size.Radius, size.LegNeed, atX, atY, atZ, toX, toY, toZ)) {
+                // The rest of the way, from this cell to the goal.
+                _spans(tree, costs, way, high, worth, index, 0d);
+                _centre(shape, way[0], out var lastX, out var lastY, out var lastZ);
+                var rest = costs.Length == 0 ? double.PositiveInfinity : (worth[0] + _flown(tree, costs, lastX, lastY, lastZ, toX, toY, toZ)) * Spare;
+                if (_clear(tree, shapes, size, costs, costs.Length == 0 ? Open : high[0], rest, atX, atY, atZ, toX, toY, toZ)) {
                     _add(points, ref count, toX, toY, toZ);
                     break;
                 }
@@ -201,7 +237,7 @@ namespace Yewnyx.Spatial {
                 }
                 // The farthest cell of the way that a straight leg is clear to, or else the next
                 // one: a step, or a cut across one open cube.
-                var next = _farthest(tree, shapes, size, way, index - 1, atX, atY, atZ);
+                var next = _farthest(tree, shapes, size, costs, way, index - 1, high, worth, atX, atY, atZ);
                 index = next < 0 ? index - 1 : next;
                 _centre(shape, way[index], out atX, out atY, out atZ);
                 _add(points, ref count, atX, atY, atZ);
@@ -221,24 +257,80 @@ namespace Yewnyx.Spatial {
         // fourth from the far end, then the three beyond the first of those that is clear, and
         // failing all of those the three nearest. A cell not tried can only make the route a
         // point longer, never unsafe.
-        private static int _farthest(in WallTree tree, in ShapeSet shapes, in SizeClass size, ReadOnlySpan<int> way, int count, float x, float y, float z) {
+        // With costs, a leg to way[j] takes the place of the way from the point pulled from to there: it may pass
+        // through no leaf that costs more than the costliest of that part, and cost no more as flown (what
+        // _spans filled high and worth with).
+        private static int _farthest(in WallTree tree, in ShapeSet shapes, in SizeClass size, in Priced costs, ReadOnlySpan<int> way, int count, ReadOnlySpan<int> high, ReadOnlySpan<float> worth, float x, float y, float z) {
             var shape = tree.Shape;
             for (var j = 0; j < count; j += Stride) {
                 _centre(shape, way[j], out var atX, out var atY, out var atZ);
-                if (!Legs.Clear(tree, shapes, size.Radius, size.LegNeed, x, y, z, atX, atY, atZ)) { continue; }
+                if (!_clear(tree, shapes, size, costs, costs.Length == 0 ? Open : high[j], costs.Length == 0 ? double.PositiveInfinity : worth[j] * Spare, x, y, z, atX, atY, atZ)) { continue; }
                 for (var k = j - Stride + 1; k < j; k++) {
                     if (k < 0) { continue; }
                     _centre(shape, way[k], out atX, out atY, out atZ);
-                    if (Legs.Clear(tree, shapes, size.Radius, size.LegNeed, x, y, z, atX, atY, atZ)) { return k; }
+                    if (_clear(tree, shapes, size, costs, costs.Length == 0 ? Open : high[k], costs.Length == 0 ? double.PositiveInfinity : worth[k] * Spare, x, y, z, atX, atY, atZ)) { return k; }
                 }
                 return j;
             }
             for (var j = count - Stride + 1; j < count; j++) {
                 if (j < 0 || j % Stride == 0) { continue; }
                 _centre(shape, way[j], out var atX, out var atY, out var atZ);
-                if (Legs.Clear(tree, shapes, size.Radius, size.LegNeed, x, y, z, atX, atY, atZ)) { return j; }
+                if (_clear(tree, shapes, size, costs, costs.Length == 0 ? Open : high[j], costs.Length == 0 ? double.PositiveInfinity : worth[j] * Spare, x, y, z, atX, atY, atZ)) { return j; }
             }
             return -1;
+        }
+
+        // Any cost but closed.
+        private const int Open = CellCost.Closed - 1;
+
+        // What a leg may cost as flown, as a share of the way it replaces: a hair over all of it, for rounding.
+        private const double Spare = 1.0001d;
+
+        // Whether a leg is clear, and with costs passes through no leaf that is closed or costs more than most,
+        // and costs no more than spend as flown.
+        private static bool _clear(in WallTree tree, in ShapeSet shapes, in SizeClass size, in Priced costs, int most, double spend,
+            double ax, double ay, double az, double bx, double by, double bz) {
+            if (costs.Length == 0) { return Legs.Clear(tree, shapes, size.Radius, size.LegNeed, ax, ay, az, bx, by, bz); }
+            return Legs.Flown(tree, costs, most, ax, ay, az, bx, by, bz, out var flown) && flown <= spend && !Legs.NearClosed(tree, costs, ax, ay, az, bx, by, bz) &&
+                Legs.Clear(tree, shapes, size.Radius, size.LegNeed, ax, ay, az, bx, by, bz);
+        }
+
+        // From the cell of the way at from down to the goal's: the costliest leaf so far, and what the way costs so
+        // far as flown, each step walked through the leaves it crosses as a leg is, from what it cost to reach that cell.
+        private static void _spans(in WallTree tree, in Priced costs, ReadOnlySpan<int> way, Span<int> high, Span<float> worth, int from, double start) {
+            if (costs.Length == 0) { return; }
+            var shape = tree.Shape;
+            var most = _costOf(tree, costs, way[from]);
+            var spent = start;
+            high[from] = most;
+            worth[from] = (float)spent;
+            for (var j = from - 1; j >= 0; j--) {
+                var here = _costOf(tree, costs, way[j]);
+                if (here > most) { most = here; }
+                _centre(shape, way[j + 1], out var ax, out var ay, out var az);
+                _centre(shape, way[j], out var bx, out var by, out var bz);
+                spent += _flown(tree, costs, ax, ay, az, bx, by, bz);
+                high[j] = most;
+                worth[j] = (float)spent;
+            }
+        }
+
+        // What a straight line costs as flown through the leaves it crosses, closed ones included.
+        private static double _flown(in WallTree tree, in Priced costs, double ax, double ay, double az, double bx, double by, double bz) {
+            Legs.Flown(tree, costs, CellCost.Closed, ax, ay, az, bx, by, bz, out var flown);
+            return flown;
+        }
+
+        private static double _length(double ax, double ay, double az, double bx, double by, double bz) {
+            double dx = bx - ax, dy = by - ay, dz = bz - az;
+            return Math.Sqrt(dx * dx + dy * dy + dz * dz);
+        }
+
+        // What the leaf that holds a cell of the grid costs.
+        private static int _costOf(in WallTree tree, in Priced costs, int cell) {
+            var shape = tree.Shape;
+            var leaf = WallTrees.LeafOf(tree, cell % shape.CountX, cell / shape.CountX % shape.CountY, cell / (shape.CountX * shape.CountY), out _);
+            return (uint)leaf < (uint)costs.Length ? costs[leaf] : 0;
         }
 
         private static void _add(Span<float> points, ref int count, float x, float y, float z) {
@@ -350,21 +442,26 @@ namespace Yewnyx.Spatial {
             // The same as the least four bits that read back as them.
             public byte NeedLevel, PlaneLevel, SpaceLevel;
             public bool Full;
+            // A byte a leaf as the kind of agent sees them, or empty.
+            public Priced Costs;
 
             // From the start's cell until the goal is taken up. Returns the goal's slot, or -1
             // where there is no way or the table is full.
             public int Run(int start) {
                 int x = start % CountX, y = start / CountX % CountY, z = start / Layer;
-                var leaf = _leaf(x, y, z, out _);
-                if (leaf < 0) { return -1; }
-                var place = FirstCube + (leaf - Bricks);
-                if (leaf < Bricks) {
-                    var open = WallTrees.CellsAt(Tree, leaf, Need);
-                    var cell = 1UL << ((x & 3) | ((y & 3) << 2) | ((z & 3) << 4));
-                    if ((open & cell) == 0UL) { return -1; }
-                    place = leaf * PerBrick + _lowest(WallTrees.Joined(cell, open));
+                if (!_placeOf(x, y, z, out var place, out var leaf)) { return -1; }
+                if (!_shut(leaf)) {
+                    if (!_offer(place, x, y, z, 0d, -1)) { return -1; }
+                } else {
+                    // As over counts, a start in a leaf the costs close is routed out of it by a step
+                    // from its cell to an open cell beside it whose leaf they do not close.
+                    for (var face = 0; face < 6; face++) {
+                        int nx = x + (face == 0 ? -1 : face == 1 ? 1 : 0), ny = y + (face == 2 ? -1 : face == 3 ? 1 : 0), nz = z + (face == 4 ? -1 : face == 5 ? 1 : 0);
+                        if ((uint)nx >= (uint)CountX || (uint)ny >= (uint)CountY || (uint)nz >= (uint)CountZ) { continue; }
+                        if (!_placeOf(nx, ny, nz, out var next, out var nextLeaf) || _shut(nextLeaf)) { continue; }
+                        if (!_offer(next, nx, ny, nz, CellSize * _times(nextLeaf), -1)) { return -1; }
+                    }
                 }
-                if (!_offer(place, x, y, z, 0d, -1)) { return -1; }
                 while (Waiting > 0) {
                     var slot = _pop();
                     place = Keys[slot] - 1;
@@ -374,6 +471,20 @@ namespace Yewnyx.Spatial {
                     if (!(place < FirstCube ? _leave(slot, place / PerBrick, x, y, z) : _cross(slot, x, y, z))) { return -1; }
                 }
                 return -1;
+            }
+
+            // The place that holds an open cell, and its leaf; false if the cell is not open.
+            private bool _placeOf(int x, int y, int z, out int place, out int leaf) {
+                place = -1;
+                leaf = _leaf(x, y, z, out _);
+                if (leaf < 0) { return false; }
+                place = FirstCube + (leaf - Bricks);
+                if (leaf >= Bricks) { return true; }
+                var open = WallTrees.CellsAt(Tree, leaf, Need);
+                var cell = 1UL << ((x & 3) | ((y & 3) << 2) | ((z & 3) << 4));
+                if ((open & cell) == 0UL) { return false; }
+                place = leaf * PerBrick + _lowest(WallTrees.Joined(cell, open));
+                return true;
             }
 
             // The cells of the way, the goal's first, written to way, and what the way costs.
@@ -396,14 +507,16 @@ namespace Yewnyx.Spatial {
                     int originX = x & ~(side - 1), originY = y & ~(side - 1), originZ = z & ~(side - 1);
                     int leaveX = _clamp(next % CountX, originX, side), leaveY = _clamp(next / CountX % CountY, originY, side), leaveZ = _clamp(next / Layer, originZ, side);
                     var leave = leaveX + leaveY * CountX + leaveZ * Layer;
+                    // Inside the place at its leaf's cost; the step out of it at the cost of the leaf it enters.
+                    var own = _leaf(x, y, z, out _);
                     if (leave != next) {
-                        length += _between(leave, next);
+                        length += _between(leave, next) * _times(_leaf(next % CountX, next / CountX % CountY, next / Layer, out _));
                         way[steps++] = leave;
                     }
                     if (cell == leave) { continue; }
                     if (place >= FirstCube) {
                         // An open cube: one cut, from the cell it was come into at.
-                        length += _between(cell, leave);
+                        length += _between(cell, leave) * _times(own);
                         way[steps++] = cell;
                         continue;
                     }
@@ -412,7 +525,7 @@ namespace Yewnyx.Spatial {
                     int first = (x & 3) | ((y & 3) << 2) | ((z & 3) << 4), last = (leaveX & 3) | ((leaveY & 3) << 2) | ((leaveZ & 3) << 4);
                     _through(place / PerBrick, first, last);
                     if (float.IsInfinity(Near[last])) { return 0; }
-                    length += Near[last];
+                    length += Near[last] * _times(own);
                     for (var at = last; at != first;) {
                         at = Back[at];
                         way[steps++] = originX + (at & 3) + (originY + ((at >> 2) & 3)) * CountX + (originZ + (at >> 4)) * Layer;
@@ -488,6 +601,10 @@ namespace Yewnyx.Spatial {
                 return Math.Sqrt((double)dx * dx + (double)dy * dy + (double)dz * dz);
             }
 
+            // How many times its length a step in a leaf counts for, and whether the leaf is shut to this kind of agent.
+            private double _times(int leaf) => Costs.Length == 0 ? 1d : 1d + Costs[leaf] / 16d;
+            private bool _shut(int leaf) => Costs.Length != 0 && Costs[leaf] == CellCost.Closed;
+
             // The leaf that holds a cell and how many cells it has along a side: -1 and 0 for a
             // cell in a cube of zeros or not in the grid.
             private int _leaf(int x, int y, int z, out int side) {
@@ -524,14 +641,14 @@ namespace Yewnyx.Spatial {
                 if ((GoalX & ~3) == originX && (GoalY & ~3) == originY && (GoalZ & ~3) == originZ) {
                     var goal = (GoalX & 3) | ((GoalY & 3) << 2) | ((GoalZ & 3) << 4);
                     if (((cells >> goal) & 1UL) != 0UL &&
-                        !_offer(GoalPlace, GoalX, GoalY, GoalZ, Spent[slot] + CellSize * (exact ? Near[goal] : _cut(x, y, z, GoalX, GoalY, GoalZ)), slot)) { return false; }
+                        !_offer(GoalPlace, GoalX, GoalY, GoalZ, Spent[slot] + CellSize * (exact ? Near[goal] : _cut(x, y, z, GoalX, GoalY, GoalZ)) * _times(brick), slot)) { return false; }
                 }
                 for (var face = 0; face < 6; face++) {
                     int axis = face >> 1, layer = (face & 1) == 0 ? 0 : 3;
                     var pattern = WallTrees.Layer(cells, axis, layer);
                     if (pattern == 0) { continue; }
                     var origin = axis == 0 ? originX : axis == 1 ? originY : originZ;
-                    if (!_onto(slot, exact, x, y, z, axis, origin + layer, layer == 0 ? origin - 1 : origin + 4, axis == 0 ? originY : originX, axis == 2 ? originY : originZ, pattern)) { return false; }
+                    if (!_onto(slot, exact, _times(brick), x, y, z, axis, origin + layer, layer == 0 ? origin - 1 : origin + 4, axis == 0 ? originY : originX, axis == 2 ? originY : originZ, pattern)) { return false; }
                 }
                 return true;
             }
@@ -539,10 +656,11 @@ namespace Yewnyx.Spatial {
             // From an open cube, come into at a cell: straight to the goal if it is in the cube,
             // and across each face, a square of four cells by four at a time.
             private bool _cross(int slot, int x, int y, int z) {
-                _leaf(x, y, z, out var side);
+                var ownLeaf = _leaf(x, y, z, out var side);
+                var times = _times(ownLeaf);
                 int originX = x & ~(side - 1), originY = y & ~(side - 1), originZ = z & ~(side - 1);
                 if ((GoalX & ~(side - 1)) == originX && (GoalY & ~(side - 1)) == originY && (GoalZ & ~(side - 1)) == originZ) {
-                    return _offer(GoalPlace, GoalX, GoalY, GoalZ, Spent[slot] + CellSize * _cut(x, y, z, GoalX, GoalY, GoalZ), slot);
+                    return _offer(GoalPlace, GoalX, GoalY, GoalZ, Spent[slot] + CellSize * _cut(x, y, z, GoalX, GoalY, GoalZ) * times, slot);
                 }
                 for (var face = 0; face < 6; face++) {
                     var axis = face >> 1;
@@ -556,7 +674,7 @@ namespace Yewnyx.Spatial {
                         for (var u = originU; u < originU + side; u += 4) {
                             var leaf = _leaf(_x(axis, across, u, v), _y(axis, across, u, v), _z(axis, across, u, v), out var other);
                             if (leaf < Bricks) {
-                                if (!_onto(slot, false, x, y, z, axis, own, across, u, v, 0xFFFF)) { return false; }
+                                if (!_onto(slot, false, times, x, y, z, axis, own, across, u, v, 0xFFFF)) { return false; }
                                 continue;
                             }
                             // Another open cube: the part of the face the two share is dealt with
@@ -566,10 +684,10 @@ namespace Yewnyx.Spatial {
                             if (fromV < originV) { fromV = originV; }
                             if (toU > originU + side) { toU = originU + side; }
                             if (toV > originV + side) { toV = originV + side; }
-                            if (u != fromU || v != fromV) { continue; }
+                            if (u != fromU || v != fromV || _shut(leaf)) { continue; }
                             int exitU = aimU < fromU ? fromU : aimU > toU - 1 ? toU - 1 : aimU, exitV = aimV < fromV ? fromV : aimV > toV - 1 ? toV - 1 : aimV;
                             if (!_offer(FirstCube + (leaf - Bricks), _x(axis, across, exitU, exitV), _y(axis, across, exitU, exitV), _z(axis, across, exitU, exitV),
-                                    Spent[slot] + CellSize * (_cut(x, y, z, _x(axis, own, exitU, exitV), _y(axis, own, exitU, exitV), _z(axis, own, exitU, exitV)) + 1d), slot)) { return false; }
+                                    Spent[slot] + CellSize * (_cut(x, y, z, _x(axis, own, exitU, exitV), _y(axis, own, exitU, exitV), _z(axis, own, exitU, exitV)) * times + _times(leaf)), slot)) { return false; }
                         }
                     }
                 }
@@ -582,15 +700,16 @@ namespace Yewnyx.Spatial {
             // which of its cells are the place's own. What lies across is one leaf: a cube of
             // zeros, an open cube, or a brick, of which each place that has an open cell beside
             // one of the place's own is offered.
-            private bool _onto(int slot, bool exact, int x, int y, int z, int axis, int own, int across, int fromU, int fromV, int pattern) {
+            private bool _onto(int slot, bool exact, double times, int x, int y, int z, int axis, int own, int across, int fromU, int fromV, int pattern) {
                 if ((uint)across >= (uint)(axis == 0 ? CountX : axis == 1 ? CountY : CountZ)) { return true; }
                 var leaf = _leaf(_x(axis, across, fromU, fromV), _y(axis, across, fromU, fromV), _z(axis, across, fromU, fromV), out _);
-                if (leaf < 0) { return true; }
+                if (leaf < 0 || _shut(leaf)) { return true; }
                 double spent = Spent[slot];
+                var entering = _times(leaf);
                 if (leaf >= Bricks) {
                     var by = _best(exact, x, y, z, axis, own, across, fromU, fromV, pattern, out var reach);
                     int u = fromU + (by & 3), v = fromV + (by >> 2);
-                    return _offer(FirstCube + (leaf - Bricks), _x(axis, across, u, v), _y(axis, across, u, v), _z(axis, across, u, v), spent + CellSize * (reach + 1d), slot);
+                    return _offer(FirstCube + (leaf - Bricks), _x(axis, across, u, v), _y(axis, across, u, v), _z(axis, across, u, v), spent + CellSize * (reach * times + entering), slot);
                 }
                 var open = WallTrees.CellsAt(Tree, leaf, Need);
                 var near = (across & 3) == 0 ? 0 : 3;
@@ -609,7 +728,7 @@ namespace Yewnyx.Spatial {
                         var by = _best(exact, x, y, z, axis, own, across, fromU, fromV, part, out var reach);
                         int u = fromU + (by & 3), v = fromV + (by >> 2);
                         var place = leaf * PerBrick + (plain ? _lowest(joined) : ByFace + 16 * (2 * axis + (near == 0 ? 0 : 1)) + by);
-                        if (!_offer(place, _x(axis, across, u, v), _y(axis, across, u, v), _z(axis, across, u, v), spent + CellSize * (reach + 1d), slot)) { return false; }
+                        if (!_offer(place, _x(axis, across, u, v), _y(axis, across, u, v), _z(axis, across, u, v), spent + CellSize * (reach * times + entering), slot)) { return false; }
                     }
                 }
                 return true;

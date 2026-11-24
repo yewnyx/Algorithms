@@ -339,6 +339,10 @@ WallDistance.RoomAt(wall, 2f, 4f, 1f, out float room);
 
 A cost of c makes a cell 1 + c / 16 times as far to cross, so 32 is three times. Cells whose centre is inside the solid you fill get the cost.
 
+A table of 256 costs, one for each byte, gives each kind of agent its own costs over the same array: the byte can say what a cell is, and the table what that costs. `Routes.Find`, `Travel.Build` and `Regions.LeastCost` take one.
+
+Over a tree, `TreeCosts` keeps the byte for each brick and open cube instead, and the tree's regions, routes and fields take it.
+
 ```csharp
 var cost = new byte[grid.CellCount];
 CellCost.Fill(grid, Solid.Box(new Box(0, 0, 0, 2, 2, 4)), 32, cost);

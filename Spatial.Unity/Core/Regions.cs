@@ -106,16 +106,47 @@ namespace Yewnyx.Spatial {
         /// cell that costs less, which is what <see cref="Routes.Find"/> wants to know.
         /// </summary>
         /// <remarks>
-        /// 0 if <paramref name="cost"/> is empty, no cell has a region, the shape cannot be used
-        /// or an array is shorter than one byte per cell.
+        /// With <paramref name="table"/>, the least the table gives, for the kind of agent it is for:
+        /// for a search now and then. Where many searches are made, keep <see cref="CostsIn"/>'s marks
+        /// and ask <see cref="CellCost.Least"/> for each table, with no pass over the cells.
+        /// 0 if <paramref name="cost"/> is empty, no cell has a region, the shape cannot be used,
+        /// an array is shorter than one byte per cell, or the table cannot be used.
         /// </remarks>
-        public static byte LeastCost(in GridShape shape, ReadOnlySpan<byte> region, ReadOnlySpan<byte> cost) {
+        public static byte LeastCost(in GridShape shape, ReadOnlySpan<byte> region, ReadOnlySpan<byte> cost, ReadOnlySpan<byte> table = default) {
+            return _leastCost(shape, region, cost, table);
+        }
+
+        /// <summary>
+        /// Marks in <paramref name="present"/>, a bit for each of the 256 values, the costs that cells
+        /// with a region hold. <see cref="CellCost.Least"/> then gives any table's least from them, as
+        /// <see cref="LeastCost"/> does, with no pass over the cells.
+        /// </summary>
+        /// <remarks>
+        /// Clears <paramref name="present"/> first. Returns false, with nothing marked, if the shape
+        /// cannot be used, an array is shorter than one byte per cell, or <paramref name="present"/> has
+        /// fewer than 4 elements; with no costs only 0 is marked, where any cell has a region.
+        /// </remarks>
+        public static bool CostsIn(in GridShape shape, ReadOnlySpan<byte> region, ReadOnlySpan<byte> cost, Span<ulong> present) {
+            if (present.Length < 4) { return false; }
+            present.Slice(0, 4).Clear();
             var cells = shape.CellCount;
-            if (cells == 0 || cost.Length < cells || region.Length < cells) { return 0; }
+            if (cells == 0 || region.Length < cells || (cost.Length != 0 && cost.Length < cells)) { return false; }
+            for (var i = 0; i < cells; i++) {
+                if (region[i] == 0) { continue; }
+                int value = cost.Length == 0 ? 0 : cost[i];
+                present[value >> 6] |= 1UL << (value & 63);
+            }
+            return true;
+        }
+
+        private static byte _leastCost(in GridShape shape, ReadOnlySpan<byte> region, ReadOnlySpan<byte> cost, ReadOnlySpan<byte> table) {
+            var cells = shape.CellCount;
+            if (cells == 0 || cost.Length < cells || region.Length < cells || !CellCost.IsTable(table)) { return 0; }
+            var costs = new Priced(cost, table);
             var least = -1;
             for (var i = 0; i < cells; i++) {
-                if (region[i] != 0 && (least < 0 || cost[i] < least)) {
-                    least = cost[i];
+                if (region[i] != 0 && (least < 0 || costs[i] < least)) {
+                    least = costs[i];
                     if (least == 0) { break; }
                 }
             }

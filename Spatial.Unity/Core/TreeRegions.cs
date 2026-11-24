@@ -26,7 +26,7 @@ namespace Yewnyx.Spatial {
         private const byte Kept = 255;
 
         /// <summary>
-        /// The most bytes <see cref="FromSeeds"/> can need for a tree: every brick kept in full.
+        /// The most bytes <see cref="FromSeeds(in WallTree, in SizeClass, ReadOnlySpan{byte}, ReadOnlySpan{Solid}, Span{byte}, Span{ulong}, Span{int}, out int, out int, out int)"/> can need for a tree: every brick kept in full.
         /// What it used is far less as a rule, and it says how much. 0 if the tree cannot be used
         /// or that is more than an int holds.
         /// </summary>
@@ -37,21 +37,21 @@ namespace Yewnyx.Spatial {
             return most <= int.MaxValue ? (int)most : 0;
         }
 
-        /// <summary>The least bytes <see cref="FromSeeds"/> can do with: no brick kept in full. 0 if the tree cannot be used.</summary>
+        /// <summary>The least bytes <see cref="FromSeeds(in WallTree, in SizeClass, ReadOnlySpan{byte}, ReadOnlySpan{Solid}, Span{byte}, Span{ulong}, Span{int}, out int, out int, out int)"/> can do with: no brick kept in full. 0 if the tree cannot be used.</summary>
         public static int LeastLength(in WallTree tree) {
             if (!tree.IsValid) { return 0; }
             var least = Header + (long)(tree.Bricks.Length / WallTrees.BrickBytes) + WallTrees.OpenCubes(tree);
             return least <= int.MaxValue ? (int)least : 0;
         }
 
-        /// <summary>The length of the marks <see cref="FromSeeds"/> needs: a little over one ulong per brick. 0 if the tree cannot be used.</summary>
+        /// <summary>The length of the marks <see cref="FromSeeds(in WallTree, in SizeClass, ReadOnlySpan{byte}, ReadOnlySpan{Solid}, Span{byte}, Span{ulong}, Span{int}, out int, out int, out int)"/> needs: a little over one ulong per brick. 0 if the tree cannot be used.</summary>
         public static int MarksLength(in WallTree tree) {
             if (!tree.IsValid) { return 0; }
             var bricks = tree.Bricks.Length / WallTrees.BrickBytes;
             return bricks + (bricks + 63) / 64;
         }
 
-        /// <summary>The length of the queue <see cref="FromSeeds"/> needs: one int per brick and per open cube. 0 if the tree cannot be used.</summary>
+        /// <summary>The length of the queue <see cref="FromSeeds(in WallTree, in SizeClass, ReadOnlySpan{byte}, ReadOnlySpan{Solid}, Span{byte}, Span{ulong}, Span{int}, out int, out int, out int)"/> needs: one int per brick and per open cube. 0 if the tree cannot be used.</summary>
         public static int QueueLength(in WallTree tree) {
             var least = LeastLength(tree);
             return least > 0 ? least - Header : 0;
@@ -80,14 +80,27 @@ namespace Yewnyx.Spatial {
         /// stored, or the seeds reach more than <see cref="Regions.Most"/> regions.
         /// </remarks>
         public static bool FromSeeds(in WallTree tree, in SizeClass size, ReadOnlySpan<Solid> seeds,
+            Span<byte> region, Span<ulong> marks, Span<int> queue, out int length, out int reached, out int empty) =>
+            FromSeeds(tree, size, default, seeds, region, marks, queue, out length, out reached, out empty);
+
+        /// <summary>
+        /// The same through costs over the tree (see <see cref="TreeCosts"/>): a leaf that holds
+        /// <see cref="CellCost.Closed"/> is closed, all its cells, as a closed cell is over counts.
+        /// </summary>
+        /// <remarks>
+        /// <paramref name="cost"/> may be empty, meaning no leaf is closed. Returns false as the other
+        /// does, and if <paramref name="cost"/> is neither empty nor <see cref="TreeCosts.LayerLength"/> bytes.
+        /// </remarks>
+        public static bool FromSeeds(in WallTree tree, in SizeClass size, ReadOnlySpan<byte> cost, ReadOnlySpan<Solid> seeds,
             Span<byte> region, Span<ulong> marks, Span<int> queue, out int length, out int reached, out int empty) {
             length = 0; reached = 0; empty = 0;
             (region.Length > Header ? region.Slice(0, Header) : region).Clear();
             int least = LeastLength(tree), marksLength = MarksLength(tree);
-            if (least == 0 || !size.Fits(tree) || region.Length < least || marks.Length < marksLength || queue.Length < least - Header) { return false; }
+            if (least == 0 || !size.Fits(tree) || region.Length < least || marks.Length < marksLength || queue.Length < least - Header ||
+                (cost.Length != 0 && cost.Length != least - Header)) { return false; }
             var shape = tree.Shape;
             var work = new Work {
-                Tree = tree, Numbers = region.Slice(Header, least - Header), Records = region.Slice(least), Marks = marks.Slice(0, marksLength), Queue = queue,
+                Tree = tree, Cost = cost, Numbers = region.Slice(Header, least - Header), Records = region.Slice(least), Marks = marks.Slice(0, marksLength), Queue = queue,
                 Bricks = tree.Bricks.Length / WallTrees.BrickBytes, Need = size.Cell,
             };
             work.Numbers.Clear();
@@ -110,7 +123,7 @@ namespace Yewnyx.Spatial {
                         double centreY = shape.Centre(shape.OriginY, cellY);
                         for (var cellX = fromX; cellX <= toX; cellX++) {
                             var leaf = WallTrees.LeafOf(tree, cellX, cellY, cellZ, out var side);
-                            if ((uint)leaf >= (uint)work.Numbers.Length) { continue; }
+                            if ((uint)leaf >= (uint)work.Numbers.Length || work.Shut(leaf)) { continue; }
                             var cell = (cellX & 3) | ((cellY & 3) << 2) | ((cellZ & 3) << 4);
                             if (leaf < work.Bricks && WallTrees.CountIn(tree, leaf, cell) < work.Need) { continue; }
                             if (ShapeDistance.SolidSquared(solid, shape.Centre(shape.OriginX, cellX), centreY, centreZ) != 0d) { continue; }
@@ -258,11 +271,36 @@ namespace Yewnyx.Spatial {
         // Whether a seed reached a leaf: an open cube all through, or some open cells of a brick.
         internal static bool Reached(ReadOnlySpan<byte> region, int leaf) => region[Header + leaf] != 0;
 
+        /// <summary>
+        /// Marks in <paramref name="present"/>, a bit for each of the 256 values, the costs that the
+        /// leaves the regions reached hold, as <see cref="Regions.CostsIn"/> does over counts.
+        /// <see cref="CellCost.Least"/> then gives any table's least from them.
+        /// </summary>
+        /// <remarks>
+        /// Clears <paramref name="present"/> first. Returns false, with nothing marked, if the regions
+        /// are not a flood's of the tree, <paramref name="cost"/> is neither empty nor
+        /// <see cref="TreeCosts.LayerLength"/> bytes, or <paramref name="present"/> has fewer than 4
+        /// elements; with no costs only 0 is marked, where any leaf was reached.
+        /// </remarks>
+        public static bool CostsIn(in WallTree tree, ReadOnlySpan<byte> region, ReadOnlySpan<byte> cost, Span<ulong> present) {
+            if (present.Length < 4) { return false; }
+            present.Slice(0, 4).Clear();
+            if (!TryView(tree, region, out var view) || (cost.Length != 0 && cost.Length != view.Leaves)) { return false; }
+            for (var leaf = 0; leaf < view.Leaves; leaf++) {
+                if (!Reached(region, leaf)) { continue; }
+                int value = cost.Length == 0 ? 0 : cost[leaf];
+                present[value >> 6] |= 1UL << (value & 63);
+            }
+            return true;
+        }
+
         // A flood as it goes. Numbers is a byte a brick and then a byte an open cube. A brick's
         // mark is the cells of it reached so far, or, once the brick is kept in full, which record
         // is its own. After the bricks' marks come the bits that say which bricks wait in the queue.
         private ref struct Work {
             public WallTree Tree;
+            // A byte a leaf, or empty: a leaf that holds Closed is shut, all its cells.
+            public ReadOnlySpan<byte> Cost;
             public Span<byte> Numbers, Records;
             public Span<ulong> Marks;
             public Span<int> Queue;
@@ -339,7 +377,7 @@ namespace Yewnyx.Spatial {
                 if ((uint)leaf >= (uint)Numbers.Length) { return true; }
                 var at = x + (y + z * shape.CountY) * shape.CountX;
                 if (leaf >= Bricks) {
-                    if (Numbers[leaf] == 0) { _cube(leaf, side, number, at); }
+                    if (Numbers[leaf] == 0 && !Shut(leaf)) { _cube(leaf, side, number, at); }
                     return true;
                 }
                 var entered = WallTrees.FromLayer(pattern, axis, layer) & _open(leaf) & ~_reached(leaf);
@@ -393,7 +431,9 @@ namespace Yewnyx.Spatial {
             }
 
             // The cells of a brick that are open for the class.
-            private ulong _open(int brick) => WallTrees.CellsAt(Tree, brick, Need);
+            private ulong _open(int brick) => Shut(brick) ? 0UL : WallTrees.CellsAt(Tree, brick, Need);
+
+            public bool Shut(int leaf) => Cost.Length != 0 && Cost[leaf] == CellCost.Closed;
 
             // The cells of a brick that have been reached, by any region.
             private ulong _reached(int brick) {
