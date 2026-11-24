@@ -461,6 +461,19 @@ public sealed class WallWorld {
     /// <summary>The farthest travel distance the field reaches, in metres.</summary>
     public float TravelMax { get; private set; }
 
+    // The field over the tree: the library's bytes, and the seeds and unit it is asked with.
+    private byte[] _treeField = [];
+    private TravelSeed[] _treeSeeds = [];
+
+    /// <summary>How many bytes the field over the tree keeps, and for how many places.</summary>
+    public int TreeFieldBytes { get; private set; }
+    public int TreeFieldPlaces { get; private set; }
+
+    /// <summary>What the field over counts keeps: 2 bytes a cell.</summary>
+    public int DenseFieldBytes => 2 * CountX * CountY * CountZ;
+
+    private TreeField TreeTravel() => new(Tree(), _treeRegion, _treeField, _treeSeeds, TravelUnit);
+
     /// <summary>Writes a cost into every cell whose centre is inside a cube about a point, and returns false if the library refuses.</summary>
     public bool DropCost(float x, float y, float z, float half, byte value) {
         var box = Solid.Box(new Box(x - half, y - half, z - half, x + half, y + half, z + half));
@@ -502,6 +515,10 @@ public sealed class WallWorld {
         }
         var shape = Shape;
         TravelSeed[] seeds = [seed];
+        if (AsTree) {
+            BuildTreeTravel(seeds, goal, clock);
+            return;
+        }
         if (!Travel.Build(shape, _region, Cost, seeds, TravelUnit, _travel, _times, _heap, out var reached, out var cut)) {
             TravelProblem = "the library refused to build the field";
             return;
@@ -514,8 +531,50 @@ public sealed class WallWorld {
         if (reached == 0) { TravelProblem = goal == GoalPoint ? "the goal point holds no open cell of a region the seeds reached" : "the door holds no open cell for this body, which does not fit through it"; }
     }
 
+    // The field over the tree, from the same seeds: kept for places, not cells. Each cell is coloured by the travel at its centre.
+    private void BuildTreeTravel(TravelSeed[] seeds, int goal, Stopwatch clock) {
+        (TreeFieldBytes, TreeFieldPlaces) = (0, 0);
+        var tree = Tree();
+        if (!TreeFields.Measure(tree, _treeRegion, seeds, out var length, out var places, out var work)) {
+            TravelProblem = "the library refused to build the field";
+            return;
+        }
+        var bytes = new byte[length];
+        if (!TreeFields.Build(tree, _treeRegion, seeds, TravelUnit, bytes, new float[places], new int[work], out _, out var reached, out var cut)) {
+            TravelProblem = "the library refused to build the field";
+            return;
+        }
+        TravelMilliseconds = clock.Elapsed.TotalMilliseconds;
+        (_treeField, _treeSeeds, TreeFieldBytes, TreeFieldPlaces, TravelCut) = (bytes, seeds, length, places, cut);
+        var field = TreeTravel();
+        var cells = 0;
+        for (var z = 0; z < CountZ; z++) {
+            for (var y = 0; y < CountY; y++) {
+                for (var x = 0; x < CountX; x++) {
+                    Shape.CentreOf(x, y, z, out var cx, out var cy, out var cz);
+                    if (!TreeFields.TravelAt(field, cx, cy, cz, out var travel, out _)) { continue; }
+                    _travel[Shape.IndexOf(x, y, z)] = (ushort)Math.Min(Travel.Unreached - 1, Math.Round(travel / TravelUnit));
+                    TravelMax = Math.Max(TravelMax, travel);
+                    cells++;
+                }
+            }
+        }
+        TravelReached = cells;
+        if (reached == 0) { TravelProblem = goal == GoalPoint ? "the goal point holds no open cell of a region the seeds reached" : "the door holds no open cell for this body, which does not fit through it"; }
+    }
+
     /// <summary>The travel distance at a point, in metres, and the direction that leads down the field from there. False if none of the eight cells round it is reached.</summary>
     public bool SampleField(float x, float y, float z, out float dx, out float dy, out float dz, out float distance) {
+        (dx, dy, dz) = (0f, 0f, 0f);
+        if (AsTree) {
+            // Over the tree: the travel, and the way to the point to fly to.
+            if (!TreeFields.TravelAt(TreeTravel(), x, y, z, out distance, out _)) { return false; }
+            if (TreeFields.Next(TreeTravel(), x, y, z, out var tx, out var ty, out var tz, out _, out _)) {
+                var length = MathF.Sqrt((tx - x) * (tx - x) + (ty - y) * (ty - y) + (tz - z) * (tz - z));
+                if (length > 1e-6f) { (dx, dy, dz) = ((tx - x) / length, (ty - y) / length, (tz - z) / length); }
+            }
+            return true;
+        }
         var shape = Shape;
         var field = new TravelField(shape, TravelUnit, _travel);
         return Travel.Sample(field, x, y, z, out dx, out dy, out dz, out distance);
@@ -533,12 +592,35 @@ public sealed class WallWorld {
     public (List<(float x, float y, float z)> Path, string End) FollowField(float x, float y, float z) {
         var path = new List<(float x, float y, float z)> { (x, y, z) };
         if (TravelProblem is not null) { return (path, "there is no field"); }
+        if (AsTree) { return FollowTreeField(x, y, z, path); }
         const float step = 0.25f;
         for (var i = 0; i < 800; i++) {
             if (!SampleField(x, y, z, out var dx, out var dy, out var dz, out var distance)) { return (path, "left the field"); }
             if (distance < 0.5f) { return (path, "reached the goal"); }
             if (dx == 0f && dy == 0f && dz == 0f) { return (path, $"found no way down at {distance:0.00} m"); }
             (x, y, z) = (x + dx * step, y + dy * step, z + dz * step);
+            path.Add((x, y, z));
+        }
+        return (path, "gave up after 800 steps");
+    }
+
+    // Over the tree a follower flies straight to the point the field gives, and asks again on entering another place or on reaching it.
+    private (List<(float x, float y, float z)> Path, string End) FollowTreeField(float x, float y, float z, List<(float x, float y, float z)> path) {
+        var field = TreeTravel();
+        float tx = x, ty = y, tz = z;
+        var place = -1;
+        const float step = 0.25f;
+        for (var i = 0; i < 800; i++) {
+            if (!TreeFields.TravelAt(field, x, y, z, out var travel, out var here)) { return (path, "left the field"); }
+            if (travel < 0.5f) { return (path, "reached the goal"); }
+            var left = MathF.Sqrt((tx - x) * (tx - x) + (ty - y) * (ty - y) + (tz - z) * (tz - z));
+            if (here != place || left < 0.01f) {
+                if (!TreeFields.Next(field, x, y, z, out tx, out ty, out tz, out _, out _)) { return (path, $"found no way on at {travel:0.00} m"); }
+                place = here;
+                left = MathF.Sqrt((tx - x) * (tx - x) + (ty - y) * (ty - y) + (tz - z) * (tz - z));
+            }
+            var move = MathF.Min(step, left);
+            (x, y, z) = (x + (tx - x) / left * move, y + (ty - y) / left * move, z + (tz - z) / left * move);
             path.Add((x, y, z));
         }
         return (path, "gave up after 800 steps");
