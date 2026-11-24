@@ -15,7 +15,8 @@ namespace Yewnyx.Algorithms.Visualizer.Views;
 /// free, and what the shapes say is) and, in region colour, its reach and the nearest open cell. Pressing and dragging
 /// puts the probe there; Shift or the right button puts the anchor, whose region the nearest-open query can be held to, or
 /// where a travel field starts. Coloured by travel, each cell shows how far it is from the goal going round what is in the way,
-/// with short strokes downhill on a coarse lattice and the path the field leads the probe along.
+/// with short strokes downhill on a coarse lattice and the path the field leads the probe along. With the wall distance
+/// kept as a tree, the tree's open cubes and bricks are outlined where the slice passes through them.
 /// The x-by-y slice (looking down) also draws its legend; the x-by-z slice (from the side, z up) draws a line where the
 /// other slice cuts.
 /// </summary>
@@ -52,6 +53,9 @@ public sealed class WallSliceView : Control {
     private static readonly IPen RouteFar = new Pen(new SolidColorBrush(Color.FromArgb(0xC0, 0xFF, 0xEB, 0x3B)), 2.5, DashStyle.Dash);
     private static readonly IPen RouteDash = new Pen(new SolidColorBrush(Color.FromRgb(0xFF, 0xEB, 0x3B)), 3.5, DashStyle.Dot);
     private static readonly IBrush TextBrush = new SolidColorBrush(Color.FromRgb(0xC8, 0xD0, 0xDC));
+    // The tree's leaves: an open cube, all at the cap, and a brick that keeps a count for each of its cells.
+    private static readonly IPen OpenEdge = new Pen(new SolidColorBrush(Color.FromArgb(0xC0, 0xFF, 0xFF, 0xFF)), 1.2);
+    private static readonly IPen BrickEdge = new Pen(new SolidColorBrush(Color.FromRgb(0x0B, 0x0E, 0x13)), 1.6);
 
     private List<(double U, double V)[]>? _costOutlines, _goalOutlines;
     private List<(double U, double V)[]>? _outlines, _seedOutlines;
@@ -214,6 +218,7 @@ public sealed class WallSliceView : Control {
         }
         context.DrawRectangle(null, Accent is { } edge ? new Pen(new SolidColorBrush(edge), 1.8) : Frame, new Rect(ox, oy, WallWorld.Width * scale, PlaneHeight * scale));
 
+        if (world.AsTree && Colour == SliceColour.WallDistance) { DrawLeaves(context, world, fixedCell, scale, ox, oy); }
         DrawSolids(context, world, regions, travel, routes, scale, ox, oy);
         if (travel && ShowStrokes) { DrawStrokes(context, world, scale, ox, oy); }
         if (travel && Path is { Count: > 1 } path) { DrawPath(context, path, scale, ox, oy); }
@@ -243,6 +248,27 @@ public sealed class WallSliceView : Control {
         context.DrawEllipse(ProbeDot, null, at, 3, 3);
 
         if (ShowLegend) { DrawLegend(context, world, regions, travel, routes, ox, oy + PlaneHeight * scale + 6, WallWorld.Width * scale); }
+    }
+
+    // The tree's open cubes (white) and bricks (grey) that this slice's layer or row of cells passes through, cut at the grid's edge.
+    private void DrawLeaves(DrawingContext context, WallWorld world, int fixedCell, double scale, double ox, double oy) {
+        var cell = WallWorld.CellSize * scale;
+        var rows = Plane == SlicePlane.Xy ? WallWorld.CountY : WallWorld.CountZ;
+        var open = new StreamGeometry();
+        var bricks = new StreamGeometry();
+        using (var openContext = open.Open())
+        using (var brickContext = bricks.Open()) {
+            foreach (var leaf in world.Leaves) {
+                var (across, start) = Plane == SlicePlane.Xy ? (leaf.Z, leaf.Y) : (leaf.Y, leaf.Z);
+                if (fixedCell < across || fixedCell >= across + leaf.Side) { continue; }
+                int right = Math.Min(leaf.X + leaf.Side, WallWorld.CountX), end = Math.Min(start + leaf.Side, rows);
+                double left = ox + leaf.X * cell, width = (right - leaf.X) * cell, height = (end - start) * cell;
+                var top = Plane == SlicePlane.Xy ? oy + start * cell : oy + (rows - end) * cell;
+                AddRect(leaf.Open ? openContext : brickContext, left, top, width, height);
+            }
+        }
+        context.DrawGeometry(null, BrickEdge, bricks);
+        context.DrawGeometry(null, OpenEdge, open);
     }
 
     // Short strokes downhill on a coarse lattice: from the middle of every other cell, a line along the field's direction as far as it lies in this plane.
@@ -439,7 +465,7 @@ public sealed class WallSliceView : Control {
         var far = $"{world.Cap * world.Unit:0.###} m or more (the cap)";
         var text = new FormattedText(far, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, Typeface.Default, 11, Silver);
         context.DrawText(text, new Point(x + bar - text.Width, y + 11));
-        DrawText(context, "stored wall distance", new Point(x + bar + 12, y - 1), 11, Silver);
+        DrawText(context, world.AsTree ? "kept by the tree" : "stored wall distance", new Point(x + bar + 12, y - 1), 11, Silver);
     }
 
     private static void DrawText(DrawingContext context, string text, Point at, double size, IBrush brush) {
