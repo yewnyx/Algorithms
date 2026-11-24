@@ -91,8 +91,9 @@ namespace Yewnyx.Spatial {
         /// <see cref="RouteStatus.SearchFull"/>: there may be a way, and it was not found.
         /// <paramref name="leeway"/> is how hard the search heads for the goal: it reckons each
         /// metre still to go at 1 plus the leeway. With 0 it looks at every place a cheaper way
-        /// could pass through. With a quarter it takes up far fewer, and the routes come out the
-        /// same length on the whole: measured over open ground, a twentieth longer at the worst.
+        /// could pass through. With 1, the default, it takes up far fewer, and pulled straight the
+        /// routes come out about as long: measured on an outdoor part, 2 in 100 dearer as flown on
+        /// the whole where there are danger zones to go round.
         /// The status is <see cref="RouteStatus.Refused"/> if the tree cannot be used, the class
         /// does not fit it, the region bytes are not a flood's of this tree, an array has room
         /// for fewer than 16 slots, the shapes' spans do not belong together, a point is not a
@@ -100,7 +101,7 @@ namespace Yewnyx.Spatial {
         /// </remarks>
         public static RouteResult Find(in WallTree tree, in SizeClass size, in ShapeSet shapes, ReadOnlySpan<byte> region,
             float fromX, float fromY, float fromZ, float toX, float toY, float toZ, bool straighten,
-            Span<float> sums, Span<int> links, Span<float> points, float leeway = 0.25f) =>
+            Span<float> sums, Span<int> links, Span<float> points, float leeway = 1f) =>
             Find(tree, size, shapes, region, default, fromX, fromY, fromZ, toX, toY, toZ, straighten, sums, links, points, 0, leeway);
 
         /// <summary>
@@ -435,6 +436,9 @@ namespace Yewnyx.Spatial {
             public Span<float> Near;
             public Span<byte> Back;
             public int Slots, Shift, Most, Used, Waiting, Taken, Bricks, FirstCube, GoalPlace;
+            // With costs, the place that holds the goal, and how many times its length a step in its leaf counts for; -1 with none.
+            public int GoalHost, GoalLeaf;
+            public double GoalTimes;
             public int CountX, CountY, CountZ, Layer, BlocksX, BlocksY, GoalX, GoalY, GoalZ;
             // The size of a cell, and what a cell's length still to go is reckoned at.
             public double CellSize, Ahead;
@@ -449,6 +453,12 @@ namespace Yewnyx.Spatial {
             // where there is no way or the table is full.
             public int Run(int start) {
                 int x = start % CountX, y = start / CountX % CountY, z = start / Layer;
+                GoalHost = -1; GoalLeaf = -1;
+                if (Costs.Length != 0 && _placeOf(GoalX, GoalY, GoalZ, out var host, out var hostLeaf)) {
+                    GoalHost = host;
+                    GoalLeaf = hostLeaf;
+                    GoalTimes = _times(hostLeaf);
+                }
                 if (!_placeOf(x, y, z, out var place, out var leaf)) { return -1; }
                 if (!_shut(leaf)) {
                     if (!_offer(place, x, y, z, 0d, -1)) { return -1; }
@@ -732,7 +742,7 @@ namespace Yewnyx.Spatial {
                 double spent = Spent[slot];
                 var entering = _times(leaf);
                 if (leaf >= Bricks) {
-                    var by = _best(exact, x, y, z, axis, own, across, fromU, fromV, pattern, out var reach);
+                    var by = _best(exact, times, leaf == GoalLeaf ? GoalTimes : 1d, x, y, z, axis, own, across, fromU, fromV, pattern, out var reach);
                     int u = fromU + (by & 3), v = fromV + (by >> 2);
                     return _offer(FirstCube + (leaf - Bricks), _x(axis, across, u, v), _y(axis, across, u, v), _z(axis, across, u, v), spent + CellSize * (reach * times + entering), slot);
                 }
@@ -750,7 +760,7 @@ namespace Yewnyx.Spatial {
                     while (into != 0) {
                         var part = plain ? into : into & -into;
                         into &= ~part;
-                        var by = _best(exact, x, y, z, axis, own, across, fromU, fromV, part, out var reach);
+                        var by = _best(exact, times, leaf == GoalLeaf ? GoalTimes : 1d, x, y, z, axis, own, across, fromU, fromV, part, out var reach);
                         int u = fromU + (by & 3), v = fromV + (by >> 2);
                         var place = leaf * PerBrick + (plain ? _lowest(joined) : ByFace + 16 * (2 * axis + (near == 0 ? 0 : 1)) + by);
                         if (!_offer(place, _x(axis, across, u, v), _y(axis, across, u, v), _z(axis, across, u, v), spent + CellSize * (reach * times + entering), slot)) { return false; }
@@ -762,8 +772,10 @@ namespace Yewnyx.Spatial {
             // The cell of a pattern by which the way on is reckoned shortest: through the place to
             // its own cell there, a step across, and straight on to the goal. reach is how far the
             // way through the place is to that cell, in cells: what _through found where that
-            // was worked out, and otherwise the straight cut.
-            private int _best(bool exact, int x, int y, int z, int axis, int own, int across, int fromU, int fromV, int pattern, out double reach) {
+            // was worked out, and otherwise the straight cut. With costs, the way through the place
+            // counts times over, and on to the goal onward times over: more than once where the
+            // goal is in the leaf across.
+            private int _best(bool exact, double times, double onward, int x, int y, int z, int axis, int own, int across, int fromU, int fromV, int pattern, out double reach) {
                 var best = 0;
                 var least = double.PositiveInfinity;
                 reach = 0d;
@@ -772,7 +784,7 @@ namespace Yewnyx.Spatial {
                     int u = fromU + (k & 3), v = fromV + (k >> 2);
                     int ownX = _x(axis, own, u, v), ownY = _y(axis, own, u, v), ownZ = _z(axis, own, u, v);
                     var within = exact ? Near[(ownX & 3) | ((ownY & 3) << 2) | ((ownZ & 3) << 4)] : _cut(x, y, z, ownX, ownY, ownZ);
-                    var whole = within + _cut(_x(axis, across, u, v), _y(axis, across, u, v), _z(axis, across, u, v), GoalX, GoalY, GoalZ);
+                    var whole = within * times + _cut(_x(axis, across, u, v), _y(axis, across, u, v), _z(axis, across, u, v), GoalX, GoalY, GoalZ) * onward;
                     if (whole < least) {
                         least = whole;
                         best = k;
@@ -800,6 +812,9 @@ namespace Yewnyx.Spatial {
             }
 
             // How far apart two cells are, in cells.
+            // What the straight way from a cell of the goal's place to the goal costs.
+            private double _toGoal(int x, int y, int z) => CellSize * _cut(x, y, z, GoalX, GoalY, GoalZ) * GoalTimes;
+
             private static double _cut(int x, int y, int z, int toX, int toY, int toZ) {
                 double dx = toX - x, dy = toY - y, dz = toZ - z;
                 return Math.Sqrt(dx * dx + dy * dy + dz * dz);
@@ -826,14 +841,18 @@ namespace Yewnyx.Spatial {
                     slot = (slot + 1) & (Slots - 1);
                 }
                 var waits = HeapAt[slot];
-                if (waits < 0 || (waits > 0 && !(spent < Spent[slot]))) { return true; }
+                // The place that holds the goal keeps the way in that costs least to the goal: in a dear
+                // leaf where it is come into matters more than what it costs to come into.
+                var host = place == GoalHost;
+                if (waits < 0) { return true; }
+                if (waits > 0 && !(host ? spent + _toGoal(x, y, z) < Spent[slot] + _toGoal(Cell[slot] % CountX, Cell[slot] / CountX % CountY, Cell[slot] / Layer) : spent < Spent[slot])) { return true; }
                 Spent[slot] = (float)spent;
                 Parent[slot] = from;
                 Cell[slot] = x + y * CountX + z * Layer;
                 double dx = x - GoalX, dy = y - GoalY, dz = z - GoalZ;
                 var rank = (float)(spent + Ahead * Math.Sqrt(dx * dx + dy * dy + dz * dz));
-                // A place that waits can rank higher than it did: come into more cheaply at a cell
-                // farther from the goal. Then down the heap.
+                // A place that waits can rank higher than it did: come into at a cell farther from the
+                // goal, or the goal's place by a dearer way in nearer the goal. Then down the heap.
                 if (waits > 0 && rank > Rank[slot]) {
                     Rank[slot] = rank;
                     _down(waits - 1, slot, rank);

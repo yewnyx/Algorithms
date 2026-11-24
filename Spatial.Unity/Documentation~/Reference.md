@@ -214,7 +214,7 @@ The way is searched by the cells' costs, then pulled straight. A straight leg re
 - **Keep one `WallGridRoute` for each search that runs at once, not one for each agent.**
 - **It holds 16 bytes for each cell of the largest grid it has searched,** and serves grids of any size.
 - **On a tree a route object holds a fixed 896 KB,** whatever the grid's size: room for 24,576 places. A search that needs more ends `SearchFull`.
-- **On a tree the leeway is at least 0.25,** whatever `Leeway` says.
+- **On a tree the leeway is at least 1 (`TreeLeeway`),** whatever `Leeway` says: routes pulled straight come out about as long, and a search takes up far fewer places.
 - **Copy the points out when a search is done,** and a few route objects serve any number of agents.
 - **A search scheduled while its last is still running** runs after it and replaces its answer.
 

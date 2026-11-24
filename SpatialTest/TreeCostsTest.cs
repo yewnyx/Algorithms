@@ -123,10 +123,10 @@ public class TreeCostsTest {
     private sealed record Routed(RouteResult Result, (float X, float Y, float Z)[] Points);
 
     private static Routed Route(WallTree tree, SizeClass size, ShapeSet set, byte[] region, byte[] layer, (float X, float Y, float Z) from, (float X, float Y, float Z) to,
-        byte least, byte[]? table = null, bool straighten = true) {
+        byte least, byte[]? table = null, bool straighten = true, float leeway = 0.25f) {
         var points = new float[3 * 400];
         var result = TreeRoutes.Find(tree, size, set, region, layer, from.X, from.Y, from.Z, to.X, to.Y, to.Z, straighten,
-            new float[TreeRoutes.SumsLength(24 * 1024)], new int[TreeRoutes.LinksLength(24 * 1024)], points, least, 0.25f, table ?? []);
+            new float[TreeRoutes.SumsLength(24 * 1024)], new int[TreeRoutes.LinksLength(24 * 1024)], points, least, leeway, table ?? []);
         var list = new List<(float X, float Y, float Z)> { from };
         for (var i = 0; i < Math.Min(result.Count, 400); i++) { list.Add((points[3 * i], points[3 * i + 1], points[3 * i + 2])); }
         return new Routed(result, list.ToArray());
@@ -348,6 +348,50 @@ public class TreeCostsTest {
         }
         searched.Should().BeGreaterThan(10);
         fewer.Should().BeGreaterThan(searched / 2);
+    }
+
+    [Fact]
+    public void ARouteOverATreesCostsCostsLittleMoreAsFlownThanTheDenseSearchsOverTheSame() {
+        var scene = Scene();
+        var tree = scene.Tree;
+        SizeClass.TryMake(Radius, tree, out var size).Should().BeTrue();
+        // Eight dear balls, some round an end: the tree's way into a dear leaf is where it costs least.
+        var rnd = new Random(11);
+        var layer = new byte[TreeCosts.LayerLength(tree)];
+        for (var i = 0; i < 8; i++) {
+            float x = (float)rnd.NextDouble() * 15, y = (float)rnd.NextDouble() * 9, z = (float)rnd.NextDouble() * 13, r = 1 + (float)rnd.NextDouble() * 2.5f;
+            TreeCosts.Fill(tree, Solid.Sphere(x, y, z, r), (byte)(16 + rnd.Next(150)), layer, out _, out _).Should().BeTrue();
+        }
+        var spread = Spread(tree, layer);
+        var region = Flood(tree, size, layer);
+        var dense = new byte[Odd.CellCount];
+        Regions.FromSeeds(scene.Map, size, spread, [Solid.Box(new Box(-5, -5, -5, 40, 40, 40))], dense, new int[Regions.QueueLength(Odd)], out _, out _).Should().BeTrue();
+        var ends = new List<(float X, float Y, float Z)>();
+        for (var cell = 0; cell < Odd.CellCount; cell += 41) {
+            Odd.CentreOf(cell % Odd.CountX, cell / Odd.CountX % Odd.CountY, cell / Odd.LayerLength, out var cx, out var cy, out var cz);
+            if (dense[cell] != 0) { ends.Add((cx, cy, cz)); }
+        }
+        var points = new float[3 * 4000];
+        // At a quarter, and at 1, which a route over a tree is searched with unless told: the search heads harder for the goal.
+        foreach (var (leeway, most) in new[] { (0.25f, 1.06), (1f, 1.07) }) {
+            double treeTotal = 0, denseTotal = 0;
+            var compared = 0;
+            var pick = new Random(7);
+            for (var k = 0; k < 600; k++) {
+                var (from, to) = (ends[pick.Next(ends.Count)], ends[pick.Next(ends.Count)]);
+                var routed = Route(tree, size, MixedShapes.Set, region, layer, from, to, 0, null, true, leeway);
+                var found = Routes.Find(scene.Map, size, MixedShapes.Set, dense, spread, from.X, from.Y, from.Z, to.X, to.Y, to.Z, true, new float[2 * Odd.CellCount],
+                    new int[Odd.CellCount], new int[Odd.CellCount], points, 0, 0f);
+                if (routed.Result.Status != RouteStatus.Found || found.Status != RouteStatus.Found) { continue; }
+                var way = new List<(float X, float Y, float Z)> { from };
+                for (var i = 0; i < found.Count; i++) { way.Add((points[3 * i], points[3 * i + 1], points[3 * i + 2])); }
+                treeTotal += Flown(tree, layer, routed);
+                denseTotal += Flown(tree, layer, new Routed(found, way.ToArray()));
+                compared++;
+            }
+            compared.Should().BeGreaterThan(500);
+            (treeTotal / denseTotal).Should().BeLessThan(most, $"at a leeway of {leeway}, on the whole a little dearer than the dense search's, which is the cheapest by steps");
+        }
     }
 
     [Fact]
