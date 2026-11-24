@@ -99,7 +99,8 @@ JobHandle upToDate = set.Schedule(movedIds, positions, rotations, posesReady);
 - **Building the tree takes seconds** for a part of some hundreds of metres. Build it where the part is baked and store what `TryWriteTree` gives.
 - **`SetTree` takes a stored tree back** in place of a marking. Give the grid its shapes first: a tree built from other shapes is refused.
 - **Size classes, regions and routes work on a tree as on counts.** `ScheduleRegions` gives the regions of the counts put down as the tree keeps them.
-- **Costs and travel fields need a count for every cell.** On a tree `FillCost` gives false, `ScheduleField` a field that is not built, and `RegionsOf` is empty.
+- **Costs need a count for every cell.** On a tree `FillCost` gives false and `RegionsOf` is empty.
+- **Travel fields work on a tree,** kept for places, not cells: see `WallGridField`.
 - **`TryNearestOpen` with `like:` gives false on a tree.**
 
 ## WallGrid: body sizes and regions
@@ -130,7 +131,18 @@ JobHandle upToDate = set.Schedule(movedIds, positions, rotations, posesReady);
 - **A field outlives its grid.** When memory is short, dispose the grid and keep its fields: a field that was good goes on answering as it was built.
 - **It then cannot know that the way has changed.** If a door shuts or a cost changes there, it does not refuse: dispose it yourself, and build a new one from a new grid.
 - **You own a field.** Dispose it; it holds 2 bytes a cell.
+- **`TryTravel` is the cheap question:** how far a point is along the field, and which place it is in. Ask it of every field at every step.
+- **`TryNext` gives a point to fly to.** Fly straight to it, and ask again on entering another place or on reaching it; `ScheduleTravel` and `ScheduleNext` ask in a job.
 - **A job of yours that reads its `Distance`** must be handed to the field's `AddReader`, so that `Dispose` waits for it.
+
+### On a grid that keeps a tree
+
+- **A field is kept for places, not cells:** 2 bytes a place, under a megabyte for a part of 450 x 50 x 450 m. Its scratch while it builds is freed when the build is done.
+- **Follow it with `TryNext`.** The point it gives is in sight, and flying straight to it never leaves open cells.
+- **`TrySample` answers too:** the travel `TryTravel` gives, and the way towards the point `TryNext` gives.
+- **It reads the grid's tree as it is asked,** so it does not outlive the grid: once the grid is disposed it answers nothing.
+- **A point whose cell is not open is refused,** where a field over counts may still answer from the eight cells round it.
+- **`Distance` is empty, even once `IsBuilt`:** `KeepsCells` is false. Read it before indexing `Distance`; the field's places are the library's (see `TreeFields`).
 
 ## WallGridRoute
 

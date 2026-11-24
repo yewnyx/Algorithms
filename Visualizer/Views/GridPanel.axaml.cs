@@ -61,9 +61,9 @@ public partial class GridPanel : UserControl {
         SceneOutdoors.Click += (_, _) => SetScene(WallScene.Outdoors);
         TreeBox.IsCheckedChanged += (_, _) => {
             _world.AsTree = TreeBox.IsChecked == true;
-            // A tree has no costs, and no travel fields yet: those need a count for every cell.
+            // A tree has no costs: those need a count for every cell.
             if (_world.AsTree && _world.CostBoxes.Count > 0) { _world.ClearCost(); Flooded(); }
-            SetMode(_world.AsTree && ByTravel ? 0 : _mode);
+            SetMode(_mode);
         };
 
         Generate();
@@ -79,6 +79,8 @@ public partial class GridPanel : UserControl {
     };
 
     private const string TreeCaption = "How far each cell is from the nearest shape, as the tree keeps it: counts only in the bricks near surfaces (dark squares), and open air as cubes of one bit (white squares). Click a slice to put the probe there.";
+
+    private const string TreeTravelCaption = "How far each cell is from the goal (the pink diamond) over the tree, kept for each open cube and brick, not each cell. The yellow line flies straight from point to point as the field gives them. Right-click a slice to move the goal.";
 
     private const string TreeRouteCaption = "The route over the tree from the probe to the goal (the pink diamond): the way through open cubes and bricks in blue, pulled straight in yellow. The table sets it beside the same search over a count for every cell.";
 
@@ -103,9 +105,8 @@ public partial class GridPanel : UserControl {
         ModeTravel.IsChecked = mode == 2;
         ModeRoutes.IsChecked = mode == 3;
         var tree = TreeBox.IsChecked == true;
-        ModeTravel.IsEnabled = !tree;
         LikeBox.IsEnabled = !tree;
-        CaptionText.Text = mode == 0 && tree ? TreeCaption : mode == 3 && tree ? TreeRouteCaption : Captions[mode];
+        CaptionText.Text = mode == 0 && tree ? TreeCaption : mode == 2 && tree ? TreeTravelCaption : mode == 3 && tree ? TreeRouteCaption : Captions[mode];
         BodyPanel.IsVisible = mode > 0;
         CostPanel.IsVisible = mode > 0 && !tree;
         SlowButton.IsVisible = mode > 1;
@@ -384,6 +385,7 @@ public partial class GridPanel : UserControl {
             rows.Add(("Straight line", $"{Math.Sqrt((x - a.x) * (x - a.x) + (y - a.y) * (y - a.y) + (z - a.z) * (z - a.z)):0.00} m"));
         }
         rows.Add(("Field reaches", Cells(_world.TravelReached)));
+        if (_world.AsTree) { rows.Add(("Field kept", $"{_world.TreeFieldBytes:N0} bytes for {_world.TreeFieldPlaces:N0} places, against {_world.DenseFieldBytes:N0} for a count a cell")); }
         rows.Add(("Following it", $"{Count(path.Count - 1, "step")}, {pathEnd}"));
         rows.Add(("Walls and slow zones", _world.CostBoxes.Count == 0 ? "none" : _world.CostBoxes.Count.ToString()));
         Table(rows.ToArray());

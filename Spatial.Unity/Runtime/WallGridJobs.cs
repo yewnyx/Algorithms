@@ -214,6 +214,84 @@ namespace Yewnyx.Spatial {
         }
     }
 
+    /// <summary>Builds a travel field over a grid's tree.</summary>
+    [BurstCompile]
+    internal struct TreeFieldJob : IJob {
+        public GridShape Shape;
+        public float Unit, FieldUnit;
+        public byte Cap;
+        [ReadOnly] public NativeList<WallNode> Nodes;
+        [ReadOnly] public NativeList<byte> Bricks, Region;
+        // The flood's result: element 0 is 1 if it was done.
+        [ReadOnly] public NativeArray<int> Flooded;
+        [ReadOnly] public NativeArray<TravelSeed> Seeds;
+        // What TreeFields.Build writes, cut to its length: empty after a build that was refused.
+        public NativeList<byte> Field;
+        // Whether the build was done (1 or 0), how many places it reached, and how many it cut.
+        public NativeArray<int> Result;
+
+        public void Execute() {
+            Result[0] = 0; Result[1] = 0; Result[2] = 0;
+            Field.Clear();
+            if (Flooded[0] == 0) { return; }
+            var tree = new WallTree(Shape, Unit, Cap, Nodes.AsArray().AsReadOnlySpan(), Bricks.AsArray().AsReadOnlySpan());
+            var region = Region.AsArray().AsReadOnlySpan();
+            if (!TreeFields.Measure(tree, region, Seeds.AsReadOnlySpan(), out var length, out var places, out var work)) { return; }
+            Field.ResizeUninitialized(length);
+            var sums = new NativeArray<float>(places, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
+            var ints = new NativeArray<int>(work, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
+            var done = TreeFields.Build(tree, region, Seeds.AsReadOnlySpan(), FieldUnit, Field.AsArray().AsSpan(), sums.AsSpan(), ints.AsSpan(), out var written, out var reached, out var cut);
+            sums.Dispose();
+            ints.Dispose();
+            Field.ResizeUninitialized(done ? written : 0);
+            Result[0] = done ? 1 : 0;
+            Result[1] = reached;
+            Result[2] = cut;
+        }
+    }
+
+    /// <summary>Asks a field over a grid's tree, or over counts, for many points: the travel at each, and the point to fly to.</summary>
+    [BurstCompile]
+    internal struct FieldAskJob : IJobParallelFor {
+        public GridShape Shape;
+        public float Unit, FieldUnit;
+        public byte Cap;
+        // What to ask: 0 the travel and the direction, 1 the travel and the place, 2 the point to fly to.
+        public int Ask;
+        public bool Tree, Stale;
+        [ReadOnly] public NativeList<WallNode> Nodes;
+        [ReadOnly] public NativeList<byte> Bricks, Region, Field;
+        [ReadOnly] public NativeArray<TravelSeed> Seeds;
+        [ReadOnly] public NativeArray<ushort> Distance;
+        // The field's build: element 0 is 1 if it was built.
+        [ReadOnly] public NativeArray<int> Result;
+        [ReadOnly] public NativeArray<float3> Points;
+        // The direction, or the point to fly to; the travel, -1 where refused; and the place.
+        public NativeArray<float3> Vectors;
+        public NativeArray<float> Travels;
+        public NativeArray<int> Places;
+
+        public void Execute(int index) {
+            var point = Points[index];
+            var found = false;
+            var vector = float3.zero;
+            float travel = 0f;
+            var place = -1;
+            if (!Stale && Result[0] != 0) {
+                if (Tree) {
+                    var field = new TreeField(new WallTree(Shape, Unit, Cap, Nodes.AsArray().AsReadOnlySpan(), Bricks.AsArray().AsReadOnlySpan()),
+                        Region.AsArray().AsReadOnlySpan(), Field.AsArray().AsReadOnlySpan(), Seeds.AsReadOnlySpan(), FieldUnit);
+                    found = WallGridField.AskTree(field, Ask, point, out vector, out travel, out place);
+                } else {
+                    found = WallGridField.AskCounts(new TravelField(Shape, FieldUnit, Distance.AsReadOnlySpan()), Ask, point, out vector, out travel, out place);
+                }
+            }
+            if (Vectors.Length > index) { Vectors[index] = found ? vector : float3.zero; }
+            Travels[index] = found ? travel : -1f;
+            if (Places.Length > index) { Places[index] = found ? place : -1; }
+        }
+    }
+
     /// <summary>Builds the wall distance of a large grid as a tree.</summary>
     [BurstCompile]
     internal struct TreeJob : IJob {
