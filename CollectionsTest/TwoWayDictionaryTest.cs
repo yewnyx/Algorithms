@@ -58,10 +58,8 @@ public class TwoWayDictionaryTest {
         Dictionary<string, int>.Enumerator enumerator = map.GetEnumerator();
         enumerator.Dispose();
 
-        Sum();
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        var sum = Sum();
-        (GC.GetAllocatedBytesForCurrentThread() - before).Should().Be(0);
+        long sum = 0;
+        Allocation.Fewest(() => sum = Sum()).Should().Be(0);
         sum.Should().Be(10 * 2 + 1045);
     }
 

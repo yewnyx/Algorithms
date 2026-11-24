@@ -272,11 +272,8 @@ public class HeckelDiffTest {
         Hunk[]? hunks = null;
         BlockMove[]? moves = null;
         int[]? workspace = null;
-        HeckelDiff.Diff<char>(a, b, ref hunks, ref moves, ref workspace, out _);
-
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        HeckelDiff.Diff<char>(a, b, ref hunks, ref moves, ref workspace, out var moveCount);
-        (GC.GetAllocatedBytesForCurrentThread() - before).Should().Be(0);
+        var moveCount = 0;
+        Allocation.Fewest(() => HeckelDiff.Diff<char>(a, b, ref hunks, ref moves, ref workspace, out moveCount)).Should().Be(0);
         moveCount.Should().BePositive();
     }
 }

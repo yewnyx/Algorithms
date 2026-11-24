@@ -336,10 +336,8 @@ public class PackedJsonTest {
         var document = new PackedDocument();
         Packer.TryPack(head!, registry, document, out _).Should().BeTrue();
 
-        PackedJson.Write(document, TextWriter.Null, ContentType); // Makes the shared ids.
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        PackedJson.Write(document, TextWriter.Null, ContentType);
-        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        // The first writes make the shared ids; after that the fewest bytes is what a write allocates.
+        var allocated = Allocation.Fewest(() => PackedJson.Write(document, TextWriter.Null, ContentType));
         allocated.Should().BeLessThan(4000, "two ids an object used to make about 300 KB here");
     }
 

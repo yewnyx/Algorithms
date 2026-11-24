@@ -138,11 +138,7 @@ public class PackedDocumentTest {
             document.Canonicalize();
         }
 
-        Fill();
-        Fill();
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        Fill();
-        (GC.GetAllocatedBytesForCurrentThread() - before).Should().Be(0);
+        Allocation.Fewest(Fill).Should().Be(0);
     }
 
     [Fact]
