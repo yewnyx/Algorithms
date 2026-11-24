@@ -39,6 +39,11 @@ namespace Yewnyx.Spatial {
         private NativeArray<TravelSeed> _seeds;
         // Over a tree: the costs and the table it was built and is asked through.
         private NativeArray<byte> _cost, _table;
+        // Empty containers for what an asking job does not read, made once and kept with the field.
+        private NativeList<WallNode> _noNodes;
+        private NativeList<byte> _noBytes;
+        private NativeArray<TravelSeed> _noSeeds;
+        private NativeArray<byte> _noArray;
         // Whether the build was done (1 or 0), how many cells or places it reached, and how many it cut.
         private NativeArray<int> _result;
         private JobHandle _build, _samples;
@@ -139,7 +144,15 @@ namespace Yewnyx.Spatial {
         /// Over a tree the distance is what <see cref="TryTravel"/> gives and the direction is
         /// towards the point <see cref="TryNext"/> gives; the point's own cell must be open.
         /// </remarks>
-        public bool TrySample(float3 point, out float3 direction, out float distance) => _ask(0, point, out direction, out distance, out _);
+        public bool TrySample(float3 point, out float3 direction, out float distance) {
+            if (_tree) { return _ask(0, point, out direction, out distance, out _); }
+            direction = float3.zero;
+            distance = 0f;
+            if (!IsBuilt) { return false; }
+            var found = Travel.Sample(new TravelField(_shape, Unit, _distance.AsReadOnlySpan()), point.x, point.y, point.z, out var x, out var y, out var z, out distance);
+            direction = new float3(x, y, z);
+            return found;
+        }
 
         /// <summary>
         /// How far a point is along the field, in metres, and the place it is in: cheap enough to
@@ -179,6 +192,15 @@ namespace Yewnyx.Spatial {
             _requireAlive();
             if (directions.Length < points.Length) { throw new ArgumentException($"Needs at least {points.Length} elements, one per point.", nameof(directions)); }
             if (distances.Length < points.Length) { throw new ArgumentException($"Needs at least {points.Length} elements, one per point.", nameof(distances)); }
+            if (!_tree) {
+                // Over counts, the sample alone: nothing made or freed for it.
+                var sampled = new SampleJob {
+                    Shape = _shape, Unit = Unit, Stale = !_current(), Distance = _distance, Result = _result,
+                    Points = points, Directions = directions, Distances = distances,
+                }.Schedule(points.Length, 64, JobHandle.CombineDependencies(_build, dependsOn));
+                _read(sampled);
+                return sampled;
+            }
             var places = new NativeArray<int>(0, Allocator.TempJob);
             var handle = _schedule(0, points, directions, distances, places, dependsOn);
             places.Dispose(handle);
@@ -255,6 +277,12 @@ namespace Yewnyx.Spatial {
                 _cost.Dispose();
                 _table.Dispose();
             }
+            if (_noBytes.IsCreated) {
+                _noNodes.Dispose();
+                _noBytes.Dispose();
+                _noSeeds.Dispose();
+                _noArray.Dispose();
+            }
         }
 
         // One question of the field on the main thread: 0 the travel and the direction, 1 the travel and the place, 2 the point to fly to.
@@ -308,25 +336,21 @@ namespace Yewnyx.Spatial {
                 Stale = !_current() || (_tree && _grid.IsDisposed), Distance = _distance, Result = _result,
                 Points = points, Vectors = vectors, Travels = travels, Places = places,
             };
-            // A job needs every container made: what a field does not read is an empty one, freed with the job.
-            var noNodes = new NativeList<WallNode>(0, Allocator.TempJob);
-            var noBytes = new NativeList<byte>(0, Allocator.TempJob);
-            var noSeeds = new NativeArray<TravelSeed>(0, Allocator.TempJob);
-            var noTable = new NativeArray<byte>(0, Allocator.TempJob);
-            var noCost = new NativeArray<byte>(0, Allocator.TempJob);
-            job.Nodes = tree ? _grid.TreeNodeList : noNodes;
-            job.Bricks = tree ? _grid.TreeBrickList : noBytes;
-            job.Region = tree ? _grid.TreeRegionOf(SizeClass) : noBytes;
-            job.Field = _tree ? _bytes : noBytes;
-            job.Seeds = _tree ? _seeds : noSeeds;
-            job.Cost = tree ? _cost : noCost;
-            job.Table = _tree ? _table : noTable;
+            // A job needs every container made: what a field does not read is an empty one, made once.
+            if (!_noBytes.IsCreated) {
+                _noNodes = new NativeList<WallNode>(0, Allocator.Persistent);
+                _noBytes = new NativeList<byte>(0, Allocator.Persistent);
+                _noSeeds = new NativeArray<TravelSeed>(0, Allocator.Persistent);
+                _noArray = new NativeArray<byte>(0, Allocator.Persistent);
+            }
+            job.Nodes = tree ? _grid.TreeNodeList : _noNodes;
+            job.Bricks = tree ? _grid.TreeBrickList : _noBytes;
+            job.Region = tree ? _grid.TreeRegionOf(SizeClass) : _noBytes;
+            job.Field = _tree ? _bytes : _noBytes;
+            job.Seeds = _tree ? _seeds : _noSeeds;
+            job.Cost = tree ? _cost : _noArray;
+            job.Table = _tree ? _table : _noArray;
             var handle = job.Schedule(points.Length, 64, JobHandle.CombineDependencies(_build, dependsOn, tree ? _grid.TreeWriters(SizeClass) : default));
-            noNodes.Dispose(handle);
-            noBytes.Dispose(handle);
-            noSeeds.Dispose(handle);
-            noTable.Dispose(handle);
-            noCost.Dispose(handle);
             _read(handle);
             // A job over the tree reads the grid's tree and regions: what next writes them waits for it.
             if (tree) { _grid.AddReader(handle); }
