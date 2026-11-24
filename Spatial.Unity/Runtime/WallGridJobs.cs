@@ -141,6 +141,41 @@ namespace Yewnyx.Spatial {
         }
     }
 
+    /// <summary>Builds the wall distance of a large grid as a tree.</summary>
+    [BurstCompile]
+    internal struct TreeJob : IJob {
+        public GridShape Shape;
+        public ShapeArrays Shapes;
+        public float Unit;
+        public byte Cap;
+        public NativeList<WallNode> Nodes;
+        public NativeList<byte> Bricks;
+        // One element: 1 if the tree was built, 0 if the build was refused.
+        public NativeArray<byte> Filled;
+
+        public void Execute() {
+            // A build that is refused leaves no tree: nothing is proven.
+            Filled[0] = 0;
+            Nodes.Clear();
+            Bricks.Clear();
+            var set = Shapes.Set;
+            if (!WallTrees.Measure(Shape, set, Unit, Cap, out var nodes, out var bricks)) { return; }
+            Nodes.ResizeUninitialized(nodes);
+            Bricks.ResizeUninitialized(bricks * WallTrees.BrickBytes);
+            if (!WallTrees.Build(Shape, set, Unit, Cap, Nodes.AsArray().AsSpan(), Bricks.AsArray().AsSpan(), out var nodeCount, out var brickCount)) {
+                Nodes.Clear();
+                Bricks.Clear();
+                return;
+            }
+            // Measuring gives room for every brick that might be kept; what was not needed is given back.
+            Nodes.ResizeUninitialized(nodeCount);
+            Bricks.ResizeUninitialized(brickCount * WallTrees.BrickBytes);
+            Nodes.TrimExcess();
+            Bricks.TrimExcess();
+            Filled[0] = 1;
+        }
+    }
+
     /// <summary>Fills one z layer of the wall distance per index.</summary>
     [BurstCompile]
     internal struct MarkJob : IJobParallelFor {
