@@ -181,6 +181,7 @@ The way is searched cell by cell, cheapest first by the cells' costs, and then p
 - **A search that fills them ends `SearchFull`.** Give it larger ones.
 - **`TreeRoutes.Find` takes the costs, a table and `leastCost`:** a step pays for the leaf it enters, and no way enters a leaf the table closes.
 - **A leg replaces part of the way only where it passes through no dearer leaf than that part, and costs no more as flown.** No leg passes through a closed leaf.
+- **Over costs a route is a little dearer than the dense search's:** about 1 to 3 in 100 with both ends in normal leaves, but up to about twice as dear where an end is in a dear leaf, since a place is come into at one cell.
 - **The straight leg from start to goal is taken with nothing searched** only where every leaf under it costs `leastCost`.
-- **`leeway` is 0.25 unless given.**
+- **`leeway` is 1 unless given:** routes pulled straight come out about as long, and a search takes up far fewer places.
 - **The way is not the cheapest there is.** Pulled straight, routes come out as long as the grid's on the whole, and up to a quarter longer among shapes set close together.

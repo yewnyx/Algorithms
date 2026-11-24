@@ -40,7 +40,7 @@ namespace Yewnyx.Spatial {
         public const float DefaultLeeway = 0.1f;
 
         /// <summary>The least leeway a search over a tree is run with: see <see cref="TreeRoutes.Find(in WallTree, in SizeClass, in ShapeSet, ReadOnlySpan{byte}, ReadOnlySpan{byte}, float, float, float, float, float, float, bool, Span{float}, Span{int}, Span{float}, byte, float, ReadOnlySpan{byte})"/>.</summary>
-        public const float TreeLeeway = 0.25f;
+        public const float TreeLeeway = 1f;
 
         /// <summary>
         /// The most places a search over a grid that keeps a tree may hold, taken up or waiting:

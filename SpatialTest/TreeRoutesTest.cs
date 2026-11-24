@@ -366,7 +366,8 @@ public class TreeRoutesTest {
         filled.Should().BeGreaterThan(10);
         // A straight leg needs no room at all beyond the least.
         level.Find((3, 4, 3), (20, 16, 45), places: 1).Direct.Should().BeTrue();
-        // Arrays longer than a power of two of slots are used up to the power of two.
+        // Arrays longer than a power of two of slots are used up to the power of two; with no leeway given it is 1.
+        whole = level.Find(from, to, leeway: 1f);
         var points = new float[300];
         var odd = TreeRoutes.Find(level.Scene.Tree, level.Size, level.Shapes.Set, level.Region, from.X, from.Y, from.Z, to.X, to.Y, to.Z, true,
             new float[2 * 131072 + 7], new int[5 * 262143], points);
