@@ -37,6 +37,8 @@ namespace Yewnyx.Spatial {
         // Over a tree: the field's bytes, and the seeds it was built from.
         private NativeList<byte> _bytes;
         private NativeArray<TravelSeed> _seeds;
+        // Over a tree: the costs and the table it was built and is asked through.
+        private NativeArray<byte> _cost, _table;
         // Whether the build was done (1 or 0), how many cells or places it reached, and how many it cut.
         private NativeArray<int> _result;
         private JobHandle _build, _samples;
@@ -53,11 +55,13 @@ namespace Yewnyx.Spatial {
             _build = build;
         }
 
-        internal WallGridField(WallGrid grid, int sizeClass, int stamp, float unit, NativeList<byte> bytes, NativeArray<TravelSeed> seeds, NativeArray<int> result, JobHandle build)
+        internal WallGridField(WallGrid grid, int sizeClass, int stamp, float unit, NativeList<byte> bytes, NativeArray<TravelSeed> seeds, NativeArray<byte> cost, NativeArray<byte> table, NativeArray<int> result, JobHandle build)
             : this(grid, sizeClass, stamp, unit, new NativeArray<ushort>(0, Allocator.Persistent), result, build) {
             _tree = true;
             _bytes = bytes;
             _seeds = seeds;
+            _cost = cost;
+            _table = table;
         }
 
         /// <summary>The number of the size class the field is for.</summary>
@@ -248,6 +252,8 @@ namespace Yewnyx.Spatial {
             if (_tree) {
                 _bytes.Dispose();
                 _seeds.Dispose();
+                _cost.Dispose();
+                _table.Dispose();
             }
         }
 
@@ -259,7 +265,8 @@ namespace Yewnyx.Spatial {
             // The grid may be marking or flooding again with the same shapes, which keeps the field current: it reads what they write.
             _grid.TreeWriters(SizeClass).Complete();
             var field = new TreeField(new WallTree(_shape, _grid.Unit, _grid.Cap, _grid.TreeNodeList.AsArray().AsReadOnlySpan(), _grid.TreeBrickList.AsArray().AsReadOnlySpan()),
-                _grid.TreeRegionOf(SizeClass).AsArray().AsReadOnlySpan(), _bytes.AsArray().AsReadOnlySpan(), _seeds.AsReadOnlySpan(), Unit);
+                _grid.TreeRegionOf(SizeClass).AsArray().AsReadOnlySpan(), _bytes.AsArray().AsReadOnlySpan(), _seeds.AsReadOnlySpan(), Unit,
+                _cost.AsReadOnlySpan(), _table.AsReadOnlySpan());
             return AskTree(field, ask, point, out vector, out travel, out place);
         }
 
@@ -305,15 +312,21 @@ namespace Yewnyx.Spatial {
             var noNodes = new NativeList<WallNode>(0, Allocator.TempJob);
             var noBytes = new NativeList<byte>(0, Allocator.TempJob);
             var noSeeds = new NativeArray<TravelSeed>(0, Allocator.TempJob);
+            var noTable = new NativeArray<byte>(0, Allocator.TempJob);
+            var noCost = new NativeArray<byte>(0, Allocator.TempJob);
             job.Nodes = tree ? _grid.TreeNodeList : noNodes;
             job.Bricks = tree ? _grid.TreeBrickList : noBytes;
             job.Region = tree ? _grid.TreeRegionOf(SizeClass) : noBytes;
             job.Field = _tree ? _bytes : noBytes;
             job.Seeds = _tree ? _seeds : noSeeds;
+            job.Cost = tree ? _cost : noCost;
+            job.Table = _tree ? _table : noTable;
             var handle = job.Schedule(points.Length, 64, JobHandle.CombineDependencies(_build, dependsOn, tree ? _grid.TreeWriters(SizeClass) : default));
             noNodes.Dispose(handle);
             noBytes.Dispose(handle);
             noSeeds.Dispose(handle);
+            noTable.Dispose(handle);
+            noCost.Dispose(handle);
             _read(handle);
             // A job over the tree reads the grid's tree and regions: what next writes them waits for it.
             if (tree) { _grid.AddReader(handle); }

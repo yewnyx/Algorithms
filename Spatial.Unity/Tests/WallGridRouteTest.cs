@@ -217,8 +217,118 @@ namespace Yewnyx.Spatial.Tests {
             Assert.That(first.FillCost(Opening, CellCost.Closed), Is.True);
             first.ScheduleRegions(body, Everywhere);
             Assert.That(route.IsCurrent, Is.True);
+            // A cost that closes nothing leaves the way open, and the route current; closing the opening does not.
             Assert.That(second.FillCost(Opening, 32), Is.True);
+            Assert.That(route.IsCurrent, Is.True);
+            Assert.That(second.FillCost(Opening, CellCost.Closed), Is.True);
             Assert.That(route.IsCurrent, Is.False);
+        }
+
+        [Test]
+        public void ATableGivesWhatTheCostsPutThroughItGive() {
+            // One grid holds what the cells are; the other the costs one kind of agent sees there.
+            using var what = Flooded(out var body);
+            using var priced = Flooded(out var other);
+            var table = new byte[CellCost.TableLength];
+            Assert.That(CostTable.Make(12f, -4f, table), Is.True);
+            Assert.That(priced.FillCost(Everywhere[0], table[0]), Is.True);
+            var painted = new[] {
+                (Solid.Box(new Box(2, 0, 0, 3.5f, 8, 8)), CostTable.Of(8, 0)),
+                (Solid.Box(new Box(4.5f, 0, 0, 6, 4, 8)), CostTable.Of(0, 12)),
+                (Solid.Box(new Box(5, 4.5f, 0, 8, 8, 8)), CostTable.Of(3, 15)),
+            };
+            foreach (var (solid, value) in painted) {
+                Assert.That(what.FillCost(solid, value), Is.True);
+                Assert.That(priced.FillCost(solid, table[value]), Is.True);
+            }
+            Assert.That((what.HasRegions(body), priced.HasRegions(other)), Is.EqualTo((true, true)), "fills that close nothing keep the regions");
+            // Flooded again, each grid knows exactly which costs its cells hold, and the two searches go alike step for step.
+            what.ScheduleRegions(body, Everywhere);
+            priced.ScheduleRegions(other, Everywhere);
+
+            using var withTable = new WallGridRoute { Leeway = 0f };
+            using var throughIt = new WallGridRoute { Leeway = 0f };
+            using var without = new WallGridRoute { Leeway = 0f };
+            withTable.SetCostTable(table);
+            var differ = 0;
+            foreach (var (from, to) in new[] { (Left, Right), (new float3(1.25f, 6.75f, 1.25f), new float3(6.75f, 6.75f, 2.25f)), (new float3(0.75f, 3.75f, 2.75f), new float3(7.25f, 1.75f, 0.75f)) }) {
+                withTable.Schedule(what, body, from, to).Complete();
+                throughIt.Schedule(priced, other, from, to).Complete();
+                without.Schedule(what, body, from, to).Complete();
+                Assert.That(withTable.Status, Is.EqualTo(RouteStatus.Found));
+                Assert.That(withTable.Status, Is.EqualTo(throughIt.Status));
+                Assert.That(withTable.Cost, Is.EqualTo(throughIt.Cost).Within(1e-3f), $"from {from} to {to}");
+                Assert.That(withTable.Expanded, Is.EqualTo(throughIt.Expanded), "the same least cost, from the table");
+                Assert.That(withTable.Points.ToArray(), Is.EqualTo(throughIt.Points.ToArray()));
+                if (Math.Abs(without.Cost - withTable.Cost) > 1e-3f) { differ++; }
+            }
+            Assert.That(differ, Is.GreaterThan(0), "the table changes what a route costs");
+
+            // A field with the table is the field over the costs put through it.
+            var seeds = new[] { TravelSeed.FromPoint(Solid.Sphere(Right.x, Right.y, Right.z, 0.8f), Right.x, Right.y, Right.z) };
+            using var one = what.ScheduleField(body, seeds, 0.02f, default, table);
+            using var two = priced.ScheduleField(other, seeds, 0.02f);
+            Assert.That((one.IsBuilt, two.IsBuilt), Is.EqualTo((true, true)));
+            Assert.That(one.Distance.ToArray(), Is.EqualTo(two.Distance.ToArray()));
+
+            // A fill that closes a cell forgets the regions, and so does one that opens it again.
+            Assert.That(what.FillCost(Opening, CellCost.Closed), Is.True);
+            Assert.That(what.HasRegions(body), Is.False);
+            what.ScheduleRegions(body, Everywhere);
+            Assert.That(what.FillCost(Opening, 32), Is.True);
+            Assert.That(what.HasRegions(body), Is.False);
+            // Tables that cannot be used are refused.
+            Assert.That(() => withTable.SetCostTable(new byte[255]), Throws.ArgumentException);
+            var opens = (byte[])table.Clone();
+            opens[CellCost.Closed] = 0;
+            Assert.That(() => withTable.SetCostTable(opens), Throws.ArgumentException);
+            Assert.That(() => priced.ScheduleField(other, seeds, 0.02f, default, opens), Throws.ArgumentException);
+        }
+
+        [Test]
+        public void AFillThatClosesNothingAddsItsValueToTheLeastARouteReckonsWith() {
+            // The table prefers fog: clear cells cost 60, the most fogged nothing.
+            var table = new byte[CellCost.TableLength];
+            Assert.That(CostTable.Make(0f, -4f, table), Is.True);
+            using var kept = Flooded(out var body);
+            using var again = Flooded(out var other);
+            // Both grids hold the clear cost everywhere, and are flooded with it: the least is 60.
+            Assert.That(kept.FillCost(Everywhere[0], CostTable.Of(1, 0)), Is.True);
+            Assert.That(again.FillCost(Everywhere[0], CostTable.Of(1, 0)), Is.True);
+            kept.ScheduleRegions(body, Everywhere);
+            // Then fog everywhere, cheaper for the table than anything held: the one grid keeps its regions, the other floods again.
+            Assert.That(kept.FillCost(Everywhere[0], CostTable.Of(1, 12)), Is.True);
+            Assert.That(again.FillCost(Everywhere[0], CostTable.Of(1, 12)), Is.True);
+            Assert.That(kept.HasRegions(body), Is.True);
+            again.ScheduleRegions(other, Everywhere);
+            using var one = new WallGridRoute { Leeway = 0f };
+            using var two = new WallGridRoute { Leeway = 0f };
+            one.SetCostTable(table);
+            two.SetCostTable(table);
+            foreach (var (from, to) in new[] { (Left, Right), (new float3(1.25f, 6.75f, 1.25f), new float3(2.75f, 1.25f, 1.75f)) }) {
+                one.Schedule(kept, body, from, to).Complete();
+                two.Schedule(again, other, from, to).Complete();
+                Assert.That(one.Status, Is.EqualTo(RouteStatus.Found));
+                Assert.That((one.Cost, one.Expanded), Is.EqualTo((two.Cost, two.Expanded)), "the least the route reckons with is that of the fog written since the flood");
+                Assert.That(one.Points.ToArray(), Is.EqualTo(two.Points.ToArray()));
+            }
+        }
+
+        [Test]
+        public void ACostTableIsMadeFromTwoWeights() {
+            var table = new byte[CellCost.TableLength];
+            Assert.That(CostTable.Make(4f, 0f, table), Is.True);
+            Assert.That((table[CostTable.Of(3, 0)], table[CostTable.Of(0, 9)], table[CostTable.Of(15, 14)], table[CellCost.Closed]), Is.EqualTo(((byte)12, (byte)0, (byte)60, (byte)255)));
+            // A weight below 0 is a preference: the most fogged cells cost nothing, clear ones the most.
+            Assert.That(CostTable.Make(0f, -4f, table), Is.True);
+            Assert.That((table[CostTable.Of(0, 15)], table[CostTable.Of(0, 0)], table[CostTable.Of(7, 10)]), Is.EqualTo(((byte)0, (byte)60, (byte)20)));
+            Assert.That(CostTable.Make(40f, 0f, table), Is.True);
+            Assert.That(table[CostTable.Of(15, 0)], Is.EqualTo(254), "held below closed");
+            Assert.That(CellCost.IsTable(table), Is.True);
+            Assert.That(CostTable.Make(float.NaN, 0f, table), Is.False);
+            Assert.That(CostTable.Make(1f, 1f, new byte[255]), Is.False);
+            Assert.That(CostTable.Of(20, -3), Is.EqualTo(CostTable.Of(15, 0)));
+            Assert.That(CostTable.Of(15, 15), Is.EqualTo(CellCost.Closed - 1), "only Closed closes");
         }
 
         [Test]

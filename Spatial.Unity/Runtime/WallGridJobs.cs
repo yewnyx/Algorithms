@@ -35,8 +35,10 @@ namespace Yewnyx.Spatial {
         [DeallocateOnJobCompletion] public NativeArray<int> Queue;
         public NativeArray<byte> Region;
         // Whether the flood was done (1 or 0), how many cells it reached, how many seeds held no
-        // open cell, and the least cost among the cells it reached.
+        // open cell, and 0.
         public NativeArray<int> Result;
+        // The costs the cells it reached hold, a bit for each of the 256.
+        public NativeArray<ulong> Present;
 
         public void Execute() {
             // Regions are only as good as the wall distance they are flooded from: unless every layer
@@ -52,7 +54,8 @@ namespace Yewnyx.Spatial {
             Result[0] = done ? 1 : 0;
             Result[1] = reached;
             Result[2] = empty;
-            Result[3] = done ? Regions.LeastCost(Shape, Region.AsReadOnlySpan(), Cost.AsReadOnlySpan()) : 0;
+            Result[3] = 0;
+            if (!done || !Regions.CostsIn(Shape, Region.AsReadOnlySpan(), Cost.AsReadOnlySpan(), Present.AsSpan())) { Present.AsSpan().Clear(); }
         }
     }
 
@@ -62,6 +65,8 @@ namespace Yewnyx.Spatial {
         public GridShape Shape;
         public float Unit;
         [ReadOnly] public NativeArray<byte> Region, Cost;
+        // What each cost costs this field's kind of agent: 256, or none.
+        [ReadOnly, DeallocateOnJobCompletion] public NativeArray<byte> Table;
         // The size class's flood: element 0 is 1 if its regions are those of the shapes and costs held.
         [ReadOnly] public NativeArray<int> Flooded;
         [ReadOnly, DeallocateOnJobCompletion] public NativeArray<TravelSeed> Seeds;
@@ -75,7 +80,7 @@ namespace Yewnyx.Spatial {
             // A field is only as good as the regions it spreads through.
             int reached = 0, cut = 0;
             var built = Flooded[0] != 0 && Travel.Build(Shape, Region.AsReadOnlySpan(), Cost.AsReadOnlySpan(), Seeds.AsReadOnlySpan(), Unit,
-                Distance.AsSpan(), Times.AsSpan(), Heap.AsSpan(), out reached, out cut);
+                Distance.AsSpan(), Times.AsSpan(), Heap.AsSpan(), out reached, out cut, Table.AsReadOnlySpan());
             if (!built) { Distance.AsSpan().Fill(Travel.Unreached); }
             Result[0] = built ? 1 : 0;
             Result[1] = reached;
@@ -93,10 +98,11 @@ namespace Yewnyx.Spatial {
         public ShapeArrays Shapes;
         public bool Straighten;
         public float Leeway;
-        [ReadOnly] public NativeArray<byte> Wall, Region, Cost;
+        [ReadOnly] public NativeArray<byte> Wall, Region, Cost, Table;
         // The size class's flood: element 0 is 1 if its regions are those of the shapes and costs
-        // held, and element 3 is the least cost among their cells.
+        // held. And the costs their cells hold, from which the least a step can cost is worked out.
         [ReadOnly] public NativeArray<int> Flooded;
+        [ReadOnly] public NativeArray<ulong> Present;
         public float3 From, To;
         // The search's own.
         public NativeArray<float> Sums;
@@ -113,7 +119,9 @@ namespace Yewnyx.Spatial {
             }
             Result[0] = Routes.Find(new WallMap(Shape, Unit, Cap, Wall.AsReadOnlySpan()), Size, Shapes.Set,
                 Region.AsReadOnlySpan(), Cost.AsReadOnlySpan(), From.x, From.y, From.z, To.x, To.y, To.z, Straighten,
-                Sums.AsSpan(), Links.AsSpan(), Heap.AsSpan(), Points.Reinterpret<float>(12).AsSpan(), (byte)Flooded[3], Leeway);
+                Sums.AsSpan(), Links.AsSpan(), Heap.AsSpan(), Points.Reinterpret<float>(12).AsSpan(),
+                // With no costs kept every cell is normal, whatever the table.
+                Cost.Length == 0 ? (byte)0 : CellCost.Least(Present.AsReadOnlySpan(), Table.AsReadOnlySpan()), Leeway, Table.AsReadOnlySpan());
         }
     }
 
@@ -126,14 +134,18 @@ namespace Yewnyx.Spatial {
         public SizeClass Size;
         [ReadOnly] public NativeList<WallNode> Nodes;
         [ReadOnly] public NativeList<byte> Bricks;
+        // The costs over the tree, a byte a leaf, or empty.
+        [ReadOnly] public NativeList<byte> Cost;
         // One element: 1 if the tree is that of the shapes held.
         [ReadOnly] public NativeArray<byte> Filled;
         [ReadOnly, DeallocateOnJobCompletion] public NativeArray<Solid> Seeds;
         // What TreeRegions.FromSeeds makes, cut to what it used: empty after a flood that was refused.
         public NativeList<byte> Region;
         // Whether the flood was done (1 or 0), how many cells it reached, how many seeds held no
-        // open cell, and 0 for the least cost: a tree keeps no costs.
+        // open cell, and 0.
         public NativeArray<int> Result;
+        // The costs the leaves it reached hold, a bit for each of the 256.
+        public NativeArray<ulong> Present;
 
         public void Execute() {
             Result[0] = 0; Result[1] = 0; Result[2] = 0; Result[3] = 0;
@@ -145,12 +157,13 @@ namespace Yewnyx.Spatial {
             Region.ResizeUninitialized(most);
             var marks = new NativeArray<ulong>(TreeRegions.MarksLength(tree), Allocator.Temp, NativeArrayOptions.UninitializedMemory);
             var queue = new NativeArray<int>(TreeRegions.QueueLength(tree), Allocator.Temp, NativeArrayOptions.UninitializedMemory);
-            var done = TreeRegions.FromSeeds(tree, Size, Seeds.AsReadOnlySpan(), Region.AsArray().AsSpan(), marks.AsSpan(), queue.AsSpan(), out var length, out var reached, out var empty);
+            var done = TreeRegions.FromSeeds(tree, Size, Cost.AsArray().AsReadOnlySpan(), Seeds.AsReadOnlySpan(), Region.AsArray().AsSpan(), marks.AsSpan(), queue.AsSpan(), out var length, out var reached, out var empty);
             marks.Dispose();
             queue.Dispose();
             // What was not needed is given back: the bytes follow the shapes' surface.
             Region.ResizeUninitialized(done ? length : 0);
             Region.TrimExcess();
+            if (!done || !TreeRegions.CostsIn(tree, Region.AsArray().AsReadOnlySpan(), Cost.AsArray().AsReadOnlySpan(), Present.AsSpan())) { Present.AsSpan().Clear(); }
             Result[0] = done ? 1 : 0;
             Result[1] = reached;
             Result[2] = empty;
@@ -172,6 +185,10 @@ namespace Yewnyx.Spatial {
         [ReadOnly] public NativeList<byte> Region;
         // The size class's flood: element 0 is 1 if its regions are those of the shapes held.
         [ReadOnly] public NativeArray<int> Flooded;
+        // The costs over the tree, the route's table, and the costs the regions' leaves hold.
+        [ReadOnly] public NativeList<byte> Cost;
+        [ReadOnly] public NativeArray<byte> Table;
+        [ReadOnly] public NativeArray<ulong> Present;
         public float3 From, To;
         // The search's own.
         public NativeArray<float> Sums;
@@ -185,8 +202,9 @@ namespace Yewnyx.Spatial {
                 return;
             }
             var tree = new WallTree(Shape, Unit, Cap, Nodes.AsArray().AsReadOnlySpan(), Bricks.AsArray().AsReadOnlySpan());
-            Result[0] = TreeRoutes.Find(tree, Size, Shapes.Set, Region.AsArray().AsReadOnlySpan(), From.x, From.y, From.z, To.x, To.y, To.z, Straighten,
-                Sums.AsSpan(), Links.AsSpan(), Points.Reinterpret<float>(12).AsSpan(), Leeway);
+            var least = Cost.Length == 0 ? (byte)0 : CellCost.Least(Present.AsReadOnlySpan(), Table.AsReadOnlySpan());
+            Result[0] = TreeRoutes.Find(tree, Size, Shapes.Set, Region.AsArray().AsReadOnlySpan(), Cost.AsArray().AsReadOnlySpan(), From.x, From.y, From.z, To.x, To.y, To.z, Straighten,
+                Sums.AsSpan(), Links.AsSpan(), Points.Reinterpret<float>(12).AsSpan(), least, Leeway, Table.AsReadOnlySpan());
         }
     }
 
@@ -225,6 +243,8 @@ namespace Yewnyx.Spatial {
         // The flood's result: element 0 is 1 if it was done.
         [ReadOnly] public NativeArray<int> Flooded;
         [ReadOnly] public NativeArray<TravelSeed> Seeds;
+        // The costs over the tree, as the field keeps them, and the field's table.
+        [ReadOnly] public NativeArray<byte> Cost, Table;
         // What TreeFields.Build writes, cut to its length: empty after a build that was refused.
         public NativeList<byte> Field;
         // Whether the build was done (1 or 0), how many places it reached, and how many it cut.
@@ -240,7 +260,8 @@ namespace Yewnyx.Spatial {
             Field.ResizeUninitialized(length);
             var sums = new NativeArray<float>(places, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
             var ints = new NativeArray<int>(work, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
-            var done = TreeFields.Build(tree, region, Seeds.AsReadOnlySpan(), FieldUnit, Field.AsArray().AsSpan(), sums.AsSpan(), ints.AsSpan(), out var written, out var reached, out var cut);
+            var done = TreeFields.Build(tree, region, Cost.AsReadOnlySpan(), Seeds.AsReadOnlySpan(), FieldUnit, Field.AsArray().AsSpan(), sums.AsSpan(), ints.AsSpan(),
+                out var written, out var reached, out var cut, Table.AsReadOnlySpan());
             sums.Dispose();
             ints.Dispose();
             Field.ResizeUninitialized(done ? written : 0);
@@ -262,6 +283,8 @@ namespace Yewnyx.Spatial {
         [ReadOnly] public NativeList<WallNode> Nodes;
         [ReadOnly] public NativeList<byte> Bricks, Region, Field;
         [ReadOnly] public NativeArray<TravelSeed> Seeds;
+        // Over a tree: the costs the field was built with, and its table.
+        [ReadOnly] public NativeArray<byte> Cost, Table;
         [ReadOnly] public NativeArray<ushort> Distance;
         // The field's build: element 0 is 1 if it was built.
         [ReadOnly] public NativeArray<int> Result;
@@ -280,7 +303,7 @@ namespace Yewnyx.Spatial {
             if (!Stale && Result[0] != 0) {
                 if (Tree) {
                     var field = new TreeField(new WallTree(Shape, Unit, Cap, Nodes.AsArray().AsReadOnlySpan(), Bricks.AsArray().AsReadOnlySpan()),
-                        Region.AsArray().AsReadOnlySpan(), Field.AsArray().AsReadOnlySpan(), Seeds.AsReadOnlySpan(), FieldUnit);
+                        Region.AsArray().AsReadOnlySpan(), Field.AsArray().AsReadOnlySpan(), Seeds.AsReadOnlySpan(), FieldUnit, Cost.AsReadOnlySpan(), Table.AsReadOnlySpan());
                     found = WallGridField.AskTree(field, Ask, point, out vector, out travel, out place);
                 } else {
                     found = WallGridField.AskCounts(new TravelField(Shape, FieldUnit, Distance.AsReadOnlySpan()), Ask, point, out vector, out travel, out place);

@@ -25,6 +25,8 @@ namespace Yewnyx.Spatial {
         private readonly Allocator _allocator;
         private NativeArray<float> _sums, _treeSums;
         private NativeArray<int> _links, _heap, _treeLinks;
+        // What each cost costs this route's kind of agent: 256, or none.
+        private NativeArray<byte> _table;
         private int _treePlaces = DefaultTreePlaces;
         private NativeArray<float3> _points;
         private NativeArray<RouteResult> _result;
@@ -37,7 +39,7 @@ namespace Yewnyx.Spatial {
         /// <summary>The leeway a route object starts with: a way may cost a tenth more than the cheapest.</summary>
         public const float DefaultLeeway = 0.1f;
 
-        /// <summary>The least leeway a search over a tree is run with: see <see cref="TreeRoutes.Find"/>.</summary>
+        /// <summary>The least leeway a search over a tree is run with: see <see cref="TreeRoutes.Find(in WallTree, in SizeClass, in ShapeSet, ReadOnlySpan{byte}, ReadOnlySpan{byte}, float, float, float, float, float, float, bool, Span{float}, Span{int}, Span{float}, byte, float, ReadOnlySpan{byte})"/>.</summary>
         public const float TreeLeeway = 0.25f;
 
         /// <summary>
@@ -66,6 +68,7 @@ namespace Yewnyx.Spatial {
             _heap = new NativeArray<int>(0, allocator);
             _treeSums = new NativeArray<float>(0, allocator);
             _treeLinks = new NativeArray<int>(0, allocator);
+            _table = new NativeArray<byte>(0, allocator);
         }
 
         /// <summary>Whether <see cref="Dispose"/> has been called.</summary>
@@ -91,6 +94,25 @@ namespace Yewnyx.Spatial {
                 if (!(value >= 0f) || float.IsInfinity(value)) { throw new ArgumentOutOfRangeException(nameof(value), value, "Must be 0 or more, and finite."); }
                 _leeway = value;
             }
+        }
+
+        /// <summary>
+        /// Says what each cost of the grid costs this route's kind of agent, for the searches scheduled
+        /// from now on: 256 costs, one for each byte, that leave 255 closed, or empty for each byte as
+        /// it is (see <see cref="CellCost.IsTable"/> and <see cref="CostTable.Make"/>). The table is copied.
+        /// </summary>
+        /// <remarks>
+        /// A table changes nothing while the grid keeps no costs: before the first <see cref="WallGrid.FillCost"/>
+        /// of a value other than 0, after <see cref="WallGrid.ClearCost"/>, and on a grid that keeps a tree.
+        /// So a table that prices 0 above 0, as a preference does, takes effect from the first fill.
+        /// </remarks>
+        public void SetCostTable(ReadOnlySpan<byte> table) {
+            _requireAlive();
+            if (!CellCost.IsTable(table)) { throw new ArgumentException("A table is empty, or 256 costs that leave 255 closed.", nameof(table)); }
+            _search.Complete();
+            _table.Dispose();
+            _table = new NativeArray<byte>(table.Length, _allocator, NativeArrayOptions.UninitializedMemory);
+            table.CopyTo(_table.AsSpan());
         }
 
         // The most places a search over a grid that keeps a tree may hold, for the searches
@@ -121,7 +143,7 @@ namespace Yewnyx.Spatial {
         /// way steps through.
         /// A search scheduled while the last is still running runs after it, and the last one's
         /// answer is lost.
-        /// Over a grid that keeps a tree the search is <see cref="TreeRoutes.Find"/>'s: among
+        /// Over a grid that keeps a tree the search is <see cref="TreeRoutes.Find(in WallTree, in SizeClass, in ShapeSet, ReadOnlySpan{byte}, ReadOnlySpan{byte}, float, float, float, float, float, float, bool, Span{float}, Span{int}, Span{float}, byte, float, ReadOnlySpan{byte})"/>'s: among
         /// open cubes and bricks, with no more than <see cref="DefaultTreePlaces"/> of them held,
         /// and with a leeway of <see cref="TreeLeeway"/> or <see cref="Leeway"/>, whichever is more.
         /// </remarks>
@@ -136,7 +158,7 @@ namespace Yewnyx.Spatial {
                     _treeSums = new NativeArray<float>(sums, _allocator, NativeArrayOptions.UninitializedMemory);
                     _treeLinks = new NativeArray<int>(links, _allocator, NativeArrayOptions.UninitializedMemory);
                 }
-                _search = grid.ScheduleTreeRoute(sizeClass, from, to, straighten, math.max(_leeway, TreeLeeway), _treeSums, _treeLinks, _points, _result,
+                _search = grid.ScheduleTreeRoute(sizeClass, from, to, straighten, math.max(_leeway, TreeLeeway), _table, _treeSums, _treeLinks, _points, _result,
                     JobHandle.CombineDependencies(dependsOn, _search));
                 _grid = grid;
                 _sizeClass = sizeClass;
@@ -154,7 +176,7 @@ namespace Yewnyx.Spatial {
                 _links = new NativeArray<int>(cells, _allocator);
                 _heap = new NativeArray<int>(cells, _allocator, NativeArrayOptions.UninitializedMemory);
             }
-            _search = grid.ScheduleRoute(sizeClass, from, to, straighten, _leeway, _sums, _links, _heap, _points, _result,
+            _search = grid.ScheduleRoute(sizeClass, from, to, straighten, _leeway, _table, _sums, _links, _heap, _points, _result,
                 JobHandle.CombineDependencies(dependsOn, _search));
             _grid = grid;
             _sizeClass = sizeClass;
@@ -199,8 +221,10 @@ namespace Yewnyx.Spatial {
 
         /// <summary>
         /// Whether the regions the route was searched through are still the grid's: false once a
-        /// cost has changed, new shapes were taken or the regions were flooded again, and before
-        /// any search. A route that is not current may lead through what is now shut.
+        /// cost has closed or opened a cell, new shapes were taken or the regions were flooded again,
+        /// and before any search. A route that is not current may lead through what is now shut. A
+        /// change of cost that closes and opens nothing leaves it current: still open, though no
+        /// longer sure to be the cheapest.
         /// </summary>
         /// <remarks>
         /// It is about the grid alone, and waits for nothing. It is true for a search that was
@@ -230,7 +254,7 @@ namespace Yewnyx.Spatial {
             if (_disposed) { return; }
             _disposed = true;
             _search.Complete();
-            _sums.Dispose(); _links.Dispose(); _heap.Dispose(); _treeSums.Dispose(); _treeLinks.Dispose(); _points.Dispose(); _result.Dispose();
+            _sums.Dispose(); _links.Dispose(); _heap.Dispose(); _treeSums.Dispose(); _treeLinks.Dispose(); _points.Dispose(); _result.Dispose(); _table.Dispose();
         }
 
         private RouteResult _answer() {
