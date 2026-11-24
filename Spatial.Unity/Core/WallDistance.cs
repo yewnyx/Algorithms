@@ -96,9 +96,9 @@ namespace Yewnyx.Spatial {
             var shape = wall.Shape;
             if (!wall.IsValid || !shape.Holds(x, y, z)) { return false; }
             double size = shape.CellSize;
-            _between(x, shape.OriginX, size, shape.CountX, out var lowX, out var highX, out var fx, out var offX);
-            _between(y, shape.OriginY, size, shape.CountY, out var lowY, out var highY, out var fy, out var offY);
-            _between(z, shape.OriginZ, size, shape.CountZ, out var lowZ, out var highZ, out var fz, out var offZ);
+            Between(x, shape.OriginX, size, shape.CountX, out var lowX, out var highX, out var fx, out var offX);
+            Between(y, shape.OriginY, size, shape.CountY, out var lowY, out var highY, out var fy, out var offY);
+            Between(z, shape.OriginZ, size, shape.CountZ, out var lowZ, out var highZ, out var fz, out var offZ);
 
             ReadOnlySpan<byte> held = wall.Distance;
             double unit = wall.Unit;
@@ -106,7 +106,24 @@ namespace Yewnyx.Spatial {
             double d010 = held[shape.Index(lowX, highY, lowZ)] * unit, d110 = held[shape.Index(highX, highY, lowZ)] * unit;
             double d001 = held[shape.Index(lowX, lowY, highZ)] * unit, d101 = held[shape.Index(highX, lowY, highZ)] * unit;
             double d011 = held[shape.Index(lowX, highY, highZ)] * unit, d111 = held[shape.Index(highX, highY, highZ)] * unit;
+            room = Proven(d000, d100, d010, d110, d001, d101, d011, d111, fx, fy, fz, lowX != highX && lowY != highY && lowZ != highZ, size,
+                Math.Sqrt(offX * offX + offY * offY + offZ * offZ), wall.Cap * unit);
+            return true;
+        }
 
+        /// <summary>
+        /// Whether the nearest shape is proven to be at least <paramref name="radius"/> from a
+        /// point, from the map alone: what <see cref="RoomAt"/> gives, compared. False where RoomAt
+        /// would be refused.
+        /// </summary>
+        public static bool HasRoom(in WallMap wall, float x, float y, float z, float radius) => RoomAt(wall, x, y, z, out var room) && room >= radius;
+
+        // What eight cells prove at a point among their centres: each cell's distance, how far
+        // between the two rows of centres the point sits on each axis, whether the eight are a cube
+        // with all three sides, the cell size, how far outside the centres the point is, and the
+        // most a map can say. One piece of arithmetic for every storage, so that they agree to the bit.
+        internal static float Proven(double d000, double d100, double d010, double d110, double d001, double d101, double d011, double d111,
+            double fx, double fy, double fz, bool cube, double size, double off, double most) {
             double gx = 1d - fx, gy = 1d - fy, gz = 1d - fz;
             var blend = gz * (gy * (gx * d000 * d000 + fx * d100 * d100) + fy * (gx * d010 * d010 + fx * d110 * d110)) +
                         fz * (gy * (gx * d001 * d001 + fx * d101 * d101) + fy * (gx * d011 * d011 + fx * d111 * d111));
@@ -115,7 +132,7 @@ namespace Yewnyx.Spatial {
 
             // The second bound needs a cube with all three sides, and every corner clear of its middle.
             var least = _least(_least(d000, d100, d010, d110), _least(d001, d101, d011, d111), double.MaxValue, double.MaxValue);
-            if (lowX != highX && lowY != highY && lowZ != highZ && least * least > 0.75d * size * size) {
+            if (cube && least * least > 0.75d * size * size) {
                 var half = 0.5d * size * size;
                 var second = fx * size + Math.Sqrt(_square(_least(d000, d010, d001, d011)) - half);
                 second = _lower(second, gx * size + Math.Sqrt(_square(_least(d100, d110, d101, d111)) - half));
@@ -128,17 +145,24 @@ namespace Yewnyx.Spatial {
 
             // In the outer half cell the point is not among any eight centres: what holds at the
             // nearest point that is, less the way there, holds here.
-            proven -= Math.Sqrt(offX * offX + offY * offY + offZ * offZ) + Shapes.Slack;
-            var most = wall.Cap * unit;
-            room = (float)(proven > most ? most : proven > 0d ? proven : 0d);
-            return true;
+            proven -= off + Shapes.Slack;
+            return (float)(proven > most ? most : proven > 0d ? proven : 0d);
+        }
+
+        // The least that eight cells at the cap prove at any point among their centres, less a
+        // hair for rounding: the second of the two bounds at the middle of a face of the eight, or
+        // the first at their middle where the second does not apply.
+        internal static double OpenRoom(float unit, byte cap, float cellSize) {
+            double most = cap * (double)unit, size = cellSize;
+            var inside = most * most > 0.75d * size * size ? most * most - 0.5d * size * size : most * most - 0.75d * size * size;
+            return (inside > 0d ? Math.Sqrt(inside) : 0d) - Shapes.Slack - 1e-6;
         }
 
         internal static bool Usable(float unit, byte cap) => unit > 0f && !float.IsInfinity(unit) && cap > 0;
 
         // The two rows of centres a coordinate lies between, how far between them it sits (0 at the
         // low row, 1 at the high), and how far outside both it is (0 unless it is in the outer half cell).
-        private static void _between(float value, float origin, double size, int count, out int low, out int high, out double between, out double off) {
+        internal static void Between(float value, float origin, double size, int count, out int low, out int high, out double between, out double off) {
             var at = ((double)value - origin) / size - 0.5d;
             var floor = Math.Floor(at);
             low = floor < 0d ? 0 : floor > count - 1 ? count - 1 : (int)floor;

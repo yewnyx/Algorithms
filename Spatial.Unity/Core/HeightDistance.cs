@@ -148,6 +148,33 @@ namespace Yewnyx.Spatial {
             return a >= b ? h00 + a * (h10 - h00) + b * (h11 - h10) : h00 + b * (h01 - h00) + a * (h11 - h01);
         }
 
+        /// <summary>
+        /// The lowest and the highest kept height, as numbers, among the blocks that a range of
+        /// the rectangle touches. The range is in metres from the first corner and is held to the
+        /// rectangle. Returns false if a block cannot be read.
+        /// </summary>
+        public static bool Span(in HeightField field, ReadOnlySpan<uint> blocks, ReadOnlySpan<ushort> heights,
+            double fromU, double toU, double fromW, double toW, out int lowest, out int highest) {
+            lowest = Top; highest = 0;
+            if (field.CountU < 1 || field.CountW < 1 || field.CountU > Most || field.CountW > Most) { return false; }
+            int blocksU = (field.CountU + Squares - 1) / Squares, blocksW = (field.CountW + Squares - 1) / Squares;
+            double blockU = (double)field.SizeU * Squares, blockW = (double)field.SizeW * Squares;
+            int firstU = _index(fromU / blockU, blocksU), lastU = _index(toU / blockU, blocksU);
+            int firstW = _index(fromW / blockW, blocksW), lastW = _index(toW / blockW, blocksW);
+            for (var atW = firstW; atW <= lastW; atW++) {
+                for (var atU = firstU; atU <= lastU; atU++) {
+                    if (!_kept(field, blocks, heights, atU, atW, blocksU, out var first, out var acrossU, out var acrossW, out _, out _, out _)) { return false; }
+                    var kept = heights.Slice(first, acrossU * acrossW);
+                    for (var k = 0; k < kept.Length; k++) {
+                        int held = kept[k];
+                        if (held < lowest) { lowest = held; }
+                        if (held > highest) { highest = held; }
+                    }
+                }
+            }
+            return true;
+        }
+
         // One block's kept heights and where it lies, in squares. False if it cannot be read.
         private static bool _kept(in HeightField field, ReadOnlySpan<uint> blocks, ReadOnlySpan<ushort> heights, int blockU, int blockW, int blocksU,
             out int first, out int acrossU, out int acrossW, out int spacing, out int width, out int depth) {
