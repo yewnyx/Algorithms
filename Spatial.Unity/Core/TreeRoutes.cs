@@ -688,6 +688,13 @@ namespace Yewnyx.Spatial {
                 Cell[slot] = x + y * CountX + z * Layer;
                 double dx = x - GoalX, dy = y - GoalY, dz = z - GoalZ;
                 var rank = (float)(spent + Ahead * Math.Sqrt(dx * dx + dy * dy + dz * dz));
+                // A place that waits can rank higher than it did: come into more cheaply at a cell
+                // farther from the goal. Then down the heap.
+                if (waits > 0 && rank > Rank[slot]) {
+                    Rank[slot] = rank;
+                    _down(waits - 1, slot, rank);
+                    return true;
+                }
                 // Up the heap from where it waits, or from a new last place.
                 var at = waits > 0 ? waits - 1 : Waiting++;
                 while (at > 0) {
@@ -704,25 +711,28 @@ namespace Yewnyx.Spatial {
                 return true;
             }
 
+            // Puts a slot of a rank at a place in the heap or below it.
+            private void _down(int at, int slot, float rank) {
+                while (true) {
+                    var below = 2 * at + 1;
+                    if (below >= Waiting) { break; }
+                    if (below + 1 < Waiting && Rank[Heap[below + 1]] < Rank[Heap[below]]) { below++; }
+                    if (!(Rank[Heap[below]] < rank)) { break; }
+                    Heap[at] = Heap[below];
+                    HeapAt[Heap[at]] = at + 1;
+                    at = below;
+                }
+                Heap[at] = slot;
+                HeapAt[slot] = at + 1;
+            }
+
             // Takes the slot with the least rank out of the heap.
             private int _pop() {
                 var top = Heap[0];
                 Waiting--;
                 if (Waiting > 0) {
                     var moved = Heap[Waiting];
-                    var rank = Rank[moved];
-                    var at = 0;
-                    while (true) {
-                        var below = 2 * at + 1;
-                        if (below >= Waiting) { break; }
-                        if (below + 1 < Waiting && Rank[Heap[below + 1]] < Rank[Heap[below]]) { below++; }
-                        if (!(Rank[Heap[below]] < rank)) { break; }
-                        Heap[at] = Heap[below];
-                        HeapAt[Heap[at]] = at + 1;
-                        at = below;
-                    }
-                    Heap[at] = moved;
-                    HeapAt[moved] = at + 1;
+                    _down(0, moved, Rank[moved]);
                 }
                 HeapAt[top] = -1;
                 Taken++;
