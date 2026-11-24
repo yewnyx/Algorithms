@@ -286,10 +286,8 @@ public class GroupedDiffTest {
             return GroupedDiff.Refine(a.AsSpan(), linesA, b.AsSpan(), linesB, groupHunks.AsSpan(0, groupCount), hunks, workspace);
         }
 
-        Run();
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        var count = Run();
-        (GC.GetAllocatedBytesForCurrentThread() - before).Should().Be(0);
+        var count = 0;
+        Allocation.Fewest(() => count = Run()).Should().Be(0);
         count.Should().BePositive();
     }
 }

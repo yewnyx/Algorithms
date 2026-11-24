@@ -20,6 +20,11 @@
 
     <ItemGroup>
         <Using Include="Xunit"/>
+        <Using Include="Yewnyx.TestSupport"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <Compile Include="..\TestSupport\Allocation.cs" Link="Allocation.cs"/>
     </ItemGroup>
 
     <ItemGroup>
