@@ -61,8 +61,9 @@ public partial class GridPanel : UserControl {
         SceneOutdoors.Click += (_, _) => SetScene(WallScene.Outdoors);
         TreeBox.IsCheckedChanged += (_, _) => {
             _world.AsTree = TreeBox.IsChecked == true;
-            // Only the wall distance is kept as a tree so far: the other views need a count for every cell.
-            SetMode(_world.AsTree ? 0 : _mode);
+            // A tree has no costs, and no travel fields yet: those need a count for every cell.
+            if (_world.AsTree && _world.CostBoxes.Count > 0) { _world.ClearCost(); Flooded(); }
+            SetMode(_world.AsTree && ByTravel ? 0 : _mode);
         };
 
         Generate();
@@ -78,6 +79,8 @@ public partial class GridPanel : UserControl {
     };
 
     private const string TreeCaption = "How far each cell is from the nearest shape, as the tree keeps it: counts only in the bricks near surfaces (dark squares), and open air as cubes of one bit (white squares). Click a slice to put the probe there.";
+
+    private const string TreeRouteCaption = "The route over the tree from the probe to the goal (the pink diamond): the way through open cubes and bricks in blue, pulled straight in yellow. The table sets it beside the same search over a count for every cell.";
 
     private WallScene _scene = WallScene.Rooms;
 
@@ -100,10 +103,11 @@ public partial class GridPanel : UserControl {
         ModeTravel.IsChecked = mode == 2;
         ModeRoutes.IsChecked = mode == 3;
         var tree = TreeBox.IsChecked == true;
-        ModeRegions.IsEnabled = ModeTravel.IsEnabled = ModeRoutes.IsEnabled = !tree;
-        CaptionText.Text = mode == 0 && tree ? TreeCaption : Captions[mode];
+        ModeTravel.IsEnabled = !tree;
+        LikeBox.IsEnabled = !tree;
+        CaptionText.Text = mode == 0 && tree ? TreeCaption : mode == 3 && tree ? TreeRouteCaption : Captions[mode];
         BodyPanel.IsVisible = mode > 0;
-        CostPanel.IsVisible = mode > 0;
+        CostPanel.IsVisible = mode > 0 && !tree;
         SlowButton.IsVisible = mode > 1;
         ShapesBox.IsVisible = mode == 3;
         _travelDirty = true;
@@ -205,12 +209,14 @@ public partial class GridPanel : UserControl {
         }
 
         // The routes from the probe to the anchor: the cells' way, the same pulled straight, and the straight one again with the shapes the other way about.
-        WallWorld.RouteFound? cellsRoute = null, straightRoute = null, otherRoute = null;
+        WallWorld.RouteFound? cellsRoute = null, straightRoute = null, otherRoute = null, denseRoute = null;
         if (ByRoutes && _world.Problem is null && _anchor is { } goal) {
             var useShapes = ShapesBox.IsChecked == true;
             cellsRoute = _world.FindRoute(x, y, z, goal.x, goal.y, goal.z, false, useShapes);
             straightRoute = _world.FindRoute(x, y, z, goal.x, goal.y, goal.z, true, useShapes);
             otherRoute = _world.FindRoute(x, y, z, goal.x, goal.y, goal.z, true, !useShapes);
+            // Over the tree, the same route over the counts, to set beside it.
+            if (_world.AsTree) { denseRoute = _world.FindDenseRoute(x, y, z, goal.x, goal.y, goal.z, true, useShapes); }
         }
 
         foreach (var view in new[] { TopView, SideView }) {
@@ -245,7 +251,7 @@ public partial class GridPanel : UserControl {
         CubeView.InvalidateVisual();
 
         if (ByRoutes) {
-            RouteTable(x, y, z, cellsRoute, straightRoute, otherRoute);
+            RouteTable(x, y, z, cellsRoute, straightRoute, otherRoute, denseRoute);
             return;
         }
         if (ByTravel) {
@@ -310,7 +316,7 @@ public partial class GridPanel : UserControl {
             ("Shapes", $"{_world.Solids.Length} ({Of(SolidKind.Box)} boxes, {Of(SolidKind.Sphere)} spheres, {Of(SolidKind.Capsule)} capsules){(_scene == WallScene.Outdoors ? " and the ground" : "")}"));
     }
 
-    private void RouteTable(float x, float y, float z, WallWorld.RouteFound? cells, WallWorld.RouteFound? straight, WallWorld.RouteFound? other) {
+    private void RouteTable(float x, float y, float z, WallWorld.RouteFound? cells, WallWorld.RouteFound? straight, WallWorld.RouteFound? other, WallWorld.RouteFound? dense) {
         HintText.Text = "Press on either slice to put the start (the white dot); Shift or the right button puts the goal (the pink diamond); the wheel over a slice moves the other slice. " +
             "Blue: the cells' way, a dot at every cell centre; yellow: the same pulled straight; thin and dashed: off this slice, seen flat; dotted: a leg the library does not prove clear; orange boxes are costs you dropped. The 3D view draws the same colours on the two planes, with both routes in space.";
         if (_world.Problem is { } problem) {
@@ -333,6 +339,21 @@ public partial class GridPanel : UserControl {
         }
         var shapes = ShapesBox.IsChecked == true;
         var lengthStraight = Length(x, y, z, straight.Points);
+        if (dense is not null) {
+            var denseFound = dense.Status == RouteStatus.Found;
+            var treeRows = new List<(string, string)> {
+                ("Over the tree", $"{Count(straight.Count, "point")}, {lengthStraight:0.0} m"),
+                ("Over the counts", denseFound ? $"{Count(dense.Count, "point")}, {Length(x, y, z, dense.Points):0.0} m" : $"no route ({dense.Status})"),
+                ("Straight line", $"{direct:0.0} m"),
+                ("Searched", $"{Count(straight.Expanded, "place")} over the tree, {Count(dense.Expanded, "cell")} over the counts"),
+                ("Search arrays", $"{WallWorld.TreeSearchBytes / 1024:N0} KB over the tree whatever the grid, {_world.DenseSearchBytes / 1024:N0} KB over the counts"),
+                ("Search time", $"{straight.Milliseconds:0.00} ms over the tree, {dense.Milliseconds:0.00} ms over the counts"),
+            };
+            if (straight.Ends.HasFlag(RouteEnds.FirstLegUnproven)) { treeRows.Add(("Note", "The first leg is not proven clear.")); }
+            if (straight.Ends.HasFlag(RouteEnds.StopsShortOfGoal)) { treeRows.Add(("Note", "Stops short of the goal.")); }
+            Table(treeRows.ToArray());
+            return;
+        }
         var rows = new List<(string, string)> {
             ("Status", "Found"),
             ("Pulled straight", $"{Count(straight.Count, "point")}, {lengthStraight:0.0} m"),
@@ -376,7 +397,17 @@ public partial class GridPanel : UserControl {
             return;
         }
         var region = _world.RegionAt(WallWorld.CellOf(x, WallWorld.CountX), WallWorld.CellOf(y, WallWorld.CountY), WallWorld.CellOf(z, WallWorld.CountZ));
-        var held = LikeBox.IsChecked == true;
+        var held = LikeBox.IsChecked == true && !_world.AsTree;
+        if (_world.AsTree) {
+            Table(
+                ("Body radius", $"{_world.Size.Radius:0.00} m"),
+                ("Reached", $"{Cells(_world.TreeReached)}, as over the counts: {(_world.TreeReached == _world.Reached ? "the same" : Cells(_world.Reached))}"),
+                ("Probe's cell", isOpen ? $"open, region {region}" : "not open"),
+                ("Regions kept in", $"{_world.TreeRegionBytes:N0} bytes, against {_world.DenseBytes:N0} for a byte a cell"),
+                ("Nearest open cell", hasNearest ? $"{Math.Sqrt((nx - x) * (nx - x) + (ny - y) * (ny - y) + (nz - z) * (nz - z)):0.00} m away" : $"none within {look:0.#} m"),
+                ("Flood time", $"{_world.TreeFloodMilliseconds:0.0} ms"));
+            return;
+        }
         Table(
             ("Body radius", $"{_world.Size.Radius:0.00} m"),
             ("Regions", $"{_world.RegionCount} (from {Count(_world.Seeds.Length, "seed")})"),

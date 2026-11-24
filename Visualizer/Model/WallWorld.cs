@@ -335,10 +335,66 @@ public sealed class WallWorld {
         (Reached, EmptySeeds) = (reached, empty);
         foreach (var number in _region) { RegionCount = Math.Max(RegionCount, number); }
         FloodMilliseconds = clock.Elapsed.TotalMilliseconds;
+        FloodTree();
+    }
+
+    // ---- Regions over the tree: the same flood, kept as a byte a brick and a byte an open cube. ----
+
+    private byte[] _treeRegion = [];
+    private readonly byte[] _treeRegionOf = new byte[CountX * CountY * CountZ];
+
+    /// <summary>How many bytes the tree's flood kept, against a byte a cell for the counts'.</summary>
+    public int TreeRegionBytes { get; private set; }
+
+    public int TreeReached { get; private set; }
+    public double TreeFloodMilliseconds { get; private set; }
+
+    // The tree's flood, from the same seeds. The bytes are the library's own, read only through its calls, so a cell's
+    // region is found by flooding from each seed alone and asking which of those floods holds the cell: seeds whose
+    // floods meet share a region, numbered in the seeds' order as the flood numbers them.
+    private void FloodTree() {
+        Array.Clear(_treeRegionOf);
+        (TreeRegionBytes, TreeReached, TreeFloodMilliseconds) = (0, 0, 0);
+        _treeRegion = [];
+        if (Problem is not null) { return; }
+        var tree = Tree();
+        var marks = new ulong[TreeRegions.MarksLength(tree)];
+        var queue = new int[TreeRegions.QueueLength(tree)];
+        var clock = Stopwatch.StartNew();
+        var region = new byte[TreeRegions.MostLength(tree)];
+        if (!TreeRegions.FromSeeds(tree, Size, Seeds, region, marks, queue, out var length, out var reached, out _)) { return; }
+        TreeFloodMilliseconds = clock.Elapsed.TotalMilliseconds;
+        _treeRegion = region[..length];
+        (TreeRegionBytes, TreeReached) = (length, reached);
+
+        var alone = new List<byte[]>();
+        foreach (var seed in Seeds) {
+            var one = new byte[TreeRegions.MostLength(tree)];
+            alone.Add(TreeRegions.FromSeeds(tree, Size, [seed], one, marks, queue, out _, out _, out _) ? one : []);
+        }
+        var numberOf = new byte[Seeds.Length];
+        byte regions = 0;
+        for (var z = 0; z < CountZ; z++) {
+            for (var y = 0; y < CountY; y++) {
+                for (var x = 0; x < CountX; x++) {
+                    Shape.CentreOf(x, y, z, out var cx, out var cy, out var cz);
+                    for (var s = 0; s < alone.Count; s++) {
+                        if (!TreeRegions.IsOpen(tree, alone[s], cx, cy, cz)) { continue; }
+                        if (numberOf[s] == 0) {
+                            // A seed's region is an earlier seed's if their floods share this cell; otherwise it is the next.
+                            for (var t = 0; t < s && numberOf[s] == 0; t++) { if (numberOf[t] != 0 && TreeRegions.IsOpen(tree, alone[t], cx, cy, cz)) { numberOf[s] = numberOf[t]; } }
+                            if (numberOf[s] == 0) { numberOf[s] = ++regions; }
+                        }
+                        _treeRegionOf[Shape.IndexOf(x, y, z)] = numberOf[s];
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     /// <summary>The number of the region a cell is in, 0 if it is in none.</summary>
-    public byte RegionAt(int cellX, int cellY, int cellZ) => _region[Shape.IndexOf(cellX, cellY, cellZ)];
+    public byte RegionAt(int cellX, int cellY, int cellZ) => (AsTree ? _treeRegionOf : _region)[Shape.IndexOf(cellX, cellY, cellZ)];
 
     /// <summary>
     /// What a cell shows in region colour: its region (1 to 254), 255 for a cell open for the class that no seed reached,
@@ -350,11 +406,15 @@ public sealed class WallWorld {
         return Problem is null && Size.Cell > 0 && CountAt(cellX, cellY, cellZ) >= Size.Cell ? 255 : 256;
     }
 
-    public bool IsOpen(float x, float y, float z) => Regions.IsOpen(Shape, _region, x, y, z);
+    public bool IsOpen(float x, float y, float z) => AsTree ? TreeRegions.IsOpen(Tree(), _treeRegion, x, y, z) : Regions.IsOpen(Shape, _region, x, y, z);
 
-    /// <summary>The centre of the nearest open cell within a reach, in any region, or in the region of the cell holding a second point.</summary>
+    /// <summary>
+    /// The centre of the nearest open cell within a reach, in any region, or in the region of the cell holding a second point.
+    /// Over the tree only in any region: the library has no form for the same region there.
+    /// </summary>
     public bool NearestOpen(float x, float y, float z, float reach, (float x, float y, float z)? like, out float openX, out float openY, out float openZ) =>
-        like is { } l
+        AsTree ? TreeRegions.NearestOpen(Tree(), _treeRegion, x, y, z, reach, out openX, out openY, out openZ)
+        : like is { } l
             ? Regions.NearestOpen(Shape, _region, x, y, z, reach, l.x, l.y, l.z, out openX, out openY, out openZ)
             : Regions.NearestOpen(Shape, _region, x, y, z, reach, out openX, out openY, out openZ);
 
@@ -514,7 +574,48 @@ public sealed class WallWorld {
     /// <paramref name="straighten"/> false gives the cells' way, the centres of the cells it steps through; <paramref name="useShapes"/> false
     /// gives the library no shapes, so that a leg is proven by the map alone.
     /// </summary>
-    public RouteFound FindRoute(float fromX, float fromY, float fromZ, float toX, float toY, float toZ, bool straighten, bool useShapes) {
+    public RouteFound FindRoute(float fromX, float fromY, float fromZ, float toX, float toY, float toZ, bool straighten, bool useShapes) =>
+        AsTree ? FindTreeRoute(fromX, fromY, fromZ, toX, toY, toZ, straighten, useShapes) : FindDenseRoute(fromX, fromY, fromZ, toX, toY, toZ, straighten, useShapes);
+
+    /// <summary>The places a search over the tree has room for: what a route object in the package holds.</summary>
+    public const int TreePlaces = 24 * 1024;
+
+    private float[]? _treeSums;
+    private int[]? _treeLinks;
+
+    /// <summary>What the search's own arrays take over the tree, whatever the grid's size.</summary>
+    public static long TreeSearchBytes => 4L * (TreeRoutes.SumsLength(TreePlaces) + TreeRoutes.LinksLength(TreePlaces));
+
+    /// <summary>What they take over the counts: some for every cell.</summary>
+    public long DenseSearchBytes => 4L * (Routes.SumsLength(Shape) + Routes.LinksLength(Shape) + Routes.HeapLength(Shape));
+
+    /// <summary>
+    /// The same search over the tree: through the tree's regions, with no costs, as <see cref="FindRoute"/> does over the
+    /// counts. Its <see cref="RouteFound.Expanded"/> counts places, an open cube or a brick's open cells, not cells.
+    /// </summary>
+    public RouteFound FindTreeRoute(float fromX, float fromY, float fromZ, float toX, float toY, float toZ, bool straighten, bool useShapes) {
+        _treeSums ??= new float[TreeRoutes.SumsLength(TreePlaces)];
+        _treeLinks ??= new int[TreeRoutes.LinksLength(TreePlaces)];
+        var clock = Stopwatch.StartNew();
+        var shapes = useShapes ? Set() : default;
+        var result = TreeRoutes.Find(Tree(), Size, shapes, _treeRegion, fromX, fromY, fromZ, toX, toY, toZ, straighten, _treeSums, _treeLinks, _routePoints);
+        if (result.Status == RouteStatus.BufferTooShort) {
+            _routePoints = new float[3 * result.Count];
+            result = TreeRoutes.Find(Tree(), Size, shapes, _treeRegion, fromX, fromY, fromZ, toX, toY, toZ, straighten, _treeSums, _treeLinks, _routePoints);
+        }
+        return Found(result, clock.Elapsed.TotalMilliseconds);
+    }
+
+    private RouteFound Found(RouteResult result, double milliseconds) {
+        var points = new List<(float x, float y, float z)>();
+        if (result.Status == RouteStatus.Found) {
+            for (var i = 0; i < result.Count; i++) { points.Add((_routePoints[3 * i], _routePoints[3 * i + 1], _routePoints[3 * i + 2])); }
+        }
+        return new RouteFound(result.Status, result.Ends, result.Count, result.Expanded, result.Cost, points, milliseconds);
+    }
+
+    /// <summary>The search over the counts, whichever is shown.</summary>
+    public RouteFound FindDenseRoute(float fromX, float fromY, float fromZ, float toX, float toY, float toZ, bool straighten, bool useShapes) {
         var wall = new WallMap(Shape, Unit, Cap, Counts);
         // The links must be zero the first time and a search leaves them so.
         _sums ??= new float[Routes.SumsLength(Shape)];
@@ -530,12 +631,7 @@ public sealed class WallWorld {
             _routePoints = new float[3 * result.Count];
             result = Routes.Find(wall, size, shapes, _region, Cost, fromX, fromY, fromZ, toX, toY, toZ, straighten, _sums, _links, _routeHeap, _routePoints, least);
         }
-        var milliseconds = clock.Elapsed.TotalMilliseconds;
-        var points = new List<(float x, float y, float z)>();
-        if (result.Status == RouteStatus.Found) {
-            for (var i = 0; i < result.Count; i++) { points.Add((_routePoints[3 * i], _routePoints[3 * i + 1], _routePoints[3 * i + 2])); }
-        }
-        return new RouteFound(result.Status, result.Ends, result.Count, result.Expanded, result.Cost, points, milliseconds);
+        return Found(result, clock.Elapsed.TotalMilliseconds);
     }
 
     private static float Range(Random random, float low, float high) => low + (float)random.NextDouble() * (high - low);
