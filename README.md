@@ -425,4 +425,6 @@ The Visualizer's Spatial grid tab shows these layers in slices and in 3D.
 
 The rest, one line each and grouped by type, is in [Spatial/Reference.md](Spatial/Reference.md).
 
+How each part works, in plain words, and what it gives up: [How it works](Spatial.Unity/Documentation~/HowItWorks.md).
+
 `Spatial.Unity/` is a Unity package (`xyz.yewnyx.spatial`) around the same source. For boxes it has a `BoxSet` that recomputes only the boxes that moved, Burst jobs that rebuild the tree and answer batches of queries, a gizmo and a sample scene. For the grid it has a `WallGrid` that is marked, flooded and searched in jobs, `ColliderShapes` to fill it from colliders (a part of a larger level at a time, with terrains as heightfields), travel fields and routes. To install it, download the `.tgz` of a release from the repository's Releases page and add it in Unity with Package Manager's **Add package from tarball**. See [Spatial.Unity/README.md](Spatial.Unity/README.md) and its [reference](Spatial.Unity/Documentation~/Reference.md).

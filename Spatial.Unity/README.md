@@ -183,5 +183,6 @@ The Visualizer's Spatial grid tab shows these layers in slices and in 3D.
 ## More
 
 - [Reference.md](Documentation~/Reference.md): every rule and limit, one line each, grouped by type.
+- [HowItWorks.md](Documentation~/HowItWorks.md): how each part works, in plain words, and what it gives up.
 - The package has two folders. `Runtime/` holds the Unity parts (`BoxSet`, the jobs, `WallGrid`, `ColliderShapes`). `Core/` is the Spatial library with no Unity reference, which also builds for .NET and is described in the [repository README](https://github.com/yewnyx/Algorithms/blob/spatial/README.md#spatial).
 - Tests run in the Unity editor, with the package in a project's `testables`; see the [reference](Documentation~/Reference.md#tests).
