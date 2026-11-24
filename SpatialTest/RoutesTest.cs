@@ -1694,4 +1694,97 @@ public class RoutesTest {
             }
         }
     }
+
+    // A table for one kind of agent: what each level of danger (the high four bits) and of fog (the low four) costs it.
+    private static byte[] Table(int danger, int fog, bool closeDanger = false) {
+        var table = new byte[CellCost.TableLength];
+        for (var b = 0; b < CellCost.TableLength; b++) {
+            int d = b >> 4, f = b & 15;
+            table[b] = closeDanger && d >= 8 ? CellCost.Closed : (byte)Math.Min(254, d * danger + f * fog);
+        }
+        table[CellCost.Closed] = CellCost.Closed;
+        return table;
+    }
+
+    [Fact]
+    public void ATableGivesWhatTheLayerPutThroughItGives() {
+        // The layer says what cells are: danger across the middle, fog in a corner, some of both, and a wall closed for all.
+        var level = new Level(Grid, Cluttered(), cost: (shape, layer) => {
+            CellCost.Fill(shape, Solid.Box(new Box(3, 0, 0, 4.5f, 8, 8)), 0x80, layer).Should().BeTrue();
+            CellCost.Fill(shape, Solid.Box(new Box(5, 2, 0, 7, 5, 8)), 0x0C, layer).Should().BeTrue();
+            CellCost.Fill(shape, Solid.Box(new Box(0, 6, 0, 2, 8, 8)), 0x3F, layer).Should().BeTrue();
+            CellCost.Fill(shape, Solid.Box(new Box(1, 3, 0, 1.6f, 4, 8)), CellCost.Closed, layer).Should().BeTrue();
+        });
+        var open = new List<P>();
+        for (var i = 0; i < Grid.CellCount; i += 7) {
+            if (level.Region[i] == 0) { continue; }
+            int x = i % 16, y = i / 16 % 16, z = i / 256;
+            open.Add(level.Centre(x, y, z));
+        }
+        open.Count.Should().BeGreaterThan(60);
+        var present = new ulong[4];
+        Regions.CostsIn(Grid, level.Region, level.Cost, present).Should().BeTrue();
+        CellCost.Least(present, []).Should().Be(Regions.LeastCost(Grid, level.Region, level.Cost));
+        var routesDiffer = 0;
+        var firstPoints = new Dictionary<int, float[]>();
+        // The fourth prefers fog: the clearest cells cost the most, so the least any cell costs is above 0.
+        var prefersFog = Table(1, 0).Select((v, b) => b == CellCost.Closed ? v : (byte)(v + 30 - 2 * (b & 15))).ToArray();
+        foreach (var table in new[] { Table(12, 0), Table(0, 6), Table(1, 1, closeDanger: true), prefersFog }) {
+            var mapped = level.Cost.Select(b => table[b]).ToArray();
+            Regions.LeastCost(Grid, level.Region, level.Cost, table).Should().Be(Regions.LeastCost(Grid, level.Region, mapped));
+            CellCost.Least(present, table).Should().Be(Regions.LeastCost(Grid, level.Region, mapped), "from the values present, with no pass over the cells");
+            float[] a = new float[600], b = new float[600];
+            for (var k = 0; k + 1 < open.Count; k += 2) {
+                P from = open[k], to = open[open.Count - 1 - k];
+                var withTable = Routes.Find(level.Map, level.Size, level.Scene.Set, level.Region, level.Cost, from.X, from.Y, from.Z, to.X, to.Y, to.Z, true,
+                    level.Sums, level.Links, level.Heap, a, Regions.LeastCost(Grid, level.Region, level.Cost, table), 0f, table);
+                var throughIt = Routes.Find(level.Map, level.Size, level.Scene.Set, level.Region, mapped, from.X, from.Y, from.Z, to.X, to.Y, to.Z, true,
+                    level.Sums, level.Links, level.Heap, b, Regions.LeastCost(Grid, level.Region, mapped), 0f);
+                (withTable.Status, withTable.Ends, withTable.Count, withTable.Expanded, withTable.Cost).Should().Be((throughIt.Status, throughIt.Ends, throughIt.Count, throughIt.Expanded, throughIt.Cost), $"from {from} to {to}");
+                a.AsSpan(0, 3 * Math.Min(200, withTable.Count)).SequenceEqual(b.AsSpan(0, 3 * Math.Min(200, throughIt.Count))).Should().BeTrue();
+                if (withTable.Status != RouteStatus.Found) { continue; }
+                var points = a.AsSpan(0, 3 * withTable.Count).ToArray();
+                if (firstPoints.TryGetValue(k, out var before)) { if (!before.SequenceEqual(points)) { routesDiffer++; } } else { firstPoints[k] = points; }
+            }
+            // A travel field with the table is the one over the layer put through it.
+            TravelSeed[] seeds = [TravelSeed.FromPoint(Solid.Sphere(open[0].X, open[0].Y, open[0].Z, 0.8f), open[0].X, open[0].Y, open[0].Z)];
+            ushort[] one = new ushort[Grid.CellCount], other = new ushort[Grid.CellCount];
+            Travel.Build(Grid, level.Region, level.Cost, seeds, 0.02f, one, new float[Travel.TimesLength(Grid)], new int[Travel.HeapLength(Grid)], out _, out _, table).Should().BeTrue();
+            Travel.Build(Grid, level.Region, mapped, seeds, 0.02f, other, new float[Travel.TimesLength(Grid)], new int[Travel.HeapLength(Grid)], out _, out _).Should().BeTrue();
+            one.Should().Equal(other);
+        }
+        routesDiffer.Should().BeGreaterThan(0, "the kinds of agent go different ways over the same layer");
+    }
+
+    [Fact]
+    public void TheCostsHeldAreThoseOfTheCellsWithARegion() {
+        var grid = new GridShape(0, 0, 0, 0.5f, 4, 1, 1);
+        var present = new ulong[] { 9, 9, 9, 9 };
+        Regions.CostsIn(grid, [1, 0, 1, 0], [5, 0, 70, 200], present).Should().BeTrue();
+        present.Should().Equal(1UL << 5, 1UL << (70 - 64), 0UL, 0UL);
+        Regions.CostsIn(grid, [0, 0, 1, 0], [], present).Should().BeTrue();
+        present.Should().Equal(1UL, 0UL, 0UL, 0UL);
+        Regions.CostsIn(grid, [1, 0, 1, 0], [5, 0, 70], present).Should().BeFalse();
+        present.Should().Equal(0UL, 0UL, 0UL, 0UL);
+    }
+
+    [Fact]
+    public void ATableThatCannotBeUsedIsRefused() {
+        var level = new Level(Grid, Cluttered(), cost: (shape, layer) => CellCost.Fill(shape, Solid.Box(new Box(3, 0, 0, 4.5f, 8, 8)), 0x80, layer).Should().BeTrue());
+        var opens = CellCost.IsTable(Table(1, 1).Select((v, i) => i == CellCost.Closed ? (byte)0 : v).ToArray());
+        opens.Should().BeFalse("a table may not open what the layer closes");
+        CellCost.IsTable(new byte[255]).Should().BeFalse();
+        CellCost.IsTable([]).Should().BeTrue();
+        var bad = new byte[255];
+        P from = level.Centre(1, 1, 3), to = level.Centre(14, 14, 3);
+        Routes.Find(level.Map, level.Size, level.Scene.Set, level.Region, level.Cost, from.X, from.Y, from.Z, to.X, to.Y, to.Z, true,
+            level.Sums, level.Links, level.Heap, new float[600], 0, 0f, bad).Status.Should().Be(RouteStatus.Refused);
+        Regions.LeastCost(Grid, level.Region, level.Cost, bad).Should().Be(0);
+        CellCost.Least([ulong.MaxValue, ulong.MaxValue, ulong.MaxValue, ulong.MaxValue], bad).Should().Be(0);
+        CellCost.Least([1UL << 40, 0, 0], []).Should().Be(0, "too few marks to read");
+        CellCost.Least([1UL << 40, 0, 0, 0], []).Should().Be(40);
+        Travel.Build(Grid, level.Region, level.Cost, [TravelSeed.FromPoint(Solid.Sphere(from.X, from.Y, from.Z, 0.8f), from.X, from.Y, from.Z)], 0.02f, new ushort[Grid.CellCount],
+            new float[Travel.TimesLength(Grid)], new int[Travel.HeapLength(Grid)], out _, out _, bad).Should().BeFalse();
+    }
+
 }

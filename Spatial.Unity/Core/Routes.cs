@@ -13,7 +13,7 @@ namespace Yewnyx.Spatial {
         BufferTooShort = 3,
         /// <summary>
         /// The search held as many places as its arrays have room for before it found a way:
-        /// there may be one. There are no points. Only <see cref="TreeRoutes.Find"/> ends so.
+        /// there may be one. There are no points. Only <see cref="TreeRoutes.Find(in WallTree, in SizeClass, in ShapeSet, ReadOnlySpan{byte}, ReadOnlySpan{byte}, float, float, float, float, float, float, bool, Span{float}, Span{int}, Span{float}, byte, float, ReadOnlySpan{byte})"/> ends so.
         /// </summary>
         SearchFull = 4,
     }
@@ -36,7 +36,7 @@ namespace Yewnyx.Spatial {
         StopsShortOfGoal = 2,
     }
 
-    /// <summary>What <see cref="Routes.Find"/> or <see cref="TreeRoutes.Find"/> found. <c>default</c> is a search that was refused.</summary>
+    /// <summary>What <see cref="Routes.Find"/> or <see cref="TreeRoutes.Find(in WallTree, in SizeClass, in ShapeSet, ReadOnlySpan{byte}, ReadOnlySpan{byte}, float, float, float, float, float, float, bool, Span{float}, Span{int}, Span{float}, byte, float, ReadOnlySpan{byte})"/> found. <c>default</c> is a search that was refused.</summary>
     public readonly struct RouteResult {
         /// <summary>How the search ended.</summary>
         public readonly RouteStatus Status;
@@ -127,9 +127,14 @@ namespace Yewnyx.Spatial {
         /// an end may lie on a floor. With no shapes it is the nearest, seen or not. Ends in two
         /// regions, or an end with no such centre, are <see cref="RouteStatus.Unreachable"/>, and
         /// nothing is searched. Where a cell has been closed by cost since the regions were made,
-        /// a start in it is routed out of it, and a goal in it is unreachable.
+        /// a start in it is routed out of it where it is beside an open cell, and is unreachable
+        /// where it is not; a goal in it is unreachable.
         /// <paramref name="shapes"/> may be a set with no shapes: a leg is then proven by the map
         /// alone, which needs more room than the radius. <paramref name="cost"/> may be empty.
+        /// <paramref name="table"/> says what each byte of <paramref name="cost"/> costs one kind of
+        /// agent (see <see cref="CellCost.IsTable"/>); empty, each byte is its own cost. Everything
+        /// the search weighs is then what the table gives, and <paramref name="leastCost"/> should be
+        /// what <see cref="Regions.LeastCost"/> gives with the same table.
         /// <paramref name="sums"/>, <paramref name="links"/> and <paramref name="heap"/> are the
         /// search's own, and may be longer than this grid needs, so that one set serves grids of
         /// every size. The links must be all zero the first time; a search leaves them so, and
@@ -157,16 +162,18 @@ namespace Yewnyx.Spatial {
         /// The status is <see cref="RouteStatus.Refused"/> if the map cannot be used, the class does not
         /// fit it, the grid has more than <see cref="MostCells"/> cells, an array is too short (the
         /// cost array is neither empty nor one byte per cell), the shapes' spans do not belong
-        /// together, a point is not a finite number, or the leeway is below 0 or not finite.
+        /// together, a point is not a finite number, the leeway is below 0 or not finite, or the table
+        /// cannot be used.
         /// </remarks>
         public static RouteResult Find(in WallMap wall, in SizeClass size, in ShapeSet shapes, ReadOnlySpan<byte> region, ReadOnlySpan<byte> cost,
             float fromX, float fromY, float fromZ, float toX, float toY, float toZ, bool straighten,
-            Span<float> sums, Span<int> links, Span<int> heap, Span<float> points, byte leastCost = 0, float leeway = 0f) {
+            Span<float> sums, Span<int> links, Span<int> heap, Span<float> points, byte leastCost = 0, float leeway = 0f, ReadOnlySpan<byte> table = default) {
+            var costs = new Priced(cost, table);
             var count = 0;
             var ends = RouteEnds.None;
             var shape = wall.Shape;
             var cells = shape.CellCount;
-            if (!wall.IsValid || !size.Fits(wall) || cells > MostCells || region.Length < cells || (cost.Length != 0 && cost.Length < cells) ||
+            if (!wall.IsValid || !size.Fits(wall) || cells > MostCells || region.Length < cells || (costs.Length != 0 && costs.Length < cells) || !CellCost.IsTable(table) ||
                 sums.Length < 2 * cells || links.Length < cells || heap.Length < cells || shapes.Count < 0) { return default; }
             var sum = (double)fromX + fromY + fromZ + toX + toY + toZ;
             if (!(sum - sum == 0d)) { return default; }
@@ -182,8 +189,8 @@ namespace Yewnyx.Spatial {
 
             // What the cells that hold the two ends cost. A leg from an end may pass through cells
             // that cost as much as the one the end is in.
-            int fromCost = Legs.CostAt(shape, cost, fromX, fromY, fromZ), toCost = Legs.CostAt(shape, cost, toX, toY, toZ);
-            var priced = cost.Length != 0;
+            int fromCost = Legs.CostAt(shape, costs, fromX, fromY, fromZ), toCost = Legs.CostAt(shape, costs, toX, toY, toZ);
+            var priced = costs.Length != 0;
 
             // What each metre costs at the least: no cell of a way costs less.
             var weight = 1d + leastCost / 16d;
@@ -200,23 +207,23 @@ namespace Yewnyx.Spatial {
             var sure = true;
             if (priced && straighten) {
                 _centre(shape, start, out atX, out atY, out atZ);
-                Legs.Flown(shape, cost, Legs.AnyCost, fromX, fromY, fromZ, atX, atY, atZ, out fromWorth);
+                Legs.Flown(shape, costs, Legs.AnyCost, fromX, fromY, fromZ, atX, atY, atZ, out fromWorth);
                 double dx = atX, dy = atY, dz = atZ;
                 _centre(shape, goal, out atX, out atY, out atZ);
-                Legs.Flown(shape, cost, Legs.AnyCost, atX, atY, atZ, toX, toY, toZ, out toWorth);
+                Legs.Flown(shape, costs, Legs.AnyCost, atX, atY, atZ, toX, toY, toZ, out toWorth);
                 dx -= atX; dy -= atY; dz -= atZ;
                 var costliest = fromCost > toCost ? fromCost : toCost;
-                if (cost[start] > costliest) { costliest = cost[start]; }
-                if (cost[goal] > costliest) { costliest = cost[goal]; }
-                sure = Legs.Flown(shape, cost, costliest, fromX, fromY, fromZ, toX, toY, toZ, out var flown) &&
+                if (costs[start] > costliest) { costliest = costs[start]; }
+                if (costs[goal] > costliest) { costliest = costs[goal]; }
+                sure = Legs.Flown(shape, costs, costliest, fromX, fromY, fromZ, toX, toY, toZ, out var flown) &&
                        flown <= (fromWorth + Math.Sqrt(dx * dx + dy * dy + dz * dz) * weight + toWorth) * times * Spare;
             }
-            if (straighten && sure && Legs.Clear(wall, shapes, cost, Legs.AnyCost, Legs.AnySpend, size.Radius, size.LegNeed, fromX, fromY, fromZ, toX, toY, toZ)) {
+            if (straighten && sure && Legs.Clear(wall, shapes, costs, Legs.AnyCost, Legs.AnySpend, size.Radius, size.LegNeed, fromX, fromY, fromZ, toX, toY, toZ)) {
                 _add(points, ref count, toX, toY, toZ);
                 return new RouteResult(_fits(points, count), ends, count, 0, 0f);
             }
 
-            var steps = _search(wall, size, region, cost, start, goal, weight * times, sums.Slice(0, cells), sums.Slice(cells, cells),
+            var steps = _search(wall, size, region, costs, start, goal, weight * times, sums.Slice(0, cells), sums.Slice(cells, cells),
                 links.Slice(0, cells), heap.Slice(0, cells), out var expanded);
             if (steps == 0) { return new RouteResult(RouteStatus.Unreachable, RouteEnds.None, 0, expanded, 0f); }
             // The cells of the way, the goal's first, and what the way costs.
@@ -225,14 +232,14 @@ namespace Yewnyx.Spatial {
 
             if (!straighten) {
                 _centre(shape, way[steps - 1], out atX, out atY, out atZ);
-                if (!Legs.Clear(wall, shapes, cost, Legs.AnyCost, Legs.AnySpend, size.Radius, size.LegNeed, fromX, fromY, fromZ, atX, atY, atZ)) { ends |= RouteEnds.FirstLegUnproven; }
+                if (!Legs.Clear(wall, shapes, costs, Legs.AnyCost, Legs.AnySpend, size.Radius, size.LegNeed, fromX, fromY, fromZ, atX, atY, atZ)) { ends |= RouteEnds.FirstLegUnproven; }
                 for (var j = steps - 1; j >= 0; j--) {
                     _centre(shape, way[j], out atX, out atY, out atZ);
                     _add(points, ref count, atX, atY, atZ);
                 }
                 if (atX == toX && atY == toY && atZ == toZ) {
                     // The goal is the last centre.
-                } else if (Legs.Clear(wall, shapes, cost, Legs.AnyCost, Legs.AnySpend, size.Radius, size.LegNeed, atX, atY, atZ, toX, toY, toZ)) {
+                } else if (Legs.Clear(wall, shapes, costs, Legs.AnyCost, Legs.AnySpend, size.Radius, size.LegNeed, atX, atY, atZ, toX, toY, toZ)) {
                     _add(points, ref count, toX, toY, toZ);
                 } else {
                     ends |= RouteEnds.StopsShortOfGoal;
@@ -245,13 +252,13 @@ namespace Yewnyx.Spatial {
             // flown from centre to centre. The search is done with its sums, so they are kept there.
             Span<float> highest = sums.Slice(0, steps), worth = sums.Slice(cells, steps);
             if (priced) {
-                _stretch(shape, cost, way, steps - 1, highest, worth);
+                _stretch(shape, costs, way, steps - 1, highest, worth);
                 // The straight leg from start to goal again, now that there is a way to hold it
                 // to. One that was sure before the search was not clear, and is not now.
                 if (!sure) {
                     var most = fromCost > toCost ? fromCost : toCost;
                     if (highest[0] > most) { most = (int)highest[0]; }
-                    if (Legs.Clear(wall, shapes, cost, most, (fromWorth + worth[0] + toWorth) * Spare, size.Radius, size.LegNeed, fromX, fromY, fromZ, toX, toY, toZ)) {
+                    if (Legs.Clear(wall, shapes, costs, most, (fromWorth + worth[0] + toWorth) * Spare, size.Radius, size.LegNeed, fromX, fromY, fromZ, toX, toY, toZ)) {
                         _add(points, ref count, toX, toY, toZ);
                         return new RouteResult(_fits(points, count), ends, count, expanded, spent);
                     }
@@ -267,7 +274,7 @@ namespace Yewnyx.Spatial {
                 var held = priced && j < steps - 1;
                 var most = !held ? Legs.AnyCost : fromCost > highest[j] ? fromCost : (int)highest[j];
                 var spend = held ? (fromWorth + worth[j]) * Spare : Legs.AnySpend;
-                if (Legs.Clear(wall, shapes, cost, most, spend, size.Radius, size.LegNeed, fromX, fromY, fromZ, atX, atY, atZ)) {
+                if (Legs.Clear(wall, shapes, costs, most, spend, size.Radius, size.LegNeed, fromX, fromY, fromZ, atX, atY, atZ)) {
                     index = j;
                     break;
                 }
@@ -286,13 +293,13 @@ namespace Yewnyx.Spatial {
                     if (count == 0) { _add(points, ref count, atX, atY, atZ); }
                     break;
                 }
-                if (priced) { _stretch(shape, cost, way, index, highest, worth); }
+                if (priced) { _stretch(shape, costs, way, index, highest, worth); }
                 // From the centre of the goal's own cell, the leg to the goal is not held to a
                 // cost: it is the way's own last piece.
                 var held = priced && index > 0;
                 var most = !held ? Legs.AnyCost : toCost > highest[0] ? toCost : (int)highest[0];
                 var spend = held ? (worth[0] + toWorth) * Spare : Legs.AnySpend;
-                if (Legs.Clear(wall, shapes, cost, most, spend, size.Radius, size.LegNeed, atX, atY, atZ, toX, toY, toZ)) {
+                if (Legs.Clear(wall, shapes, costs, most, spend, size.Radius, size.LegNeed, atX, atY, atZ, toX, toY, toZ)) {
                     _add(points, ref count, toX, toY, toZ);
                     break;
                 }
@@ -305,7 +312,7 @@ namespace Yewnyx.Spatial {
                 var next = index - 1;
                 for (var j = 0; j < index - 1; j++) {
                     _centre(shape, way[j], out var x, out var y, out var z);
-                    if (Legs.Clear(wall, shapes, cost, priced ? (int)highest[j] : Legs.AnyCost, priced ? worth[j] * Spare : Legs.AnySpend,
+                    if (Legs.Clear(wall, shapes, costs, priced ? (int)highest[j] : Legs.AnyCost, priced ? worth[j] * Spare : Legs.AnySpend,
                             size.Radius, size.LegNeed, atX, atY, atZ, x, y, z)) {
                         next = j;
                         break;
@@ -329,7 +336,7 @@ namespace Yewnyx.Spatial {
         // about the part of the way from the cell at the index to it: the highest cost among its
         // cells, and what it costs as flown along the straight lines from centre to centre. Half
         // of each of those lines lies in each of its two cells. The way's cells are the goal's first.
-        private static void _stretch(in GridShape shape, ReadOnlySpan<byte> cost, ReadOnlySpan<int> way, int index, Span<float> highest, Span<float> worth) {
+        private static void _stretch(in GridShape shape, in Priced cost, ReadOnlySpan<int> way, int index, Span<float> highest, Span<float> worth) {
             int countX = shape.CountX, countY = shape.CountY, layer = countX * countY;
             double cell = shape.CellSize;
             int most = cost[way[index]];
@@ -434,7 +441,7 @@ namespace Yewnyx.Spatial {
         // is by the cheapest way to it. With some it need not be, and the way found still costs
         // no more than that many times the cheapest: the estimate never falls faster from cell
         // to cell than that many times what the step costs.
-        private static int _search(in WallMap wall, in SizeClass size, ReadOnlySpan<byte> region, ReadOnlySpan<byte> cost, int start, int goal, double weight,
+        private static int _search(in WallMap wall, in SizeClass size, ReadOnlySpan<byte> region, in Priced cost, int start, int goal, double weight,
             Span<float> total, Span<float> keys, Span<int> link, Span<int> heap, out int expanded) {
             var shape = wall.Shape;
             ReadOnlySpan<byte> held = wall.Distance;
@@ -556,7 +563,7 @@ namespace Yewnyx.Spatial {
         }
 
         // Open, of the wanted region, and not closed by cost since the regions were made.
-        private static bool _open(ReadOnlySpan<byte> region, ReadOnlySpan<byte> cost, byte wanted, int cell) =>
+        private static bool _open(ReadOnlySpan<byte> region, in Priced cost, byte wanted, int cell) =>
             region[cell] == wanted && (cost.Length == 0 || cost[cell] != CellCost.Closed);
 
         // The least a way between two cells can cost: the length of the shortest way by steps

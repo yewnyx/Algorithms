@@ -93,4 +93,18 @@ public class CellCostTest {
         written.Should().Be(0);
         cost.Should().OnlyContain(value => value == 0, "a refused fill writes nothing");
     }
+
+    [Fact]
+    public void AFillSaysHowManyClosedCellsItOpened() {
+        var grid = new GridShape(0, 0, 0, 0.5f, 8, 8, 8);
+        var cost = new byte[grid.CellCount];
+        CellCost.Fill(grid, Solid.Box(new Box(0, 0, 0, 2, 4, 4)), CellCost.Closed, cost, out var closed, out var opened).Should().BeTrue();
+        (closed, opened).Should().Be((4 * 8 * 8, 0));
+        // Half of those made dear but not closed, and some open cells too: only the closed ones count as opened.
+        CellCost.Fill(grid, Solid.Box(new Box(1, 0, 0, 3, 4, 4)), 40, cost, out var written, out opened).Should().BeTrue();
+        (written, opened).Should().Be((4 * 8 * 8, 2 * 8 * 8));
+        CellCost.Fill(grid, Solid.Box(new Box(0, 0, 0, 4, 4, 4)), CellCost.Closed, cost, out _, out opened).Should().BeTrue();
+        opened.Should().Be(0, "closing opens nothing");
+    }
+
 }

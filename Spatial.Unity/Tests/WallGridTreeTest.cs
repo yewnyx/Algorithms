@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using NUnit.Framework;
 using Unity.Burst;
 using Unity.Collections;
@@ -208,10 +210,18 @@ namespace Yewnyx.Spatial.Tests {
         private static readonly Solid[] Seeds = { Solid.Sphere(2, 2, 3, 0.5f) };
 
         [Test]
-        public void ATreeKeepsNoCosts() {
+        public void ATreeKeepsCostsForItsLeavesOnceItIsBuilt() {
+            using var bare = new WallGrid(Grid, 1f / 128f, 128, Allocator.Persistent, true);
+            Assert.That(bare.SetShapes(Solids, Corners, Triangles), Is.True);
+            Assert.That(bare.FillCost(Solid.Box(new Box(0, 0, 0, 2, 2, 2)), 32), Is.False, "no leaves before the tree is built");
             using var tree = Marked(true);
-            Assert.That(tree.FillCost(Solid.Box(new Box(0, 0, 0, 2, 2, 2)), 32), Is.False);
             Assert.That(tree.TryCost(new float3(1, 1, 1), out var cost), Is.True);
+            Assert.That(cost, Is.EqualTo(0));
+            Assert.That(tree.FillCost(Solid.Box(new Box(0, 0, 0, 2, 2, 2)), 32), Is.True);
+            Assert.That(tree.TryCost(new float3(1, 1, 1), out cost), Is.True);
+            Assert.That(cost, Is.EqualTo(32));
+            tree.ClearCost();
+            Assert.That(tree.TryCost(new float3(1, 1, 1), out cost), Is.True);
             Assert.That(cost, Is.EqualTo(0));
             Assert.That(tree.AddSizeClass(0.51f), Is.EqualTo(0));
             Assert.That(() => tree.ScheduleField(0, Array.Empty<TravelSeed>(), unit: 0f), Throws.InstanceOf<ArgumentOutOfRangeException>());
@@ -345,6 +355,117 @@ namespace Yewnyx.Spatial.Tests {
             var bytes = (NativeList<byte>)typeof(WallGridField).GetField("_bytes", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(last);
             Assert.That(bytes.IsCreated, Is.False);
             points.Dispose(); travels.Dispose(); places.Dispose();
+        }
+
+        [Test]
+        public void CostsOverATreeGiveRoutesAndFieldsWhatTheCostsPutThroughThemGive() {
+            // One grid holds what the leaves are; the other the costs one kind of agent sees there.
+            using var what = Marked(true);
+            using var priced = Marked(true);
+            what.AddSizeClass(0.51f);
+            priced.AddSizeClass(0.51f);
+            var table = new byte[CellCost.TableLength];
+            Assert.That(CostTable.Make(12f, -4f, table), Is.True);
+            Assert.That(priced.FillCost(Solid.Box(new Box(-1, -1, -1, 13, 11, 9)), table[0]), Is.True);
+            var painted = new[] {
+                (Solid.Box(new Box(3.5f, -1, 1, 5.5f, 11, 8)), CostTable.Of(8, 0)),
+                (Solid.Sphere(8, 7, 4, 2f), CostTable.Of(0, 12)),
+            };
+            foreach (var (solid, value) in painted) {
+                Assert.That(what.FillCost(solid, value), Is.True);
+                Assert.That(priced.FillCost(solid, table[value]), Is.True);
+            }
+            Assert.That(what.TryCost(new float3(4.5f, 5, 4), out var held) && held != 0, Is.True, "a leaf\'s cost");
+            what.ScheduleRegions(0, Seeds);
+            priced.ScheduleRegions(0, Seeds);
+            using var one = new WallGridRoute(64);
+            using var two = new WallGridRoute(64);
+            using var plain = new WallGridRoute(64);
+            one.SetCostTable(table);
+            float3[] ends = {
+                new float3(1.2f, 1.3f, 2.1f), new float3(8.9f, 8.7f, 6.2f), new float3(3.1f, 8.4f, 1.6f), new float3(8.6f, 0.9f, 2.2f),
+                new float3(5.6f, 5.4f, 6.9f), new float3(0.4f, 9.2f, 7.3f), new float3(6.1f, 2.2f, 0.45f),
+            };
+            int found = 0, differ = 0;
+            double withCosts = 0, withoutCosts = 0;
+            // What a route costs as flown over the leaves as the table prices them, sampled every 2 cm.
+            double Priced(WallGridRoute route, float3 start) {
+                var total = 0d;
+                var at = start;
+                for (var i = 0; i < route.Count; i++) {
+                    var point = route.Points[i];
+                    var steps = math.max(1, (int)math.ceil(math.distance(at, point) / 0.02f));
+                    for (var k = 0; k < steps; k++) {
+                        what.TryCost(math.lerp(at, point, (k + 0.5f) / steps), out var value);
+                        total += math.distance(at, point) / steps * (1 + table[value] / 16d);
+                    }
+                    at = point;
+                }
+                return total;
+            }
+            foreach (var from in ends) {
+                foreach (var to in ends) {
+                    if (from.Equals(to)) { continue; }
+                    one.Schedule(what, 0, from, to);
+                    two.Schedule(priced, 0, from, to);
+                    plain.Schedule(what, 0, from, to);
+                    Assert.That((one.Status, one.Count, one.Expanded, one.Cost), Is.EqualTo((two.Status, two.Count, two.Expanded, two.Cost)), $"from {from} to {to}");
+                    Assert.That(one.Points.ToArray(), Is.EqualTo(two.Points.ToArray()));
+                    if (one.Status != RouteStatus.Found) { continue; }
+                    found++;
+                    if (math.abs(one.Cost - plain.Cost) > 1e-3f) { differ++; }
+                    if (plain.Status == RouteStatus.Found) { withCosts += Priced(one, from); withoutCosts += Priced(plain, from); }
+                }
+            }
+            Assert.That(found, Is.GreaterThan(20));
+            Assert.That(differ, Is.GreaterThan(0), "the table changes what a route costs");
+            Assert.That(withCosts, Is.LessThan(withoutCosts * 0.98), "routes through the costs keep to the cheaper leaves");
+
+            // A field with the table answers as the field over the costs put through it.
+            var seeds = new[] { TravelSeed.FromPoint(Solid.Sphere(1.2f, 1.3f, 2.1f, 0.8f), 1.2f, 1.3f, 2.1f) };
+            using var first = what.ScheduleField(0, seeds, 0.02f, default, table);
+            using var second = priced.ScheduleField(0, seeds, 0.02f);
+            Assert.That((first.IsBuilt, second.IsBuilt), Is.EqualTo((true, true)));
+            using (var unpriced = what.ScheduleField(0, seeds, 0.02f)) {
+                NativeList<byte> Bytes(WallGridField field) => (NativeList<byte>)typeof(WallGridField).GetField("_bytes", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(field);
+                Assert.That(unpriced.IsBuilt, Is.True);
+                Assert.That(Bytes(first).AsArray().ToArray(), Is.Not.EqualTo(Bytes(unpriced).AsArray().ToArray()), "a field is built through the costs");
+            }
+            foreach (var at in ends) {
+                Assert.That(first.TryTravel(at, out var a, out var placeA), Is.EqualTo(second.TryTravel(at, out var b, out var placeB)));
+                Assert.That((a, placeA), Is.EqualTo((b, placeB)));
+                Assert.That(first.TryNext(at, out var nextA, out _, out _), Is.EqualTo(second.TryNext(at, out var nextB, out _, out _)));
+                Assert.That(nextA, Is.EqualTo(nextB));
+            }
+            // The field keeps the costs it was built with: costs filled after, that close nothing, change none of its answers.
+            var asked = new List<(float3 At, bool Travels, float Travel, bool Leads, float3 Next)>();
+            for (var x = 0.3f; x < 12f; x += 0.9f) {
+                for (var y = 0.4f; y < 10f; y += 1.1f) {
+                    for (var z = 0.35f; z < 8f; z += 1.3f) {
+                        var at = new float3(x, y, z);
+                        var travels = first.TryTravel(at, out var travel, out _);
+                        var leads = first.TryNext(at, out var next, out _, out _);
+                        asked.Add((at, travels, travel, leads, next));
+                    }
+                }
+            }
+            Assert.That(asked.Count(q => q.Leads), Is.GreaterThan(100));
+            Assert.That(what.FillCost(Solid.Box(new Box(-1, -1, -1, 13, 11, 9)), CostTable.Of(15, 15)), Is.True);
+            Assert.That(what.HasRegions(0), Is.True);
+            foreach (var q in asked) {
+                Assert.That((first.TryTravel(q.At, out var travel, out _), travel), Is.EqualTo((q.Travels, q.Travel)), $"at {q.At}");
+                Assert.That((first.TryNext(q.At, out var next, out _, out _), next), Is.EqualTo((q.Leads, q.Next)), $"at {q.At}");
+            }
+
+            // A closing fill forgets the regions; a new marking lets the costs go, since its leaves are new.
+            Assert.That(what.FillCost(Solid.Sphere(8, 7, 4, 1f), CellCost.Closed), Is.True);
+            Assert.That(what.HasRegions(0), Is.False);
+            what.ScheduleRegions(0, Seeds);
+            Assert.That(what.TryCost(new float3(8, 7, 4), out var closed) && closed == CellCost.Closed, Is.True);
+            Assert.That(what.IsOpen(0, new float3(8, 7, 4)), Is.False, "a closed leaf is no region's");
+            what.ScheduleMark();
+            Assert.That(what.TryCost(new float3(4.5f, 5, 4), out var after), Is.True);
+            Assert.That(after, Is.EqualTo(0));
         }
 
         [Test]

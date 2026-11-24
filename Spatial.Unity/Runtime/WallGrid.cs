@@ -52,6 +52,8 @@ namespace Yewnyx.Spatial {
         // The wall distance of a grid that keeps it as a tree. Empty until it is built, and in a grid that keeps a count for every cell.
         private NativeList<WallNode> _treeNodes;
         private NativeList<byte> _treeBricks;
+        // Costs over the tree, a byte a leaf: empty until a cost is written, and again after a new marking.
+        private NativeList<byte> _treeCost;
         private NativeArray<Solid> _solids;
         private NativeArray<float> _corners;
         private NativeArray<int> _triangles, _order;
@@ -69,6 +71,8 @@ namespace Yewnyx.Spatial {
             public NativeArray<byte> Region;
             public NativeList<byte> TreeRegion;
             public NativeArray<int> Result;
+            // The costs the regions' cells hold, a bit for each of the 256; a fill since the flood adds the value it wrote.
+            public NativeArray<ulong> Present;
             public JobHandle Flood;
             // Goes up each time the regions are forgotten or flooded again, so that a field built
             // from them can tell whether they are still the ones it was built from.
@@ -97,6 +101,7 @@ namespace Yewnyx.Spatial {
             // Until it is marked, the wall distance is 0 everywhere: nothing is proven.
             _wall = new NativeArray<byte>(tree ? 0 : shape.CellCount, allocator);
             _treeNodes = new NativeList<WallNode>(1, allocator);
+            _treeCost = new NativeList<byte>(0, allocator);
             _treeBricks = new NativeList<byte>(1, allocator);
             // No byte of cost is held until one is written: an empty array means every cell is normal.
             _cost = new NativeArray<byte>(0, allocator);
@@ -242,9 +247,12 @@ namespace Yewnyx.Spatial {
         /// A grid that keeps a tree builds it in one job. That takes seconds for a part of some
         /// hundreds of metres: build it once where the part is baked, keep what
         /// <see cref="TryWriteTree"/> gives, and hand it to <see cref="SetTree"/> when the part loads.
+        /// The costs over a tree belong to its leaves: marking it again lets them go, and the regions
+        /// with them, after waiting for every job of the grid's.
         /// </remarks>
         public JobHandle ScheduleMark(JobHandle dependsOn = default) {
             _requireAlive();
+            _forgetTreeCosts();
             var after = JobHandle.CombineDependencies(dependsOn, _mark, _readers);
             _mark = IsTree
                 ? new TreeJob { Shape = Shape, Shapes = _shapes(), Unit = Unit, Cap = Cap, Nodes = _treeNodes, Bricks = _treeBricks, Filled = _filled }.Schedule(after)
@@ -291,6 +299,7 @@ namespace Yewnyx.Spatial {
             tree.Nodes.CopyTo(_treeNodes.AsArray().AsSpan());
             tree.Bricks.CopyTo(_treeBricks.AsArray().AsSpan());
             _filled[0] = 1;
+            _forgetTreeCosts();
             return true;
         }
 
@@ -378,8 +387,10 @@ namespace Yewnyx.Spatial {
         /// step into it by 1 + value / 16. Returns false if the solid may not be stored.
         /// </summary>
         /// <remarks>
-        /// Regions follow the closed cells, so a change of cost leaves every size class without
-        /// regions until <see cref="ScheduleRegions"/> floods them again.
+        /// Regions follow the closed cells, so a fill that closes or opens a cell leaves every size
+        /// class without regions until <see cref="ScheduleRegions"/> floods them again. Any other fill
+        /// keeps them, and the fields built from them: a field keeps the costs it was built with, and
+        /// is for costs that hold still. Routes read the costs as they are when they are found.
         /// The grid holds a byte of cost a cell from the first time a cost other than 0 is written
         /// into a cell, until <see cref="ClearCost"/>. A solid that holds no cell's centre writes none.
         /// To make a whole grid cost more, fill a solid that covers all of it, and not only the
@@ -389,21 +400,42 @@ namespace Yewnyx.Spatial {
         /// </remarks>
         public bool FillCost(in Solid solid, byte value) {
             _settle();
-            // A grid that keeps a tree keeps no cost for each cell.
-            if (IsTree) { return false; }
+            if (IsTree) { return _fillTree(solid, value); }
             var none = _cost.Length == 0;
             if (none) {
                 _cost.Dispose();
                 _cost = new NativeArray<byte>(Shape.CellCount, _allocator);
             }
-            var filled = CellCost.Fill(Shape, solid, value, _cost.AsSpan(), out var written);
+            var filled = CellCost.Fill(Shape, solid, value, _cost.AsSpan(), out var written, out var opened);
             // Nothing was written that is not normal already: the bytes are not kept.
             if (none && (!filled || value == 0 || written == 0)) {
                 _cost.Dispose();
                 _cost = new NativeArray<byte>(0, _allocator);
             }
             if (!filled) { return false; }
-            _forgetRegions();
+            if (value == CellCost.Closed ? written > 0 : opened > 0) { _forgetRegions(); }
+            else if (written > 0) {
+                // The regions stay; the value written is among the costs their cells may hold now.
+                foreach (var sized in _sizes) { sized.Present[value >> 6] |= 1UL << (value & 63); }
+            }
+            return true;
+        }
+
+        // Over a tree: a byte a leaf, once the tree is built (see TreeCosts).
+        private bool _fillTree(in Solid solid, byte value) {
+            var tree = _tree();
+            var leaves = TreeCosts.LayerLength(tree);
+            if (leaves == 0 || _filled[0] == 0) { return false; }
+            var none = _treeCost.Length == 0;
+            if (none) { _treeCost.Resize(leaves, NativeArrayOptions.ClearMemory); }
+            var filled = TreeCosts.Fill(tree, solid, value, _treeCost.AsArray().AsSpan(), out var changed, out var opened);
+            // Nothing was written that is not normal already: the bytes are not kept.
+            if (none && (!filled || changed == 0)) { _treeCost.Clear(); }
+            if (!filled) { return false; }
+            if (value == CellCost.Closed ? changed > 0 : opened > 0) { _forgetRegions(); }
+            else if (changed > 0) {
+                foreach (var sized in _sizes) { sized.Present[value >> 6] |= 1UL << (value & 63); }
+            }
             return true;
         }
 
@@ -417,6 +449,7 @@ namespace Yewnyx.Spatial {
                 _cost.Dispose();
                 _cost = new NativeArray<byte>(0, _allocator);
             }
+            _treeCost.Clear();
             _forgetRegions();
         }
 
@@ -424,7 +457,11 @@ namespace Yewnyx.Spatial {
         public bool TryCost(float3 point, out byte cost) {
             // The costs are written only on this thread.
             _requireAlive();
-            return CellCost.At(Shape, _cost.AsReadOnlySpan(), point.x, point.y, point.z, out cost);
+            if (!IsTree) { return CellCost.At(Shape, _cost.AsReadOnlySpan(), point.x, point.y, point.z, out cost); }
+            // Over a tree the leaf's cost; a cell inside a shape is in no leaf.
+            if (_treeCost.Length == 0) { cost = 0; return Shape.TryCentre(point.x, point.y, point.z, out _, out _, out _); }
+            _marked();
+            return TreeCosts.At(_tree(), _treeCost.AsArray().AsReadOnlySpan(), point.x, point.y, point.z, out cost);
         }
 
         /// <summary>
@@ -444,6 +481,7 @@ namespace Yewnyx.Spatial {
                 Region = new NativeArray<byte>(IsTree ? 0 : Shape.CellCount, _allocator),
                 TreeRegion = new NativeList<byte>(1, _allocator),
                 Result = new NativeArray<int>(4, _allocator),
+                Present = new NativeArray<ulong>(4, _allocator),
             });
             return _sizes.Count - 1;
         }
@@ -476,13 +514,13 @@ namespace Yewnyx.Spatial {
             var after = JobHandle.CombineDependencies(JobHandle.CombineDependencies(dependsOn, _mark), sized.Flood, _readers);
             sized.Flood = IsTree
                 ? new TreeFloodJob {
-                    Shape = Shape, Unit = Unit, Cap = Cap, Size = sized.Size, Nodes = _treeNodes, Bricks = _treeBricks, Filled = _filled, Seeds = copy,
-                    Region = sized.TreeRegion, Result = sized.Result,
+                    Shape = Shape, Unit = Unit, Cap = Cap, Size = sized.Size, Nodes = _treeNodes, Bricks = _treeBricks, Cost = _treeCost, Filled = _filled, Seeds = copy,
+                    Region = sized.TreeRegion, Result = sized.Result, Present = sized.Present,
                 }.Schedule(after)
                 : new FloodJob {
                     Shape = Shape, Unit = Unit, Cap = Cap, Size = sized.Size, Wall = _wall, Cost = _cost, Filled = _filled, Seeds = copy,
                     Queue = new NativeArray<int>(Regions.QueueLength(Shape), Allocator.Persistent, NativeArrayOptions.UninitializedMemory),
-                    Region = sized.Region, Result = sized.Result,
+                    Region = sized.Region, Result = sized.Result, Present = sized.Present,
                 }.Schedule(after);
             // It reads the wall distance and the costs, so the next marking and the next change of cost wait for it.
             _read(sized.Flood);
@@ -501,7 +539,9 @@ namespace Yewnyx.Spatial {
         /// for one another: several scheduled together run side by side. The seeds are copied. It is refused, leaving a field that reaches nothing, if
         /// the size class has no regions when it runs (see <see cref="HasRegions"/>) or a seed may
         /// not be used (see <see cref="Travel.Build"/>). A step pays for the cell it enters, at the
-        /// grid's costs as they are when the build runs.
+        /// grid's costs as they are when the build runs, through <paramref name="table"/> if one is
+        /// given (see <see cref="CellCost.IsTable"/>). While the grid keeps no costs, before the first
+        /// fill of a value other than 0 or on a grid that keeps a tree, a table changes nothing.
         /// The field is of the regions as they are now: when they are next forgotten or flooded
         /// again it stops answering, and a new one must be built. A field over counts outlives the
         /// grid: after <see cref="Dispose"/> it answers as it was built, and the caller must drop
@@ -511,20 +551,27 @@ namespace Yewnyx.Spatial {
         /// reads the grid's tree as it is asked, so it does not outlive the grid. Its scratch, while
         /// it builds, is about 30 bytes a place, and is freed when the build is done.
         /// </remarks>
-        public WallGridField ScheduleField(int sizeClass, ReadOnlySpan<TravelSeed> seeds, float unit = 0.01f, JobHandle dependsOn = default) {
+        public WallGridField ScheduleField(int sizeClass, ReadOnlySpan<TravelSeed> seeds, float unit = 0.01f, JobHandle dependsOn = default, ReadOnlySpan<byte> table = default) {
             var sized = _sized(sizeClass);
             if (!(unit > 0f) || !(unit <= Shape.CellSize * 0.25f)) { throw new ArgumentOutOfRangeException(nameof(unit), unit, "Must be above 0 and no more than a quarter of a cell."); }
+            if (!CellCost.IsTable(table)) { throw new ArgumentException("A table is empty, or 256 costs that leave 255 closed.", nameof(table)); }
             if (IsTree) {
                 var seedsKept = new NativeArray<TravelSeed>(seeds.Length, _allocator, NativeArrayOptions.UninitializedMemory);
                 seeds.CopyTo(seedsKept.AsSpan());
                 var bytes = new NativeList<byte>(1, _allocator);
                 var built = new NativeArray<int>(3, _allocator);
+                // The field keeps its table: it is asked through it.
+                var tableKept = new NativeArray<byte>(table.Length, _allocator, NativeArrayOptions.UninitializedMemory);
+                table.CopyTo(tableKept.AsSpan());
+                // And the costs it is built with, as a field over counts keeps them: costs that move after are for routes.
+                var costKept = new NativeArray<byte>(_treeCost.Length, _allocator, NativeArrayOptions.UninitializedMemory);
+                _treeCost.AsArray().AsReadOnlySpan().CopyTo(costKept.AsSpan());
                 var treeBuild = new TreeFieldJob {
                     Shape = Shape, Unit = Unit, Cap = Cap, FieldUnit = unit, Nodes = _treeNodes, Bricks = _treeBricks, Region = sized.TreeRegion,
-                    Flooded = sized.Result, Seeds = seedsKept, Field = bytes, Result = built,
+                    Flooded = sized.Result, Cost = costKept, Table = tableKept, Seeds = seedsKept, Field = bytes, Result = built,
                 }.Schedule(JobHandle.CombineDependencies(dependsOn, TreeWriters(sizeClass)));
                 _read(treeBuild);
-                return new WallGridField(this, sizeClass, sized.Stamp, unit, bytes, seedsKept, built, treeBuild);
+                return new WallGridField(this, sizeClass, sized.Stamp, unit, bytes, seedsKept, costKept, tableKept, built, treeBuild);
             }
             var heapLength = Travel.HeapLength(Shape);
             if (heapLength == 0) { throw new InvalidOperationException("The grid has too many cells for a travel field."); }
@@ -532,8 +579,10 @@ namespace Yewnyx.Spatial {
             seeds.CopyTo(copy.AsSpan());
             var distance = new NativeArray<ushort>(Shape.CellCount, _allocator, NativeArrayOptions.UninitializedMemory);
             var result = new NativeArray<int>(3, _allocator);
+            var tableCopy = new NativeArray<byte>(table.Length, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            table.CopyTo(tableCopy.AsSpan());
             var build = new FieldJob {
-                Shape = Shape, Unit = unit, Region = sized.Region, Cost = _cost, Flooded = sized.Result, Seeds = copy,
+                Shape = Shape, Unit = unit, Region = sized.Region, Cost = _cost, Table = tableCopy, Flooded = sized.Result, Seeds = copy,
                 Times = new NativeArray<float>(Travel.TimesLength(Shape), Allocator.Persistent, NativeArrayOptions.UninitializedMemory),
                 Heap = new NativeArray<int>(heapLength, Allocator.Persistent, NativeArrayOptions.UninitializedMemory),
                 Distance = distance, Result = result,
@@ -546,12 +595,12 @@ namespace Yewnyx.Spatial {
 
         // Schedules a search for a route with the arrays of a WallGridRoute. It reads the wall
         // distance, the costs, the regions and the shapes, so what next writes them waits for it.
-        internal JobHandle ScheduleRoute(int sizeClass, float3 from, float3 to, bool straighten, float leeway,
+        internal JobHandle ScheduleRoute(int sizeClass, float3 from, float3 to, bool straighten, float leeway, NativeArray<byte> table,
             NativeArray<float> sums, NativeArray<int> links, NativeArray<int> heap, NativeArray<float3> points, NativeArray<RouteResult> result, JobHandle dependsOn) {
             var sized = _sized(sizeClass);
             var search = new RouteJob {
                 Shape = Shape, Unit = Unit, Cap = Cap, Size = sized.Size, Shapes = _shapes(), Straighten = straighten, Leeway = leeway,
-                Wall = _wall, Region = sized.Region, Cost = _cost, Flooded = sized.Result, From = from, To = to,
+                Wall = _wall, Region = sized.Region, Cost = _cost, Table = table, Flooded = sized.Result, Present = sized.Present, From = from, To = to,
                 Sums = sums, Links = links, Heap = heap, Points = points, Result = result,
             }.Schedule(JobHandle.CombineDependencies(dependsOn, sized.Flood, _mark));
             _read(search);
@@ -559,12 +608,12 @@ namespace Yewnyx.Spatial {
         }
 
         // The same over a tree, with the arrays a WallGridRoute keeps for such searches.
-        internal JobHandle ScheduleTreeRoute(int sizeClass, float3 from, float3 to, bool straighten, float leeway,
+        internal JobHandle ScheduleTreeRoute(int sizeClass, float3 from, float3 to, bool straighten, float leeway, NativeArray<byte> table,
             NativeArray<float> sums, NativeArray<int> links, NativeArray<float3> points, NativeArray<RouteResult> result, JobHandle dependsOn) {
             var sized = _sized(sizeClass);
             var search = new TreeRouteJob {
                 Shape = Shape, Unit = Unit, Cap = Cap, Size = sized.Size, Shapes = _shapes(), Straighten = straighten, Leeway = leeway,
-                Nodes = _treeNodes, Bricks = _treeBricks, Region = sized.TreeRegion, Flooded = sized.Result, From = from, To = to,
+                Nodes = _treeNodes, Bricks = _treeBricks, Region = sized.TreeRegion, Flooded = sized.Result, Cost = _treeCost, Table = table, Present = sized.Present, From = from, To = to,
                 Sums = sums, Links = links, Points = points, Result = result,
             }.Schedule(JobHandle.CombineDependencies(dependsOn, sized.Flood, _mark));
             _read(search);
@@ -740,9 +789,9 @@ namespace Yewnyx.Spatial {
             if (_disposed) { return; }
             _disposed = true;
             Complete();
-            _wall.Dispose(); _cost.Dispose(); _filled.Dispose(); _treeNodes.Dispose(); _treeBricks.Dispose();
+            _wall.Dispose(); _cost.Dispose(); _filled.Dispose(); _treeNodes.Dispose(); _treeBricks.Dispose(); _treeCost.Dispose();
             _disposeShapes();
-            foreach (var sized in _sizes) { sized.Region.Dispose(); sized.TreeRegion.Dispose(); sized.Result.Dispose(); }
+            foreach (var sized in _sizes) { sized.Region.Dispose(); sized.TreeRegion.Dispose(); sized.Result.Dispose(); sized.Present.Dispose(); }
         }
 
         // What the regions over a tree take, once their floods are done.
@@ -794,12 +843,21 @@ namespace Yewnyx.Spatial {
             _forgetRegions();
         }
 
+        // A tree's costs belong to its leaves, which a new tree changes: they go, and the regions they closed with them.
+        private void _forgetTreeCosts() {
+            if (!IsTree || _treeCost.Length == 0) { return; }
+            _settle();
+            _treeCost.Clear();
+            _forgetRegions();
+        }
+
         // The regions were flooded from another wall distance or other closed cells. Every job is done by now.
         private void _forgetRegions() {
             foreach (var sized in _sizes) {
                 sized.Region.AsSpan().Clear();
                 sized.TreeRegion.Clear();
                 sized.Result.AsSpan().Clear();
+                sized.Present.AsSpan().Clear();
                 sized.Stamp++;
             }
         }

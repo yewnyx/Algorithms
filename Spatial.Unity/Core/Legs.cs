@@ -44,9 +44,10 @@ namespace Yewnyx.Spatial {
         /// <summary>
         /// Whether a ball of the radius can move from a to b, through no cell that costs more than
         /// <paramref name="most"/>, at no more than <paramref name="spend"/> as flown.
-        /// <paramref name="need"/> is what a sample must prove from the map.
+        /// <paramref name="need"/> is what a sample must prove from the map. The costs are as one kind
+        /// of agent sees them, through its table if it has one.
         /// </summary>
-        public static bool Clear(in WallMap wall, in ShapeSet shapes, ReadOnlySpan<byte> cost, int most, double spend, float radius, float need,
+        public static bool Clear(in WallMap wall, in ShapeSet shapes, in Priced cost, int most, double spend, float radius, float need,
             double ax, double ay, double az, double bx, double by, double bz) {
             var shape = wall.Shape;
             if (!shape.Holds((float)ax, (float)ay, (float)az) || !shape.Holds((float)bx, (float)by, (float)bz)) { return false; }
@@ -86,8 +87,8 @@ namespace Yewnyx.Spatial {
         /// <summary>
         /// Whether a ball of the radius can move from a to b, asked of a tree: the same test, at
         /// the same points, as over the grid with its counts put down as the tree keeps them, so it
-        /// gives the same answer.
-        /// A tree keeps no costs, so the leg is held to none.
+        /// gives the same answer. This one holds the leg to no costs: the one that takes them holds it
+        /// as over counts.
         /// </summary>
         /// <remarks>
         /// Where a point is found among the cells of one open cube, the points that follow it
@@ -185,10 +186,91 @@ namespace Yewnyx.Spatial {
         }
 
         /// <summary>What the cell that holds a point costs: 0 where no cost is kept. A point on the grid's faces is in the cell beside it.</summary>
-        public static int CostAt(in GridShape shape, ReadOnlySpan<byte> cost, float x, float y, float z) {
+        public static int CostAt(in GridShape shape, in Priced cost, float x, float y, float z) {
             if (cost.Length == 0) { return 0; }
             double size = shape.CellSize;
             return cost[shape.Index(_cell(x, shape.OriginX, size, shape.CountX), _cell(y, shape.OriginY, size, shape.CountY), _cell(z, shape.OriginZ, size, shape.CountZ))];
+        }
+
+        /// <summary>
+        /// The same over a tree held to its costs, a byte a leaf as one kind of agent sees them: the leg
+        /// passes through no leaf that is closed or costs more than <paramref name="most"/>, nor nearer a closed
+        /// one than half a cell, as over counts. Empty costs hold it to nothing.
+        /// </summary>
+        public static bool Clear(in WallTree tree, in ShapeSet shapes, in Priced cost, int most, float radius, float need,
+            double ax, double ay, double az, double bx, double by, double bz) =>
+            (cost.Length == 0 || (Flown(tree, cost, most, ax, ay, az, bx, by, bz, out _) && !NearClosed(tree, cost, ax, ay, az, bx, by, bz))) &&
+            Clear(tree, shapes, radius, need, ax, ay, az, bx, by, bz);
+
+        /// <summary>
+        /// Whether a leg comes within half a cell of a closed leaf: any of the eight cells whose centres
+        /// surround a point on it, looked at every quarter of a cell, is in one.
+        /// </summary>
+        public static bool NearClosed(in WallTree tree, in Priced cost, double ax, double ay, double az, double bx, double by, double bz) {
+            if (cost.Length == 0) { return false; }
+            var shape = tree.Shape;
+            double size = shape.CellSize, dx = bx - ax, dy = by - ay, dz = bz - az;
+            var stretches = (int)Math.Ceiling(Math.Sqrt(dx * dx + dy * dy + dz * dz) / (0.25d * size));
+            for (var k = 0; k <= stretches; k++) {
+                var along = stretches == 0 ? 0d : (double)k / stretches;
+                float x = (float)(ax + dx * along), y = (float)(ay + dy * along), z = (float)(az + dz * along);
+                _rows(x, shape.OriginX, size, shape.CountX, out var lowX, out var highX);
+                _rows(y, shape.OriginY, size, shape.CountY, out var lowY, out var highY);
+                _rows(z, shape.OriginZ, size, shape.CountZ, out var lowZ, out var highZ);
+                if (_leafCost(tree, cost, lowX, lowY, lowZ) == CellCost.Closed || _leafCost(tree, cost, highX, lowY, lowZ) == CellCost.Closed ||
+                    _leafCost(tree, cost, lowX, highY, lowZ) == CellCost.Closed || _leafCost(tree, cost, highX, highY, lowZ) == CellCost.Closed ||
+                    _leafCost(tree, cost, lowX, lowY, highZ) == CellCost.Closed || _leafCost(tree, cost, highX, lowY, highZ) == CellCost.Closed ||
+                    _leafCost(tree, cost, lowX, highY, highZ) == CellCost.Closed || _leafCost(tree, cost, highX, highY, highZ) == CellCost.Closed) { return true; }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// What a straight leg costs as flown over a tree: its length in each leaf it passes through
+        /// times 1 + cost / 16 for that leaf. Returns false, with what it had cost so far, at the first
+        /// leaf that is closed or costs more than <paramref name="most"/>. Cells inside a solid belong to
+        /// no leaf and cost nothing here; a leg through them is not clear for its room anyway.
+        /// </summary>
+        /// <remarks>Walked from cell to cell as <see cref="Flown(in GridShape, in Priced, int, double, double, double, double, double, double, out double)"/> is.</remarks>
+        public static bool Flown(in WallTree tree, in Priced cost, int most, double ax, double ay, double az, double bx, double by, double bz, out double flown) {
+            var shape = tree.Shape;
+            double size = shape.CellSize, dx = bx - ax, dy = by - ay, dz = bz - az;
+            var length = Math.Sqrt(dx * dx + dy * dy + dz * dz);
+            flown = 0d;
+            if (cost.Length == 0) {
+                flown = length;
+                return true;
+            }
+            int x = _cell(ax, shape.OriginX, size, shape.CountX), y = _cell(ay, shape.OriginY, size, shape.CountY), z = _cell(az, shape.OriginZ, size, shape.CountZ);
+            int stepX = dx > 0d ? 1 : dx < 0d ? -1 : 0, stepY = dy > 0d ? 1 : dy < 0d ? -1 : 0, stepZ = dz > 0d ? 1 : dz < 0d ? -1 : 0;
+            var here = _leafCost(tree, cost, x, y, z);
+            if (here > most || here == CellCost.Closed) { return false; }
+            var same = length > 0d ? 1e-6 * size / length : 0d;
+            var entered = 0d;
+            while (true) {
+                double tx = _leaves(ax, dx, shape.OriginX, size, x, stepX), ty = _leaves(ay, dy, shape.OriginY, size, y, stepY), tz = _leaves(az, dz, shape.OriginZ, size, z, stepZ);
+                var t = tx < ty ? tx : ty;
+                if (tz < t) { t = tz; }
+                if (!(t <= 1d)) {
+                    flown += (1d - entered) * length * (1d + here / 16d);
+                    return true;
+                }
+                if (t > entered) {
+                    flown += (t - entered) * length * (1d + here / 16d);
+                    entered = t;
+                }
+                if (tx <= t + same) { if ((uint)(x + stepX) < (uint)shape.CountX) { x += stepX; } else { stepX = 0; } }
+                if (ty <= t + same) { if ((uint)(y + stepY) < (uint)shape.CountY) { y += stepY; } else { stepY = 0; } }
+                if (tz <= t + same) { if ((uint)(z + stepZ) < (uint)shape.CountZ) { z += stepZ; } else { stepZ = 0; } }
+                here = _leafCost(tree, cost, x, y, z);
+                if (here > most || here == CellCost.Closed) { return false; }
+            }
+        }
+
+        // What the leaf that holds a cell costs; 0 for a cell in no leaf.
+        private static int _leafCost(in WallTree tree, in Priced cost, int x, int y, int z) {
+            var leaf = WallTrees.LeafOf(tree, x, y, z, out _);
+            return (uint)leaf < (uint)cost.Length ? cost[leaf] : 0;
         }
 
         // Proves the part of a leg from one distance along it to another, in metres from a, against
@@ -216,7 +298,7 @@ namespace Yewnyx.Spatial {
         }
 
         // Whether any of the eight cells whose centres surround a point is closed by cost.
-        private static bool _besideClosed(in GridShape shape, ReadOnlySpan<byte> cost, float x, float y, float z) {
+        private static bool _besideClosed(in GridShape shape, in Priced cost, float x, float y, float z) {
             double size = shape.CellSize;
             _rows(x, shape.OriginX, size, shape.CountX, out var lowX, out var highX);
             _rows(y, shape.OriginY, size, shape.CountY, out var lowY, out var highY);
@@ -238,7 +320,7 @@ namespace Yewnyx.Spatial {
         /// of the planes between cells at one point, which is an edge or a corner, it goes straight
         /// to the cell beyond: the other cells that meet there are touched and not passed through.
         /// </remarks>
-        public static bool Flown(in GridShape shape, ReadOnlySpan<byte> cost, int most, double ax, double ay, double az, double bx, double by, double bz, out double flown) {
+        public static bool Flown(in GridShape shape, in Priced cost, int most, double ax, double ay, double az, double bx, double by, double bz, out double flown) {
             double size = shape.CellSize, dx = bx - ax, dy = by - ay, dz = bz - az;
             var length = Math.Sqrt(dx * dx + dy * dy + dz * dz);
             flown = 0d;

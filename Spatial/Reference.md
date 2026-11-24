@@ -69,6 +69,13 @@ Every rule and limit of the `Yewnyx.Spatial` library, grouped by the type it bel
 - **It keeps a byte a brick and a byte an open cube.** A brick whose open cells are not all in one region is kept in full, 68 bytes more.
 - **`TreeRegions.IsOpen` and `TreeRegions.NearestOpen` answer as `Regions`' do.** `NearestOpen` over a tree has no form for the same region.
 
+### Costs over a tree
+
+- **`TreeCosts` keeps a byte for each leaf, a brick or an open cube,** where a grid keeps one for each cell: `LayerLength` bytes, about half a megabyte for a part of 450 x 50 x 450 m.
+- **The bytes mean what `CellCost`'s do, and a table prices them the same way.**
+- **`TreeCosts.Fill` gives a leaf the value where the solid holds the centre of any of its cells.** A leaf holds one cost for all its cells: 2 m for a brick, up to 8 m for an open cube, so a body keeps away from a little more than was filled.
+- **`TreeRegions.FromSeeds` takes the costs:** a leaf that holds 255 is closed, all its cells. `TreeRegions.CostsIn` marks the values the reached leaves hold, for `CellCost.Least`.
+
 ## Travel fields
 
 - **A field spreads from its seeds** through the cells of a region array, by steps between cells that share a face.
@@ -98,7 +105,8 @@ Every rule and limit of the `Yewnyx.Spatial` library, grouped by the type it bel
 - **A point belongs to the cell `GridShape.TryCentre` finds it in,** as over a dense map: a point on the face between two cells is in the higher one.
 - **A point whose cell is not open is refused.** A dense field may still answer there, from the eight cells round it.
 - **`Next` is refused at the seed's own point,** or as near it as open cells let a point be: there is nowhere lower. A follower has arrived when `TravelAt` is under about a cell.
-- **No costs:** a tree has none.
+- **`TreeFields.Build` takes the costs and a table:** a line counts its length in each leaf it passes through 1 + cost / 16 times. Ask the field with the same costs and table, given to `TreeField`.
+- **With costs, the point to fly to is never taken further on through a leaf dearer than the places hopped through.**
 
 ## Routes
 
@@ -133,6 +141,7 @@ An end need not be in an open cell. It then takes the nearest open cell whose ce
 | `StopsShortOfGoal` | The goal is. The route ends at that cell's centre. |
 
 - **Ends in two regions are `Unreachable` at once,** with nothing searched.
+- **A start in a cell closed since the regions were made, by cost or by the table, is routed out of it** where it is beside an open cell, with `FirstLegUnproven`. Where it is not, the route is `Unreachable`, and so is a goal in such a cell. Over a tree it is the start's leaf that is closed, and its cell that must be beside an open one: both storages agree.
 
 ### Costs
 
@@ -148,6 +157,9 @@ The way is searched cell by cell, cheapest first by the cells' costs, and then p
 - **`Regions.LeastCost` gives that least,** and `Routes.Find` takes it as `leastCost`. With 0, which is always right, the leg is taken at once only where no cell under it has a cost.
 - **The search reckons what is left to go at the same least cost,** so where every cell costs something it takes up about as many cells as with no costs.
 - **Both save work only where the least is above 0.** Do: where a whole grid is meant to cost more, give every cell with a region that cost.
+- **A table gives one kind of agent its own costs over the same array:** 256 costs, one for each byte. `Routes.Find`, `Travel.Build` and `Regions.LeastCost` take one.
+- **A table can close a byte for its kind, but cannot open 255:** regions are made from the array, for every kind at once (`CellCost.IsTable`). A goal that only the table shuts off is found unreachable by searching its whole region.
+- **Give `Regions.LeastCost` the same table as the search.**
 
 ### Leeway
 
@@ -167,6 +179,8 @@ The way is searched cell by cell, cheapest first by the cells' costs, and then p
 - **It searches places, not cells:** an open cube whole, crossed by one straight cut, and the joined open cells of a brick.
 - **Its arrays are sized to the search, not the grid:** `LinksLength` and `SumsLength` for a number of places, 28 bytes a slot.
 - **A search that fills them ends `SearchFull`.** Give it larger ones.
-- **A tree has no costs,** so every cell costs the same.
+- **`TreeRoutes.Find` takes the costs, a table and `leastCost`:** a step pays for the leaf it enters, and no way enters a leaf the table closes.
+- **A leg replaces part of the way only where it passes through no dearer leaf than that part, and costs no more as flown.** No leg passes through a closed leaf.
+- **The straight leg from start to goal is taken with nothing searched** only where every leaf under it costs `leastCost`.
 - **`leeway` is 0.25 unless given.**
 - **The way is not the cheapest there is.** Pulled straight, routes come out as long as the grid's on the whole, and up to a quarter longer among shapes set close together.

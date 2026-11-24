@@ -8,21 +8,25 @@ namespace Yewnyx.Spatial {
     /// </summary>
     /// <remarks>
     /// What <see cref="TravelField"/> is over a dense map, for a grid too large to keep a count
-    /// for every cell. Make the bytes with <see cref="TreeFields.Build"/>, and ask them with
+    /// for every cell. Make the bytes with <see cref="TreeFields.Build(in WallTree, ReadOnlySpan{byte}, ReadOnlySpan{byte}, ReadOnlySpan{TravelSeed}, float, Span{byte}, Span{float}, Span{int}, out int, out int, out int, ReadOnlySpan{byte})"/>, and ask them with
     /// <see cref="TreeFields.TravelAt"/> and <see cref="TreeFields.Next"/>. Nothing is copied or
     /// checked here.
     /// </remarks>
     public readonly ref struct TreeField {
         /// <summary>The tree the field is over.</summary>
         public readonly WallTree Tree;
-        /// <summary>The regions the field was built through: what <see cref="TreeRegions.FromSeeds"/> made for the tree.</summary>
+        /// <summary>The regions the field was built through: what <see cref="TreeRegions.FromSeeds(in WallTree, in SizeClass, ReadOnlySpan{byte}, ReadOnlySpan{Solid}, Span{byte}, Span{ulong}, Span{int}, out int, out int, out int)"/> made for the tree.</summary>
         public readonly ReadOnlySpan<byte> Region;
-        /// <summary>What <see cref="TreeFields.Build"/> wrote, cut to the length it gave.</summary>
+        /// <summary>What <see cref="TreeFields.Build(in WallTree, ReadOnlySpan{byte}, ReadOnlySpan{byte}, ReadOnlySpan{TravelSeed}, float, Span{byte}, Span{float}, Span{int}, out int, out int, out int, ReadOnlySpan{byte})"/> wrote, cut to the length it gave.</summary>
         public readonly ReadOnlySpan<byte> Bytes;
         /// <summary>The seeds the field was built from, in the same order.</summary>
         public readonly ReadOnlySpan<TravelSeed> Seeds;
         /// <summary>Metres of travel per count.</summary>
         public readonly float Unit;
+        /// <summary>The costs over the tree it was built with, a byte a leaf, or empty (see <see cref="TreeCosts"/>).</summary>
+        public readonly ReadOnlySpan<byte> Cost;
+        /// <summary>The table those costs were priced with, or empty (see <see cref="CellCost.IsTable"/>).</summary>
+        public readonly ReadOnlySpan<byte> Table;
 
         /// <summary>Views a field. Nothing is copied or checked.</summary>
         /// <param name="tree">The tree.</param>
@@ -31,7 +35,12 @@ namespace Yewnyx.Spatial {
         /// <param name="seeds">The seeds it was built from.</param>
         /// <param name="unit">Metres per count.</param>
         public TreeField(WallTree tree, ReadOnlySpan<byte> region, ReadOnlySpan<byte> bytes, ReadOnlySpan<TravelSeed> seeds, float unit) {
-            Tree = tree; Region = region; Bytes = bytes; Seeds = seeds; Unit = unit;
+            Tree = tree; Region = region; Bytes = bytes; Seeds = seeds; Unit = unit; Cost = default; Table = default;
+        }
+
+        /// <summary>Views a field built through costs: the same, with the costs and the table it was built with.</summary>
+        public TreeField(WallTree tree, ReadOnlySpan<byte> region, ReadOnlySpan<byte> bytes, ReadOnlySpan<TravelSeed> seeds, float unit, ReadOnlySpan<byte> cost, ReadOnlySpan<byte> table) {
+            Tree = tree; Region = region; Bytes = bytes; Seeds = seeds; Unit = unit; Cost = cost; Table = table;
         }
     }
 
@@ -65,8 +74,8 @@ namespace Yewnyx.Spatial {
     /// Seeds start as a dense field's do (see <see cref="TravelSeed"/>): the open cells whose
     /// centres are inside the solid, with a clear way to the point or square to the plane. The
     /// field keeps which cells they are.
-    /// A tree has no costs, so neither has a field over it. Nothing is allocated and nothing
-    /// throws.
+    /// Built through costs over the tree, a field is asked through the same costs and table, and
+    /// starts no cell in a leaf they close. Nothing is allocated and nothing throws.
     /// </remarks>
     public static class TreeFields {
         /// <summary>A count that the field does not reach.</summary>
@@ -103,12 +112,13 @@ namespace Yewnyx.Spatial {
         /// The build needs a float for each place and the ints said. Returns false if the tree
         /// cannot be used, the regions are not a flood's of this tree, there are more than
         /// <see cref="MostSeeds"/> seeds, a seed may not be used (as <see cref="Travel.Build"/> says),
-        /// or a length is more than an int holds.
+        /// or a length is more than an int holds. Built through costs, a field can be shorter, where
+        /// the costs close cells a seed holds: the build says how long it is.
         /// </remarks>
         /// <param name="tree">The tree.</param>
         /// <param name="region">The regions to build through.</param>
         /// <param name="seeds">Where the field starts.</param>
-        /// <param name="length">The field's bytes.</param>
+        /// <param name="length">The field's bytes, at the most.</param>
         /// <param name="places">The floats of the build's sums.</param>
         /// <param name="work">The ints of the build's work.</param>
         public static bool Measure(in WallTree tree, ReadOnlySpan<byte> region, ReadOnlySpan<TravelSeed> seeds, out int length, out int places, out int work) {
@@ -123,7 +133,7 @@ namespace Yewnyx.Spatial {
             var started = 0L;
             for (var seed = 0; seed < seeds.Length; seed++) {
                 if (!_usable(seeds[seed])) { return false; }
-                started += _started(tree, region, view, seeds[seed], seed, default);
+                started += _started(tree, region, view, default, seeds[seed], seed, default);
             }
             var total = Header + 2L * (bricks + cubes) + kept * Record + started * StartBytes;
             var all = (long)bricks + cubes + kept * WallTrees.BrickCells;
@@ -157,10 +167,26 @@ namespace Yewnyx.Spatial {
         /// <param name="reached">How many places got a count.</param>
         /// <param name="cut">How many were too far for a count.</param>
         public static bool Build(in WallTree tree, ReadOnlySpan<byte> region, ReadOnlySpan<TravelSeed> seeds, float unit,
-            Span<byte> field, Span<float> sums, Span<int> work, out int length, out int reached, out int cut) {
+            Span<byte> field, Span<float> sums, Span<int> work, out int length, out int reached, out int cut) =>
+            Build(tree, region, default, seeds, unit, field, sums, work, out length, out reached, out cut);
+
+        /// <summary>
+        /// The same through costs over the tree (see <see cref="TreeCosts"/>), priced for one kind of
+        /// agent by <paramref name="table"/> if one is given (see <see cref="CellCost.IsTable"/>).
+        /// </summary>
+        /// <remarks>
+        /// A line counts its length in each leaf it passes through 1 + cost / 16 times, and no place is
+        /// entered whose leaf the table closes. Ask the field with the same costs and table (see
+        /// <see cref="TreeField"/>). <paramref name="cost"/> may be empty, meaning every leaf is normal
+        /// whatever the table. Returns false as the other does, and if <paramref name="cost"/> is
+        /// neither empty nor <see cref="TreeCosts.LayerLength"/> bytes, or the table cannot be used.
+        /// </remarks>
+        public static bool Build(in WallTree tree, ReadOnlySpan<byte> region, ReadOnlySpan<byte> cost, ReadOnlySpan<TravelSeed> seeds, float unit,
+            Span<byte> field, Span<float> sums, Span<int> work, out int length, out int reached, out int cut, ReadOnlySpan<byte> table = default) {
             length = 0; reached = 0; cut = 0;
             if (!Measure(tree, region, seeds, out var need, out var places, out var ints) || !(unit > 0f) || !(unit <= tree.Shape.CellSize * 0.25f) ||
-                field.Length < need || sums.Length < places || work.Length < ints) {
+                field.Length < need || sums.Length < places || work.Length < ints ||
+                (cost.Length != 0 && cost.Length != TreeCosts.LayerLength(tree)) || !CellCost.IsTable(table)) {
                 return false;
             }
             TreeRegions.TryView(tree, region, out var view);
@@ -182,14 +208,14 @@ namespace Yewnyx.Spatial {
                 keptOf[brick] = cells != 0UL && !_plain(cells) ? kept++ : -1;
             }
             var at = new Places {
-                Tree = tree, Region = region, View = view, Bricks = bricks, Cubes = cubes, KeptCount = kept, KeptOf = keptOf,
+                Tree = tree, Region = region, View = view, Bricks = bricks, Cubes = cubes, KeptCount = kept, KeptOf = keptOf, Costs = new Priced(cost, table),
                 Block = stackalloc int[8], Leaves = stackalloc int[8], Sides = stackalloc int[8], Masks = stackalloc ulong[8], Contacts = stackalloc Contact[MostContacts],
             };
             at.Block.Fill(-1);
 
             // The seeds: each started cell's place starts at the least of a cell's start and the way from it to the place's point.
             var started = 0;
-            for (var seed = 0; seed < seeds.Length; seed++) { started += _started(tree, region, view, seeds[seed], seed, starts.Slice(WorkPerStart * started)); }
+            for (var seed = 0; seed < seeds.Length; seed++) { started += _started(tree, region, view, at.Costs, seeds[seed], seed, starts.Slice(WorkPerStart * started)); }
             var shape = tree.Shape;
             for (var k = 0; k < started; k++) {
                 var cell = starts[WorkPerStart * k + 1];
@@ -204,7 +230,7 @@ namespace Yewnyx.Spatial {
                 if (cellOf[place] < 0) { cellOf[place] = cell; }
                 _point(ref at, place, cellOf[place], out var px, out var py, out var pz);
                 _centre(shape, cell, out var cx, out var cy, out var cz);
-                var begin = (float)(_unfixed(starts[WorkPerStart * k + 2]) + _length(px, py, pz, cx, cy, cz));
+                var begin = (float)(_unfixed(starts[WorkPerStart * k + 2]) + _flown(ref at, px, py, pz, cx, cy, cz));
                 if (begin < value[place]) {
                     value[place] = begin;
                     from[place] = seeds[seed].Start == TravelStart.FromPoint ? -2 - seed : -2 - seeds.Length - k;
@@ -230,20 +256,20 @@ namespace Yewnyx.Spatial {
                 var count = _contacts(ref at, place, cellOf[place], face);
                 for (var c = 0; c < count; c++) {
                     var next = at.Contacts[c].Place;
-                    if (heapAt[next] < 0) { continue; }
+                    if (heapAt[next] < 0 || _shut(ref at, at.Contacts[c].Outside)) { continue; }
                     if (cellOf[next] < 0) { cellOf[next] = at.Contacts[c].Outside; }
                     _point(ref at, next, cellOf[next], out var nx, out var ny, out var nz);
                     var floor = (double)spent + 1e-3d;
-                    var offer = (float)((double)spent + _length(ax, ay, az, nx, ny, nz));
+                    var offer = (float)((double)spent + _flown(ref at, ax, ay, az, nx, ny, nz));
                     var line = place;
                     if (up != -1) {
-                        var straight = (float)Math.Max(upValue + _length(ux, uy, uz, nx, ny, nz), floor);
+                        var straight = (float)Math.Max(upValue + _flown(ref at, ux, uy, uz, nx, ny, nz), floor);
                         if (straight < offer && _clear(ref at, ux, uy, uz, nx, ny, nz)) { offer = straight; line = up; }
                     }
                     // From a place a seed started: straight from its started cells, where the line is clear.
                     for (var k = seeded; k >= 0 && k < started && starts[WorkPerStart * k] == place; k++) {
                         _centre(shape, starts[WorkPerStart * k + 1], out var cx, out var cy, out var cz);
-                        var fromCell = (float)Math.Max(_unfixed(starts[WorkPerStart * k + 2]) + _length(cx, cy, cz, nx, ny, nz), floor);
+                        var fromCell = (float)Math.Max(_unfixed(starts[WorkPerStart * k + 2]) + _flown(ref at, cx, cy, cz, nx, ny, nz), floor);
                         if (fromCell < offer && _clear(ref at, cx, cy, cz, nx, ny, nz)) { offer = fromCell; line = -2 - seeds.Length - k; }
                     }
                     if (offer < value[next]) {
@@ -307,7 +333,7 @@ namespace Yewnyx.Spatial {
                 _put16(field, e + 8, start > Most ? Most : (int)start);
                 field[e + 10] = (byte)starts[WorkPerStart * k + 3];
             }
-            length = need;
+            length = list + started * StartBytes;
             reached = stored;
             cut = over;
             return true;
@@ -334,7 +360,7 @@ namespace Yewnyx.Spatial {
             travel = 0f; place = -1;
             if (!_check(field, out var view, out var bricks, out var cubes, out var kept)) { return false; }
             var at = new Places {
-                Tree = field.Tree, Region = field.Region, Field = field.Bytes, View = view, Bricks = bricks, Cubes = cubes, KeptCount = kept,
+                Tree = field.Tree, Region = field.Region, Field = field.Bytes, View = view, Bricks = bricks, Cubes = cubes, KeptCount = kept, Costs = new Priced(field.Cost, field.Table),
                 Block = stackalloc int[8], Leaves = stackalloc int[8], Sides = stackalloc int[8], Masks = stackalloc ulong[8], Contacts = stackalloc Contact[MostContacts],
             };
             at.Block.Fill(-1);
@@ -355,14 +381,15 @@ namespace Yewnyx.Spatial {
                 return true;
             }
             _point(ref at, here, cell, out var hx, out var hy, out var hz);
-            var best = own * (double)field.Unit + _length(x, y, z, hx, hy, hz);
+            var times = _times(ref at, cx, cy, cz);
+            var best = own * (double)field.Unit + _length(x, y, z, hx, hy, hz) * times;
             for (var face = 0; face < 6; face++) {
                 var count = _contacts(ref at, here, cell, face);
                 for (var c = 0; c < count; c++) {
                     var other = _count(at, at.Contacts[c].Place);
                     if (other == Unreached) { continue; }
                     _point(ref at, at.Contacts[c].Place, at.Contacts[c].Outside, out var px, out var py, out var pz);
-                    var through = other * (double)field.Unit + _length(x, y, z, px, py, pz);
+                    var through = other * (double)field.Unit + _length(x, y, z, px, py, pz) * times;
                     if (through < best) { best = through; }
                 }
             }
@@ -389,7 +416,7 @@ namespace Yewnyx.Spatial {
             place = -1;
             if (!_check(field, out var view, out var bricks, out var cubes, out var kept)) { return false; }
             var at = new Places {
-                Tree = field.Tree, Region = field.Region, Field = field.Bytes, View = view, Bricks = bricks, Cubes = cubes, KeptCount = kept,
+                Tree = field.Tree, Region = field.Region, Field = field.Bytes, View = view, Bricks = bricks, Cubes = cubes, KeptCount = kept, Costs = new Priced(field.Cost, field.Table),
                 Block = stackalloc int[8], Leaves = stackalloc int[8], Sides = stackalloc int[8], Masks = stackalloc ulong[8],
             };
             at.Block.Fill(-1);
@@ -419,7 +446,7 @@ namespace Yewnyx.Spatial {
             count = 0;
             if (near.Length == 0 || !_check(field, out var view, out var bricks, out var cubes, out var kept)) { return false; }
             var at = new Places {
-                Tree = field.Tree, Region = field.Region, Field = field.Bytes, View = view, Bricks = bricks, Cubes = cubes, KeptCount = kept,
+                Tree = field.Tree, Region = field.Region, Field = field.Bytes, View = view, Bricks = bricks, Cubes = cubes, KeptCount = kept, Costs = new Priced(field.Cost, field.Table),
                 Block = stackalloc int[8], Leaves = stackalloc int[8], Sides = stackalloc int[8], Masks = stackalloc ulong[8], Contacts = stackalloc Contact[MostContacts],
             };
             at.Block.Fill(-1);
@@ -462,7 +489,7 @@ namespace Yewnyx.Spatial {
         public static bool TravelNear(in TreeField field, float x, float y, float z, ReadOnlySpan<TreeNear> near, out float travel) {
             travel = 0f;
             if (near.Length == 0 || !_check(field, out var view, out var bricks, out var cubes, out var kept)) { return false; }
-            var at = new Places { Tree = field.Tree, Region = field.Region, Field = field.Bytes, View = view, Bricks = bricks, Cubes = cubes, KeptCount = kept };
+            var at = new Places { Tree = field.Tree, Region = field.Region, Field = field.Bytes, View = view, Bricks = bricks, Cubes = cubes, KeptCount = kept, Costs = new Priced(field.Cost, field.Table) };
             var places = bricks + cubes + kept * WallTrees.BrickCells;
             var here = near[0].Place;
             if ((uint)here >= (uint)places) { return false; }
@@ -483,13 +510,18 @@ namespace Yewnyx.Spatial {
                     return true;
                 }
             }
-            var best = own * (double)field.Unit + _length(x, y, z, near[0].X, near[0].Y, near[0].Z);
+            var times = 1d;
+            if (at.Costs.Length != 0 && at.Tree.Shape.TryCell(x, y, z, out var ownX, out var ownY, out var ownZ)) {
+                var leaf = WallTrees.LeafOf(at.Tree, ownX, ownY, ownZ, out _);
+                if ((uint)leaf < (uint)at.Costs.Length) { times = 1d + at.Costs[leaf] / 16d; }
+            }
+            var best = own * (double)field.Unit + _length(x, y, z, near[0].X, near[0].Y, near[0].Z) * times;
             for (var i = 1; i < near.Length; i++) {
                 var place = near[i].Place;
                 if ((uint)place >= (uint)places) { return false; }
                 var other = _count(at, place);
                 if (other == Unreached) { continue; }
-                var through = other * (double)field.Unit + _length(x, y, z, near[i].X, near[i].Y, near[i].Z);
+                var through = other * (double)field.Unit + _length(x, y, z, near[i].X, near[i].Y, near[i].Z) * times;
                 if (through < best) { best = through; }
             }
             travel = (float)best;
@@ -530,7 +562,7 @@ namespace Yewnyx.Spatial {
             toX = 0f; toY = 0f; toZ = 0f; travel = 0f; place = -1;
             if (!_check(field, out var view, out var bricks, out var cubes, out var kept)) { return false; }
             var at = new Places {
-                Tree = field.Tree, Region = field.Region, Field = field.Bytes, View = view, Bricks = bricks, Cubes = cubes, KeptCount = kept,
+                Tree = field.Tree, Region = field.Region, Field = field.Bytes, View = view, Bricks = bricks, Cubes = cubes, KeptCount = kept, Costs = new Priced(field.Cost, field.Table),
                 Block = stackalloc int[8], Leaves = stackalloc int[8], Sides = stackalloc int[8], Masks = stackalloc ulong[8], Contacts = stackalloc Contact[MostContacts],
             };
             at.Block.Fill(-1);
@@ -541,10 +573,16 @@ namespace Yewnyx.Spatial {
             var cell = shape.Index(cx, cy, cz);
             var chosen = _hop(ref at, field, here, cell, x, y, z, out var bx, out var by, out var bz, out var chosenCell, out var best);
             if (chosen == -1) { return false; }
+            // With costs, a point further on is taken only where the line to it passes through no leaf dearer than those hopped through.
+            var dearest = at.Costs.Length == 0 ? 0 : Math.Max(_costOf(ref at, cell), _costOf(ref at, chosenCell));
             for (var ahead = 0; ahead < Ahead && chosen >= 0; ahead++) {
                 if (_firstStarted(at, chosen) >= 0) { break; }
                 var further = _hop(ref at, field, chosen, chosenCell, bx, by, bz, out var fx, out var fy, out var fz, out var furtherCell, out _);
                 if (further == -1 || !_clear(ref at, x, y, z, fx, fy, fz)) { break; }
+                if (at.Costs.Length != 0) {
+                    dearest = Math.Max(dearest, _costOf(ref at, furtherCell));
+                    if (_dearest(ref at, x, y, z, fx, fy, fz) > dearest) { break; }
+                }
                 bx = fx; by = fy; bz = fz; chosen = further; chosenCell = furtherCell;
             }
             toX = (float)bx; toY = (float)by; toZ = (float)bz;
@@ -572,6 +610,7 @@ namespace Yewnyx.Spatial {
             var chosen = -1;
             var shape = at.Tree.Shape;
             var own = _count(at, here);
+            var timesHere = _timesOf(ref at, cell);
             for (var face = 0; face < 6; face++) {
             var count = _contacts(ref at, here, cell, face);
             for (var c = 0; c < count; c++) {
@@ -580,7 +619,7 @@ namespace Yewnyx.Spatial {
                 if (other == Unreached || other >= own) { continue; }
                 _centre(shape, contact.Outside, out var ox, out var oy, out var oz);
                 _point(ref at, contact.Place, contact.Outside, out var px, out var py, out var pz);
-                var d = other * (double)field.Unit + _length(ox, oy, oz, px, py, pz) + _length(x, y, z, ox, oy, oz);
+                var d = other * (double)field.Unit + _length(ox, oy, oz, px, py, pz) * _timesOf(ref at, contact.Outside) + _length(x, y, z, ox, oy, oz) * timesHere;
                 if (!(d < best)) { continue; }
                 best = d; chosen = contact.Place;
                 // The other place's cell if it is in sight; otherwise this place's own cell beside it first.
@@ -621,7 +660,7 @@ namespace Yewnyx.Spatial {
                     else { bx = sx; by = sy; bz = sz; }
                     continue;
                 }
-                var d = _get16(bytes, e + 8) * (double)field.Unit + _length(x, y, z, sx, sy, sz);
+                var d = _get16(bytes, e + 8) * (double)field.Unit + _length(x, y, z, sx, sy, sz) * timesHere;
                 if (!(d < best)) { continue; }
                 if (_clear(ref at, x, y, z, sx, sy, sz)) { best = d; bx = sx; by = sy; bz = sz; aimCell = started; chosen = -3; }
                 else if (d < hiddenBest) { hiddenBest = d; hidden = started; }
@@ -640,6 +679,8 @@ namespace Yewnyx.Spatial {
         private ref struct Places {
             public WallTree Tree;
             public ReadOnlySpan<byte> Region, Field;
+            // The costs over the tree as the kind of agent sees them, a byte a leaf, or empty.
+            public Priced Costs;
             public TreeRegions.View View;
             public int Bricks, Cubes, KeptCount;
             // During a build, each brick's record or -1. Empty when a field is asked.
@@ -649,6 +690,88 @@ namespace Yewnyx.Spatial {
             public Span<ulong> Masks;
             // Where a place touches others across one face, as _contacts last found them.
             public Span<Contact> Contacts;
+        }
+
+        // How many times its length a line counts for in the leaf that holds a cell: 1 with no costs.
+        private static double _times(ref Places at, int x, int y, int z) {
+            if (at.Costs.Length == 0) { return 1d; }
+            var leaf = _leaf(ref at, x, y, z, out _, out _);
+            return (uint)leaf < (uint)at.Costs.Length ? 1d + at.Costs[leaf] / 16d : 1d;
+        }
+
+        private static double _timesOf(ref Places at, int cell) {
+            if (at.Costs.Length == 0) { return 1d; }
+            _cellOf(at.Tree.Shape, cell, out var x, out var y, out var z);
+            return _times(ref at, x, y, z);
+        }
+
+        // What the leaf that holds a cell costs; 0 with no costs or for a cell in no leaf.
+        private static int _costOf(ref Places at, int cell) {
+            if (at.Costs.Length == 0 || cell < 0) { return 0; }
+            _cellOf(at.Tree.Shape, cell, out var x, out var y, out var z);
+            var leaf = _leaf(ref at, x, y, z, out _, out _);
+            return (uint)leaf < (uint)at.Costs.Length ? at.Costs[leaf] : 0;
+        }
+
+        // The dearest leaf a straight line passes through, walked cell by cell as _flown walks it.
+        private static int _dearest(ref Places at, double ax, double ay, double az, double bx, double by, double bz) {
+            var shape = at.Tree.Shape;
+            double size = shape.CellSize, dx = bx - ax, dy = by - ay, dz = bz - az;
+            var length = _length(ax, ay, az, bx, by, bz);
+            int x = _within(ax, shape.OriginX, size, shape.CountX), y = _within(ay, shape.OriginY, size, shape.CountY), z = _within(az, shape.OriginZ, size, shape.CountZ);
+            int stepX = dx > 0d ? 1 : dx < 0d ? -1 : 0, stepY = dy > 0d ? 1 : dy < 0d ? -1 : 0, stepZ = dz > 0d ? 1 : dz < 0d ? -1 : 0;
+            var same = length > 0d ? 1e-6 * size / length : 0d;
+            var most = 0;
+            while (true) {
+                most = Math.Max(most, _costOf(ref at, shape.Index(x, y, z)));
+                double tx = _leave(ax, dx, shape.OriginX, size, x, stepX), ty = _leave(ay, dy, shape.OriginY, size, y, stepY), tz = _leave(az, dz, shape.OriginZ, size, z, stepZ);
+                var t = tx < ty ? tx : ty;
+                if (tz < t) { t = tz; }
+                if (!(t <= 1d)) { return most; }
+                if (tx <= t + same) { if ((uint)(x + stepX) < (uint)shape.CountX) { x += stepX; } else { stepX = 0; } }
+                if (ty <= t + same) { if ((uint)(y + stepY) < (uint)shape.CountY) { y += stepY; } else { stepY = 0; } }
+                if (tz <= t + same) { if ((uint)(z + stepZ) < (uint)shape.CountZ) { z += stepZ; } else { stepZ = 0; } }
+            }
+        }
+
+        // Whether the leaf that holds a cell is closed to the kind of agent.
+        private static bool _shut(ref Places at, int cell) {
+            if (at.Costs.Length == 0) { return false; }
+            _cellOf(at.Tree.Shape, cell, out var x, out var y, out var z);
+            var leaf = _leaf(ref at, x, y, z, out _, out _);
+            return (uint)leaf < (uint)at.Costs.Length && at.Costs[leaf] == CellCost.Closed;
+        }
+
+        // What a straight line costs as flown: its length in each leaf it passes through, cell by cell,
+        // times 1 + cost / 16 for that leaf. Its length alone with no costs.
+        private static double _flown(ref Places at, double ax, double ay, double az, double bx, double by, double bz) {
+            var length = _length(ax, ay, az, bx, by, bz);
+            if (at.Costs.Length == 0) { return length; }
+            var shape = at.Tree.Shape;
+            double size = shape.CellSize, dx = bx - ax, dy = by - ay, dz = bz - az;
+            int x = _within(ax, shape.OriginX, size, shape.CountX), y = _within(ay, shape.OriginY, size, shape.CountY), z = _within(az, shape.OriginZ, size, shape.CountZ);
+            int stepX = dx > 0d ? 1 : dx < 0d ? -1 : 0, stepY = dy > 0d ? 1 : dy < 0d ? -1 : 0, stepZ = dz > 0d ? 1 : dz < 0d ? -1 : 0;
+            var same = length > 0d ? 1e-6 * size / length : 0d;
+            double flown = 0d, entered = 0d;
+            while (true) {
+                var times = _times(ref at, x, y, z);
+                double tx = _leave(ax, dx, shape.OriginX, size, x, stepX), ty = _leave(ay, dy, shape.OriginY, size, y, stepY), tz = _leave(az, dz, shape.OriginZ, size, z, stepZ);
+                var t = tx < ty ? tx : ty;
+                if (tz < t) { t = tz; }
+                if (!(t <= 1d)) { return flown + (1d - entered) * length * times; }
+                if (t > entered) { flown += (t - entered) * length * times; entered = t; }
+                if (tx <= t + same) { if ((uint)(x + stepX) < (uint)shape.CountX) { x += stepX; } else { stepX = 0; } }
+                if (ty <= t + same) { if ((uint)(y + stepY) < (uint)shape.CountY) { y += stepY; } else { stepY = 0; } }
+                if (tz <= t + same) { if ((uint)(z + stepZ) < (uint)shape.CountZ) { z += stepZ; } else { stepZ = 0; } }
+            }
+        }
+
+        private static double _leave(double a, double d, float origin, double size, int cell, int step) =>
+            step == 0 ? double.PositiveInfinity : (origin + (cell + (step > 0 ? 1 : 0)) * size - a) / d;
+
+        private static int _within(double value, float origin, double size, int count) {
+            var floor = Math.Floor((value - origin) / size);
+            return floor < 0d ? 0 : floor > count - 1 ? count - 1 : (int)floor;
         }
 
         // Where one place touches another: a cell of each, either side of a face they share.
@@ -661,6 +784,7 @@ namespace Yewnyx.Spatial {
             view = default; bricks = 0; cubes = 0; kept = 0;
             var tree = field.Tree;
             if (!tree.IsValid || !(field.Unit > 0f) || float.IsInfinity(field.Unit) || !TreeRegions.TryView(tree, field.Region, out view)) { return false; }
+            if ((field.Cost.Length != 0 && field.Cost.Length != TreeCosts.LayerLength(tree)) || !CellCost.IsTable(field.Table)) { return false; }
             var bytes = field.Bytes;
             if (bytes.Length < Header) { return false; }
             bricks = _int(bytes, 0); cubes = _int(bytes, 4); kept = _int(bytes, 8);
@@ -906,8 +1030,9 @@ namespace Yewnyx.Spatial {
             }
         }
 
-        // Whether every cell the segment between two points touches is open: walked from cell to
-        // cell, and where it passes through an edge or a corner, the cells beside that too.
+        // Whether every cell the segment between two points touches is open, in no leaf the costs
+        // close: walked from cell to cell, and where it passes through an edge or a corner, the cells
+        // beside that too.
         private static bool _clear(ref Places at, double ax, double ay, double az, double bx, double by, double bz) {
             var shape = at.Tree.Shape;
             double size = shape.CellSize;
@@ -924,7 +1049,7 @@ namespace Yewnyx.Spatial {
             var cells = Math.Abs(ex - x) + Math.Abs(ey - y) + Math.Abs(ez - z) + 1;
             for (var guard = 0; guard <= cells; guard++) {
                 var place = _placeOf(ref at, x, y, z);
-                if (place < 0) { return false; }
+                if (place < 0 || _shutAt(ref at, x, y, z)) { return false; }
                 if (x == ex && y == ey && z == ez) { return true; }
                 // Across an open cube at once: every cell of it is open. The walk starts again just inside where the line leaves it.
                 if (place >= at.Bricks && place < at.Bricks + at.Cubes) {
@@ -951,11 +1076,11 @@ namespace Yewnyx.Spatial {
                 // Crossings this near each other are taken as one, through an edge or a corner, so that a line that only grazes one is held to the cells beside it.
                 bool stepX = mx - least < Graze, stepY = my - least < Graze, stepZ = mz - least < Graze;
                 if ((stepX ? 1 : 0) + (stepY ? 1 : 0) + (stepZ ? 1 : 0) > 1) {
-                    if (stepX && _placeOf(ref at, x + sx, y, z) < 0) { return false; }
-                    if (stepY && _placeOf(ref at, x, y + sy, z) < 0) { return false; }
-                    if (stepZ && _placeOf(ref at, x, y, z + sz) < 0) { return false; }
+                    if (stepX && !_passes(ref at, x + sx, y, z)) { return false; }
+                    if (stepY && !_passes(ref at, x, y + sy, z)) { return false; }
+                    if (stepZ && !_passes(ref at, x, y, z + sz)) { return false; }
                     // Through a corner: the cells that share only an edge with this one too.
-                    if (stepX && stepY && stepZ && (_placeOf(ref at, x + sx, y + sy, z) < 0 || _placeOf(ref at, x + sx, y, z + sz) < 0 || _placeOf(ref at, x, y + sy, z + sz) < 0)) { return false; }
+                    if (stepX && stepY && stepZ && (!_passes(ref at, x + sx, y + sy, z) || !_passes(ref at, x + sx, y, z + sz) || !_passes(ref at, x, y + sy, z + sz))) { return false; }
                 }
                 if (stepX) { x += sx; mx += nx; }
                 if (stepY) { y += sy; my += ny; }
@@ -964,10 +1089,20 @@ namespace Yewnyx.Spatial {
             return false;
         }
 
-        // The cells a seed starts, as a dense field's do: open, centre inside the solid, with a
-        // clear way to the point or square to the plane. Each is written to starts (if it has
+        // Whether a cell is open and its leaf not closed to the kind of agent.
+        private static bool _passes(ref Places at, int x, int y, int z) => _placeOf(ref at, x, y, z) >= 0 && !_shutAt(ref at, x, y, z);
+
+        private static bool _shutAt(ref Places at, int x, int y, int z) {
+            if (at.Costs.Length == 0) { return false; }
+            var leaf = _leaf(ref at, x, y, z, out _, out _);
+            return (uint)leaf < (uint)at.Costs.Length && at.Costs[leaf] == CellCost.Closed;
+        }
+
+        // The cells a seed starts, as a dense field's do: open, in no leaf the costs close, centre inside
+        // the solid, with a clear way to the point or square to the plane. Measure, with no costs, counts
+        // as many or more. Each is written to starts (if it has
         // room) as its place (worked out later), its cell, its start's bits and the seed. How many.
-        private static int _started(in WallTree tree, ReadOnlySpan<byte> region, in TreeRegions.View view, in TravelSeed seed, int index, Span<int> starts) {
+        private static int _started(in WallTree tree, ReadOnlySpan<byte> region, in TreeRegions.View view, in Priced costs, in TravelSeed seed, int index, Span<int> starts) {
             if (!ShapeDistance.TryBox(seed.Solid, out var box)) { return 0; }
             var shape = tree.Shape;
             double size = shape.CellSize;
@@ -978,10 +1113,10 @@ namespace Yewnyx.Spatial {
             for (var z = fromZ; z <= toZ; z++) {
                 for (var y = fromY; y <= toY; y++) {
                     for (var x = fromX; x <= toX; x++) {
-                        if (TreeRegions.Number(tree, region, view, x, y, z) == 0) { continue; }
+                        if (!_passable(tree, region, view, costs, x, y, z)) { continue; }
                         double cx = shape.Centre(shape.OriginX, x), cy = shape.Centre(shape.OriginY, y), cz = shape.Centre(shape.OriginZ, z);
                         if (ShapeDistance.SolidSquared(seed.Solid, cx, cy, cz) != 0d) { continue; }
-                        if (!_clearWay(tree, region, view, seed, cx, cy, cz)) { continue; }
+                        if (!_clearWay(tree, region, view, costs, seed, cx, cy, cz)) { continue; }
                         if (starts.Length >= WorkPerStart * (count + 1)) {
                             starts[WorkPerStart * count] = -1;
                             starts[WorkPerStart * count + 1] = shape.Index(x, y, z);
@@ -998,7 +1133,7 @@ namespace Yewnyx.Spatial {
         // As a dense field's: whether the straight way from a centre to a seed's point, or square
         // to its plane, lies through open cells, looked at every quarter of a cell. Before a point
         // the last cell's length is let off; before a plane, the last quarter of a cell.
-        private static bool _clearWay(in WallTree tree, ReadOnlySpan<byte> region, in TreeRegions.View view, in TravelSeed seed, double x, double y, double z) {
+        private static bool _clearWay(in WallTree tree, ReadOnlySpan<byte> region, in TreeRegions.View view, in Priced costs, in TravelSeed seed, double x, double y, double z) {
             var shape = tree.Shape;
             double size = shape.CellSize, toX = seed.X - x, toY = seed.Y - y, toZ = seed.Z - z, letOff = size;
             if (seed.Start == TravelStart.FromPlane) {
@@ -1015,9 +1150,17 @@ namespace Yewnyx.Spatial {
                 var along = k * step / length;
                 double atX = Math.Floor((x + toX * along - shape.OriginX) / size), atY = Math.Floor((y + toY * along - shape.OriginY) / size), atZ = Math.Floor((z + toZ * along - shape.OriginZ) / size);
                 if (!(atX >= 0d && atX < shape.CountX && atY >= 0d && atY < shape.CountY && atZ >= 0d && atZ < shape.CountZ)) { return false; }
-                if (TreeRegions.Number(tree, region, view, (int)atX, (int)atY, (int)atZ) == 0) { return false; }
+                if (!_passable(tree, region, view, costs, (int)atX, (int)atY, (int)atZ)) { return false; }
             }
             return true;
+        }
+
+        // Whether a cell is open and its leaf not closed by the costs.
+        private static bool _passable(in WallTree tree, ReadOnlySpan<byte> region, in TreeRegions.View view, in Priced costs, int x, int y, int z) {
+            if (TreeRegions.Number(tree, region, view, x, y, z) == 0) { return false; }
+            if (costs.Length == 0) { return true; }
+            var leaf = WallTrees.LeafOf(tree, x, y, z, out _);
+            return (uint)leaf < (uint)costs.Length && costs[leaf] != CellCost.Closed;
         }
 
         private static bool _usable(in TravelSeed seed) {

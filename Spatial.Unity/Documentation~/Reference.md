@@ -88,6 +88,10 @@ JobHandle upToDate = set.Schedule(movedIds, positions, rotations, posesReady);
 - **Read `Cost` again after `FillCost` or `ClearCost`.** They can put another array in its place. One kept from before is then freed, or is the empty one, which reads every cell as normal, closed ones included.
 - **Costs:** 0 is normal, `CellCost.Closed` (255) closes a cell, and anything else scales a step into the cell by 1 + cost / 16. A cost of 32 makes a step cost three times as much.
 - **`FillCost` writes the cells whose centre is inside the solid.** A solid thinner than a cell can hold no centre and write none, so make it at least a cell thick.
+- **A table gives each kind of agent its own costs over the same cells.** Write what a cell is with `CostTable.Of(danger, fog)`, each 0 to 15, and give each kind its table: `WallGridRoute.SetCostTable`, or `ScheduleField`'s `table`.
+- **`CostTable.Make(danger, fog, table)` makes a table from two weights,** in units of cost, moved up so the cheapest cell costs 0. A weight below 0 is a preference: an agent with a fog of -4 keeps to fog.
+- **Only `CellCost.Closed` (255) closes a cell for every kind;** `CostTable.Of` never gives it. A table can close a value for its own kind, but cannot open 255.
+- **A table changes nothing while the grid keeps no costs,** before the first `FillCost` of a value other than 0: until then every cell is normal. A preference, which prices 0 above 0, takes effect from the first fill.
 - **`HasRoom(point, radius)` is the cheaper question in open air** on a grid that keeps a tree: it answers without reading a count.
 
 ### A large grid keeps a tree
@@ -99,14 +103,17 @@ JobHandle upToDate = set.Schedule(movedIds, positions, rotations, posesReady);
 - **Building the tree takes seconds** for a part of some hundreds of metres. Build it where the part is baked and store what `TryWriteTree` gives.
 - **`SetTree` takes a stored tree back** in place of a marking. Give the grid its shapes first: a tree built from other shapes is refused.
 - **Size classes, regions and routes work on a tree as on counts.** `ScheduleRegions` gives the regions of the counts put down as the tree keeps them.
-- **Costs need a count for every cell.** On a tree `FillCost` gives false and `RegionsOf` is empty.
+- **On a tree, costs are a byte a leaf,** a brick or an open cube (see `TreeCosts`): `FillCost` gives a leaf the cost where the solid holds any of its cells' centres. It works once the tree is built, and `TryCost` reads the leaf's cost.
+- **A new marking or `SetTree` lets a tree's costs go,** since its leaves are new, and the regions with them if there were any: fill them again after.
+- **`RegionsOf` is empty on a tree.**
 - **Travel fields work on a tree,** kept for places, not cells: see `WallGridField`.
 - **`TryNearestOpen` with `like:` gives false on a tree.**
 
 ## WallGrid: body sizes and regions
 
 - **Regions follow the wall distance and the closed cells.**
-- **A size class has no regions until `ScheduleRegions` has run,** and none again after `SetShapes`, `FillCost` or `ClearCost`: flood again after those. `HasRegions` says.
+- **A size class has no regions until `ScheduleRegions` has run,** and none again after `SetShapes`, `ClearCost`, or a `FillCost` that closes or opens a cell: flood again after those. `HasRegions` says.
+- **A `FillCost` that closes and opens nothing keeps the regions,** and the fields built from them, which keep the costs they were built with. Routes read the costs when they are found, so costs that move, such as danger round a moving hazard, are for routes.
 - **Mark, then flood.** A flood is refused unless the wall distance was marked from the shapes held, so regions are never newer than the marking they came from.
 - **`IsOpen` is about the point's cell.** A body at that cell's centre fits; the point itself can be most of a cell from there, so nearer a wall than the radius.
 - **To ask whether a body fits at a point,** compare `TryRoom` or `TryDistance` with its radius.
@@ -141,6 +148,7 @@ JobHandle upToDate = set.Schedule(movedIds, positions, rotations, posesReady);
 - **Follow it with `TryNext`.** The point it gives is in sight, and flying straight to it never leaves open cells.
 - **`TrySample` answers too:** the travel `TryTravel` gives, and the way towards the point `TryNext` gives.
 - **It reads the grid's tree as it is asked,** so it does not outlive the grid: once the grid is disposed it answers nothing.
+- **It keeps a copy of the costs it was built with,** a byte a leaf, as a field over counts keeps its costs: a `FillCost` after does not change its answers. On an outdoor part of 300 m that is about 120 KB, beside a field of 840 to 960 KB.
 - **A point whose cell is not open is refused,** where a field over counts may still answer from the eight cells round it.
 - **`Distance` is empty, even once `IsBuilt`:** `KeepsCells` is false. Read it before indexing `Distance`; the field's places are the library's (see `TreeFields`).
 
@@ -174,8 +182,9 @@ Read `Status` first.
 | `StopsShortOfGoal` | The goal is. The route ends at an open cell's centre beside it. |
 
 - **Reading `Status`, `Points` and the rest waits for the search.** To not wait, look at `Handle.IsCompleted` first.
-- **A route is of the grid as it was when it was searched.** After `FillCost`, `ClearCost`, `SetShapes` or another flood, `IsCurrent` is false. The points are kept: stop following them, and search again.
+- **A route is of the grid as it was when it was searched.** After a `FillCost` that closes or opens a cell, `ClearCost`, `SetShapes` or another flood, `IsCurrent` is false. After any other `FillCost` it stays true: still open, though no longer sure to be the cheapest. The points are kept: stop following them, and search again.
 - **`IsCurrent` is about the grid alone,** so read `Status` as well.
+- **A start in a cell closed since the flood, by cost or by the route's table, is routed out of it** where it is beside an open cell, with `FirstLegUnproven`. Where it is not, the route is `Unreachable`, and so is a goal in such a cell. A grid that keeps a tree does the same, with the start's leaf closed.
 
 ### Costs and the route
 

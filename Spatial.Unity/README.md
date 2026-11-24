@@ -176,7 +176,7 @@ The Visualizer's Spatial grid tab shows these layers in slices and in 3D.
 
 1. **The frame is the grid's own.** Points and shapes are in the grid's frame; it holds no transform.
 2. **Bake the block in the editor.** A built player cannot read a mesh unless it was imported with Read/Write on.
-3. **Mark before you flood.** A flood is refused unless the wall distance was marked from the shapes the grid holds. Flood again after `SetShapes`, `FillCost` or `ClearCost`.
+3. **Mark before you flood.** A flood is refused unless the wall distance was marked from the shapes the grid holds. Flood again after `SetShapes`, `ClearCost`, or a `FillCost` that closes or opens a cell.
 4. **Dispose what you own:** the `BoxSet`, the `WallGrid`, each `WallGridField` and each `WallGridRoute`.
 5. **A field outlives its grid but cannot know the way has changed.** If a door shuts or a cost changes, dispose the field and build a new one.
 
