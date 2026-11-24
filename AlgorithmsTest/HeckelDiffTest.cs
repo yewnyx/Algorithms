@@ -273,7 +273,7 @@ public class HeckelDiffTest {
         BlockMove[]? moves = null;
         int[]? workspace = null;
         var moveCount = 0;
-        Allocation.Fewest(() => HeckelDiff.Diff<char>(a, b, ref hunks, ref moves, ref workspace, out moveCount)).Should().Be(0);
+        Allocation.AssertNone(() => HeckelDiff.Diff<char>(a, b, ref hunks, ref moves, ref workspace, out moveCount));
         moveCount.Should().BePositive();
     }
 }
